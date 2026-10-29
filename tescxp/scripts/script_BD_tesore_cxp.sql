@@ -324,7 +324,7 @@ CREATE TABLE tab_pagos_cxp
 
     PRIMARY KEY (id_pago),
     FOREIGN KEY (id_factura, id_cuota)                   REFERENCES tab_cuotasxfactura(id_factura, id_cuota),
-    FOREIGN KEY (id_archivo_plano, id_factura, id_cuota) REFERENCES tab_det_archivo_plano(id_archivo_plano,id_cronograma,id_factura,id_cuota),
+    FOREIGN KEY (id_archivo_plano,id_cronograma,id_factura,id_cuota) REFERENCES tab_det_archivo_plano(id_archivo_plano,id_cronograma,id_factura,id_cuota),
     FOREIGN KEY (id_motivo_rechazo)                      REFERENCES tab_motivos_rechazo(id_motivo_rechazo)
 );
 -- Una cuota solo puede tener UN pago APROBADO. El índice es parcial a propósito:
