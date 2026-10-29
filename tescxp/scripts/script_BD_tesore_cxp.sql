@@ -2,6 +2,7 @@ DROP TABLE IF EXISTS tab_pagos_cxp;
 DROP TABLE IF EXISTS tab_motivos_rechazo;
 DROP TABLE IF EXISTS tab_det_archivo_plano;
 DROP TABLE IF EXISTS tab_enc_archivo_plano;
+DROP TABLE IF EXISTS tab_tipos_pago;
 DROP TABLE IF EXISTS tab_det_cronopagos;
 DROP TABLE IF EXISTS tab_enc_cronopagos;
 DROP TABLE IF EXISTS tab_cuotasxfactura;
@@ -214,22 +215,41 @@ CREATE TABLE tab_det_cronopagos
     CONSTRAINT uq_cuota_programada          UNIQUE (id_factura,id_cuota)                                                        -- Una cuota solo puede estar programada en UN cronograma a la vez (impide el doble pago)
 );
 
+---------------------------------------------
+-- TABLA DE TIPOS DE PAGO                  --
+---------------------------------------------
+-- TABLA 11: Tabla de tipos de pago
+CREATE TABLE tab_tipos_pago 
+(
+    id_tipo_pago        DECIMAL(1,0) NOT NULL CHECK((id_tipo_pago) >= 1 AND (id_tipo_pago) < 10),
+    nom_tipo_pago       VARCHAR(15)  NOT NULL CHECK(LENGTH(nom_tipo_pago) >= 1 AND LENGTH(nom_tipo_pago) <= 15),                     -- Nombre del tipo de pago (PROVEEDORES, NÓMINA U OTRO)
+    ind_borrado         BOOLEAN      NOT NULL DEFAULT FALSE,                                                                         -- TRUE: Borrado lógico (Inactivo) / FALSE: Activo
+
+    PRIMARY KEY(id_tipo_pago)
+);
+
 ------------------------------------------
 -- TABLA DE ENCABEZADO DE ARCHIVO PLANO --
 ------------------------------------------
--- TABLA 11: Tabla de encabezado de archivo plano
-CREATE TABLE tab_enc_archivo_plano
+-- TABLA 12: Tabla de encabezado de archivo plano
+CREATE TABLE tab_enc_archivo_plano 
 (
-    id_archivo_plano    DECIMAL(10,0) 		NOT NULL CHECK((id_archivo_plano) >= 0 AND (id_archivo_plano) <= 9999999999),                       -- Identificador del archivo plano
-    id_cronograma       DECIMAL(10,0) 		NOT NULL CHECK((id_cronograma) >= 0 AND (id_cronograma) <= 9999999999),                             -- Identificador del cronograma
-    id_banco            VARCHAR             NOT NULL,                                                                                           -- Identificador del banco
-    nom_archivo         VARCHAR(30)         NOT NULL CHECK(LENGTH(nom_archivo) >= 3 AND (LENGTH(nom_archivo) <= 30)) DEFAULT 'archivo_plano',   -- Nombre del archivo plano
-    fec_generacion      DATE,                                                                                                                   -- Fecha de generación del archivo(NULL Si no se ha creado)
-    ind_generado        BOOLEAN             NOT NULL DEFAULT FALSE,                                                                             -- Indicador de generado del archivo
+    id_archivo_plano      DECIMAL(10,0) NOT NULL CHECK((id_archivo_plano) >= 0 AND (id_archivo_plano) <= 9999999999),                       -- Identificador del archivo plano
+    nom_archivo           VARCHAR(30)         NOT NULL CHECK(LENGTH(nom_archivo) >= 3 AND (LENGTH(nom_archivo) <= 30)) DEFAULT 'archivo_plano',   -- Nombre del archivo plano
+    id_empresa	          VARCHAR(10)	NOT NULL,													                                        -- Identificador de la empresa
+    nom_empresa	          VARCHAR       NOT NULL CHECK(LENGTH(nom_empresa) >= 5 AND LENGTH(nom_empresa) <= 60),                             -- Nombre de la empresa
+    id_banco              VARCHAR       NOT NULL,                                                                                           -- Identificador del banco
+    ind_tipocuenta        BOOLEAN       NOT NULL DEFAULT FALSE,                                                                             -- TRUE = Corriente / FALSE = Ahorros
+    cta_empresa           VARCHAR(16)   NOT NULL CHECK(LENGTH(cta_empresa) >= 10 AND LENGTH(cta_empresa) <= 16),                            -- Número de cuenta bancaria de la empresa de la cuál va a salir el dinero
+    fecha_aplicacion      DATE          NOT NULL DEFAULT CURRENT_DATE,
+    id_tipo_pago          DECIMAL(1,0) NOT NULL CHECK((id_tipo_pago) >= 1 AND (id_tipo_pago) < 10),
+    fec_generacion        DATE,                                                                                                             -- Fecha de generación del archivo(NULL Si no se ha creado)
+    ind_generado          BOOLEAN       NOT NULL DEFAULT FALSE,                                                                             -- Indicador de generado del archivo
 
     PRIMARY KEY(id_archivo_plano),
+    FOREIGN KEY(id_empresa,cta_empresa)     REFERENCES tab_ctas_empresa(id_empresa,cta_empresa),
     FOREIGN KEY(id_banco)                   REFERENCES tab_bancos(id_banco),
-    FOREIGN KEY(id_cronograma)              REFERENCES tab_enc_cronopagos(id_cronograma)
+    FOREIGN KEY(id_tipo_pago)               REFERENCES tab_tipos_pago(id_tipo_pago)
 );
 -- Consultas tipo: "archivos planos que se hayan generado o no"
 CREATE INDEX idx_archplano_generado ON tab_enc_archivo_plano(ind_generado);
@@ -237,30 +257,38 @@ CREATE INDEX idx_archplano_generado ON tab_enc_archivo_plano(ind_generado);
 ------------------------------------
 -- TABLA DE DETALLE ARCHIVO PLANO --
 ------------------------------------
--- TABLA 12: Tabla de detalle de archivo plano
-CREATE TABLE tab_det_archivo_plano
+-- TABLA 13: Tabla de detalle de archivo plano
+CREATE TABLE tab_det_archivo_plano 
 (
-    id_archivo_plano    DECIMAL(10,0) 		NOT NULL CHECK((id_archivo_plano) >= 0 AND (id_archivo_plano) <= 9999999999),                       -- Identificador del archivo plano
-    id_empresa	        VARCHAR(10)		    NOT NULL,													                                        -- Identificador de la empresa
-    cta_empresa         VARCHAR(16)         NOT NULL CHECK(LENGTH(cta_empresa) >= 10 AND LENGTH(cta_empresa) <= 16) DEFAULT '0000000000',       -- Número de cuenta bancaria de la empresa de la cuál va a salir el dinero
-    id_proveedor        VARCHAR(10)         NOT NULL CHECK(id_proveedor ~ '^[1-9][0-9]{7,9}$') DEFAULT '2222222222',                            -- Identificador (NIT) del proveedor al que se le va a pagar
-    cta_proveedor       VARCHAR(16)         NOT NULL CHECK(LENGTH(cta_proveedor) >= 10 AND LENGTH(cta_proveedor) <= 16) DEFAULT '0000000000',   -- Número de cuenta de destino para pagar, no se referencia de tab_bancoxprov para tener una trazabilidad y la cuenta no cambie en el archivo plano cuando el proveedor cambie su cuenta
-    ind_tipocuenta      BOOLEAN             NOT NULL DEFAULT FALSE,                                                                             -- TRUE = Corriente / FALSE = Ahorros
-    id_factura          DECIMAL(8,0)        NOT NULL CHECK((id_factura) >= 1 AND (id_factura) <= 99999999),                                     -- Identificador de la factura 
-    id_cuota            DECIMAL(2,0)        NOT NULL CHECK((id_cuota) >= 1 AND (id_cuota) <= 99),                                               -- Número de cuota que se va a pagar en el cronograma
-    val_a_pagar         DECIMAL(10,0)       NOT NULL CHECK((val_a_pagar) >= 0 AND (val_a_pagar) <= 9999999999),                                 -- Monto a pagar por cada cuota factura
+    id_archivo_plano            DECIMAL(10,0)  NOT NULL CHECK((id_archivo_plano) >= 0 AND (id_archivo_plano) <= 9999999999),    -- Identificador del archivo plano
+    id_cronograma               DECIMAL(10,0)  NOT NULL CHECK((id_cronograma) >= 0 AND (id_cronograma) <= 9999999999),          -- Identificador del cronograma
+    id_factura                  DECIMAL(8,0)   NOT NULL CHECK((id_factura) >= 1 AND (id_factura) <= 99999999),                  -- Identificador de la factura
+    id_cuota                    DECIMAL(2,0)   NOT NULL CHECK((id_cuota) >= 1 AND (id_cuota) <= 99),                            -- Número de cuota que se va a pagar en el cronograma
+    -- ID FACTURA E ID CUOTA NO SE VE REFLEJADO EN EL ARCHIVO PLANO PORQUE AL BANCO NO LE INTERESA SABER ESTO PARA PAGAR, SOLO ESTÁ AGREGADO
+    -- PODER TENER EL CONTROL DE LAS FACTURAS AÑADIDAS AL ARCHIVO PLANO.
 
-    PRIMARY KEY(id_archivo_plano,id_factura,id_cuota),
-    FOREIGN KEY(id_archivo_plano)           REFERENCES tab_enc_archivo_plano(id_archivo_plano),
-    FOREIGN KEY(id_factura,id_cuota)        REFERENCES tab_cuotasxfactura(id_factura,id_cuota),
-    FOREIGN KEY(id_proveedor,cta_proveedor) REFERENCES tab_bancoxprov(id_proveedor,cta_proveedor),
-    FOREIGN KEY(id_empresa,cta_empresa)     REFERENCES tab_ctas_empresa(id_empresa,cta_empresa)
+    id_tipo        		        VARCHAR(5)     NOT NULL CHECK(id_tipo ~ '^[A-Z]{2,5}$'),                                   --  tipo de documento
+    id_proveedor                VARCHAR(10)    NOT NULL CHECK(id_proveedor ~ '^[A-Z0-9]{7,10}$'),                                                                               -- Identificador del proveedor (ID empresa)
+    nom_tercero			        VARCHAR	       NOT NULL CHECK(LENGTH(nom_tercero) >= 4 AND LENGTH(nom_tercero) <= 50),	    --  nombre del tercero
+    id_banco                    VARCHAR        NOT NULL,                                                                                           -- Identificador del banco
+    ind_tipocuenta              BOOLEAN        NOT NULL DEFAULT FALSE,                                                                             -- TRUE = Corriente / FALSE = Ahorros
+    cta_proveedor               VARCHAR(16)    NOT NULL CHECK(LENGTH(cta_proveedor) >= 10 AND LENGTH(cta_proveedor) <= 16),   -- Número de cuenta de destino para pagar
+    val_a_pagar                 NUMERIC(10,0)  NOT NULL CHECK((val_a_pagar) > 0 ),  
+    concepto                    VARCHAR(80),
+
+    PRIMARY KEY(id_archivo_plano,id_cronograma,id_factura,id_cuota),
+    FOREIGN KEY(id_archivo_plano)                   REFERENCES tab_enc_archivo_plano(id_archivo_plano),
+    FOREIGN KEY(id_cronograma,id_factura,id_cuota)  REFERENCES tab_det_cronopagos(id_cronograma,id_factura,id_cuota),
+    FOREIGN KEY(id_proveedor,cta_proveedor)         REFERENCES tab_bancoxprov(id_proveedor,cta_proveedor),
+    FOREIGN KEY(id_banco)                           REFERENCES tab_bancos(id_banco),
+
+    CONSTRAINT uq_cuota_en_archivo UNIQUE (id_factura, id_cuota)
 );
 
 -------------------------------------
 -- TABLA DE MOTIVOS DE RECHAZO     --
 -------------------------------------
--- TABLA 13: Catálogo de motivos. Lo usa tab_pagos
+-- TABLA 14: Catálogo de motivos. Lo usa tab_pagos
 -- ind_borrado permite dar de baja un motivo sin romper los registros históricos.
 CREATE TABLE tab_motivos_rechazo
 (
@@ -275,7 +303,7 @@ CREATE TABLE tab_motivos_rechazo
 -----------------------
 -- TABLA DE PAGOS    --
 -----------------------
--- TABLA 14: registra cada intento de pago de una CUOTA DE FACTURA (aprobado o
+-- TABLA 15: registra cada intento de pago de una CUOTA DE FACTURA (aprobado o
 -- rechazado). 
 -- Nunca se borra un intento rechazado.
 -- Alcance: aquí van únicamente los pagos de cuotas. Caja menor y sus
