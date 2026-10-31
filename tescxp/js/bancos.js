@@ -1,7 +1,7 @@
 'use strict';
 
 // ============================================================
-// 1. HELPERS GENERALES (mismos que ctas_proveedores.js)
+// 1. HELPERS GENERALES (mismos que festivos.js)
 // ============================================================
 function val(id)           { return document.getElementById(id)?.value ?? ''; }
 function setVal(id, value) { const el = document.getElementById(id); if (el) el.value = value ?? ''; }
@@ -41,141 +41,190 @@ function showToast(message, type = 'success') {
     toast._timer = setTimeout(() => toast.classList.add('hidden'), 3500);
 }
 
+// Si el servidor no devuelve JSON (p. ej. un error fatal de PHP), muestra el
+// comienzo de lo que llegó, sin etiquetas HTML, para saber qué pasó.
+function resumenRespuesta(text) {
+    const div = document.createElement('div');
+    div.innerHTML = text || '';
+    const plano = (div.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!plano) return '(respuesta vacía; revise el log de errores de PHP)';
+    const i = plano.search(/(fatal|error|warning|notice|uncaught)/i);
+    return (i >= 0 ? plano.slice(i) : plano).slice(0, 220);
+}
+
+// Envía un FormData al mismo PHP y maneja la respuesta JSON.
+// Los errores por campo se pintan en sus <span class="field-error">.
+async function enviarFormulario(formData, mensajeError, onSuccess) {
+    try {
+        const response = await fetch(window.location.href, { method: 'POST', body: formData });
+        const text = await response.text();
+        let result;
+        try { result = JSON.parse(text); }
+        catch (e) {
+            console.error('Respuesta del servidor que no es JSON:', text);
+            result = { success: false, message: 'Respuesta inválida del servidor: ' + resumenRespuesta(text) };
+        }
+        if (result.debug_salida_previa) console.warn('Salida de PHP antes del JSON:', result.debug_salida_previa);
+
+        if (result.success) {
+            showToast(result.message, 'success');
+            if (typeof onSuccess === 'function') onSuccess();
+            location.reload();
+        } else if (result.errors && Object.keys(result.errors).length > 0) {
+            Object.entries(result.errors).forEach(([spanId, mensaje]) => showFieldError(spanId, mensaje));
+        } else {
+            showToast(result.message || mensajeError, 'error');
+        }
+    } catch (err) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
 // ============================================================
-// 2. MODAL: NUEVO BANCO
+// 1.1 CAMPO DE NOMBRE: MAYÚSCULAS + CONTADOR (máx. 15)
+// ============================================================
+function actualizarContador(input) {
+    const id = input.dataset.contador;
+    if (id) setText(id, `${input.value.length} / ${input.maxLength}`);
+}
+
+function initCamposNombre() {
+    document.querySelectorAll('.input-mayus').forEach(input => {
+        input.addEventListener('input', () => {
+            const pos = input.selectionStart;
+            input.value = input.value.toUpperCase();
+            input.setSelectionRange(pos, pos);
+            actualizarContador(input);
+        });
+    });
+}
+
+// Datos de una fila de la tabla (se leen de sus data-*)
+function datosFila(fila) {
+    return {
+        id:     fila.dataset.id,
+        nombre: fila.dataset.nombre,
+        estado: fila.dataset.estado,
+    };
+}
+
+// ============================================================
+// 2. MODAL: NUEVO TIPO DE PAGO
 // ============================================================
 function openNewModal() {
     clearAllFieldErrors('new');
-    setVal('new-id-banco', '');
-    setVal('new-nom-banco', '');
-    setVal('new-estado', 'true');
-    show('modal-new-banco');
+    const sel = document.getElementById('new-tipo-pago-id');
+    if (sel && sel.options.length) sel.selectedIndex = 0;
+    setVal('new-tipo-pago-nombre', '');
+    actualizarContador(document.getElementById('new-tipo-pago-nombre'));
+    show('modal-new-tipo-pago');
+    setTimeout(() => document.getElementById('new-tipo-pago-nombre')?.focus(), 50);
 }
 
-function closeNewModal() {
-    hide('modal-new-banco');
-}
+function closeNewModal() { hide('modal-new-tipo-pago'); }
 
 // ============================================================
-// 3. MODAL: EDITAR BANCO
+// 3. MODAL: EDITAR TIPO DE PAGO
 // ============================================================
-function openEditModal(banco) {
+function openEditModal(tipo) {
     clearAllFieldErrors('edit');
-    setVal('edit-id-banco-hid', banco.id_banco);
-    setVal('edit-id-banco-display', banco.id_banco);
-    setVal('edit-nom-banco', banco.nom_banco);
-    const esActivo = banco.ind_estado === 't' || banco.ind_estado === true;
-    setVal('edit-estado', esActivo ? 'true' : 'false');
-    show('modal-edit-banco');
+    setVal('edit-tipo-pago-id', tipo.id);
+    setVal('edit-tipo-pago-id-ver', `#${tipo.id}`);
+    setVal('edit-tipo-pago-nombre', tipo.nombre);
+    actualizarContador(document.getElementById('edit-tipo-pago-nombre'));
+    show('modal-edit-tipo-pago');
+    setTimeout(() => document.getElementById('edit-tipo-pago-nombre')?.focus(), 50);
 }
 
-function closeEditModal() {
-    hide('modal-edit-banco');
+function closeEditModal() { hide('modal-edit-tipo-pago'); }
+
+// ============================================================
+// 4. FILTROS (BÚSQUEDA + ESTADO) + PAGINACIÓN
+// ============================================================
+let tiposPagoPage     = 1;
+let tiposPagoPageSize = 25; // debe coincidir con el <option selected>
+let tiposPagoEstado   = 'todos';
+
+function filasTabla() {
+    return Array.from(document.querySelectorAll('#tipos-pago-tbody tr:not(.empty-row)'));
 }
 
-window.openEditModal = openEditModal;
-
-// ============================================================
-// 4. FILTROS + PAGINACIÓN + ORDENAMIENTO (mismo sistema que Proveedores)
-// ============================================================
-
-// ---- ESTADO DE PAGINACIÓN ----
-let bancosPage     = 1;
-let bancosPageSize = 25; // debe coincidir con el <option selected> de #bancos-page-size
-
-// Filas que pasan la búsqueda y el filtro Todos/Activos/Inactivos (sin tener en cuenta la página)
-function getFilteredBancoRows() {
-    const query  = val('banco-search').toLowerCase().trim();
-    const active = document.querySelector('#mod-bancos .filter-toggle.active')?.dataset.filter ?? 'all';
-    const filas  = Array.from(document.querySelectorAll('#bancos-tbody tr:not(.empty-row)'));
-    return filas.filter(fila => {
-        const texto = (fila.children[0]?.textContent.toLowerCase() ?? '') + ' '
-                    + (fila.children[1]?.textContent.toLowerCase() ?? '');
-        const pasaTexto  = !query || texto.includes(query);
-        const pasaEstado = active === 'all' || fila.dataset.tipo === active;
-        return pasaTexto && pasaEstado;
+function getFilteredRows() {
+    const query = val('tipo-pago-search').toLowerCase().trim();
+    return filasTabla().filter(fila => {
+        const { id, nombre, estado } = datosFila(fila);
+        const coincideTexto  = !query || nombre.toLowerCase().includes(query) || id === query.replace('#', '');
+        const coincideEstado = tiposPagoEstado === 'todos' || estado === tiposPagoEstado;
+        return coincideTexto && coincideEstado;
     });
 }
 
-// Aplica búsqueda/estado y vuelve a la primera página
 function applyFilters() {
-    bancosPage = 1;
-    renderBancosPage();
+    tiposPagoPage = 1;
+    renderPage();
 
-    const query    = val('banco-search').trim();
-    const active   = document.querySelector('#mod-bancos .filter-toggle.active')?.dataset.filter ?? 'all';
-    const clearBtn = document.getElementById('btn-clear-filters');
-    if (clearBtn) clearBtn.style.display = (query || active !== 'all') ? 'flex' : 'none';
+    const hayFiltro = val('tipo-pago-search').trim() !== '' || tiposPagoEstado !== 'todos';
+    const clearBtn  = document.getElementById('btn-clear-filters');
+    if (clearBtn) clearBtn.style.display = hayFiltro ? 'flex' : 'none';
 }
 
-function clearFilters() {
-    setVal('banco-search', '');
-    document.querySelectorAll('.filter-toggle').forEach(btn => btn.classList.remove('active'));
-    document.querySelector('.filter-toggle[data-filter="all"]')?.classList.add('active');
+function setEstadoFiltro(estado) {
+    tiposPagoEstado = estado;
+    document.querySelectorAll('#tipo-pago-estado-filtro .filter-toggle').forEach(b => {
+        b.classList.toggle('active', b.dataset.estado === estado);
+    });
     applyFilters();
 }
 
-// Muestra solo las filas que pasan el filtro Y caen en la página actual
-function renderBancosPage() {
-    const todas     = Array.from(document.querySelectorAll('#bancos-tbody tr:not(.empty-row)'));
-    const coinciden = getFilteredBancoRows();
-    todas.forEach(fila => { fila.style.display = 'none'; });
+function clearFilters() {
+    setVal('tipo-pago-search', '');
+    setEstadoFiltro('todos');
+}
+
+function renderPage() {
+    const coinciden = getFilteredRows();
+    filasTabla().forEach(fila => { fila.style.display = 'none'; });
 
     const total        = coinciden.length;
-    const esTodos      = bancosPageSize === 'all';
-    const size         = esTodos ? total : bancosPageSize;
+    const esTodos      = tiposPagoPageSize === 'all';
+    const size         = esTodos ? total : tiposPagoPageSize;
     const totalPaginas = size > 0 ? Math.max(1, Math.ceil(total / size)) : 1;
-    if (bancosPage > totalPaginas) bancosPage = totalPaginas;
-    if (bancosPage < 1) bancosPage = 1;
+    tiposPagoPage = Math.min(Math.max(tiposPagoPage, 1), totalPaginas);
 
-    const start = esTodos ? 0 : (bancosPage - 1) * size;
+    const start = esTodos ? 0 : (tiposPagoPage - 1) * size;
     const end   = esTodos ? total : Math.min(start + size, total);
     coinciden.slice(start, end).forEach(fila => { fila.style.display = ''; });
 
-    setText('bancos-count', `${total} resultado${total !== 1 ? 's' : ''}`);
+    setText('tipos-pago-count', `${total} resultado${total !== 1 ? 's' : ''}`);
+    setText('tipos-pago-range', total === 0 ? '0 de 0' : `${start + 1}–${end} de ${total}`);
 
-    const rangeEl = document.getElementById('bancos-range');
-    if (rangeEl) {
-        rangeEl.textContent = total === 0 ? '0 de 0' : `${start + 1}–${end} de ${total}`;
-    }
-
-    const btnPrev = document.getElementById('bancos-prev');
-    const btnNext = document.getElementById('bancos-next');
-    if (btnPrev) btnPrev.disabled = bancosPage <= 1;
-    if (btnNext) btnNext.disabled = esTodos || bancosPage >= totalPaginas;
+    const btnPrev = document.getElementById('tipos-pago-prev');
+    const btnNext = document.getElementById('tipos-pago-next');
+    if (btnPrev) btnPrev.disabled = tiposPagoPage <= 1;
+    if (btnNext) btnNext.disabled = esTodos || tiposPagoPage >= totalPaginas;
 }
 
-function initBancosPagination() {
-    document.getElementById('bancos-page-size')?.addEventListener('change', function() {
-        bancosPageSize = this.value === 'all' ? 'all' : parseInt(this.value, 10);
-        bancosPage = 1;
-        renderBancosPage();
+function initPagination() {
+    document.getElementById('tipos-pago-page-size')?.addEventListener('change', function() {
+        tiposPagoPageSize = this.value === 'all' ? 'all' : parseInt(this.value, 10);
+        tiposPagoPage = 1;
+        renderPage();
     });
-    document.getElementById('bancos-prev')?.addEventListener('click', () => {
-        bancosPage--;
-        renderBancosPage();
-    });
-    document.getElementById('bancos-next')?.addEventListener('click', () => {
-        bancosPage++;
-        renderBancosPage();
-    });
+    document.getElementById('tipos-pago-prev')?.addEventListener('click', () => { tiposPagoPage--; renderPage(); });
+    document.getElementById('tipos-pago-next')?.addEventListener('click', () => { tiposPagoPage++; renderPage(); });
 }
 
 // ---- ORDENAMIENTO ASC / DESC ----
-// El texto se compara en español y con "numeric": así los códigos con
-// números quedan en orden natural (0000123 < 0001000 < 1234567) y las
-// tildes no descuadran los nombres.
-let bancosSortKey = null; // índice de columna, coincide con data-sort-key del <th>
-let bancosSortDir = 'asc';
+let sortKey = null;
+let sortDir = 'asc';
 
-function sortBancoRows(key, type) {
-    const tbody = document.getElementById('bancos-tbody');
-    if (!tbody) return;
-    const filas = Array.from(tbody.querySelectorAll('tr:not(.empty-row)'));
-    if (filas.length === 0) return;
+function sortRows(key, type) {
+    const tbody = document.getElementById('tipos-pago-tbody');
+    const filas = filasTabla();
+    if (!tbody || filas.length === 0) return;
 
-    bancosSortDir = (bancosSortKey === key && bancosSortDir === 'asc') ? 'desc' : 'asc';
-    bancosSortKey = key;
+    sortDir = (sortKey === key && sortDir === 'asc') ? 'desc' : 'asc';
+    sortKey = key;
 
     const getValor = fila => {
         const celda = fila.cells[Number(key)];
@@ -185,39 +234,38 @@ function sortBancoRows(key, type) {
     };
 
     filas.sort((a, b) => {
-        const va  = getValor(a);
-        const vb  = getValor(b);
-        const cmp = type === 'number' ? (va - vb) : va.localeCompare(vb, 'es', { numeric: true });
-        return bancosSortDir === 'asc' ? cmp : -cmp;
+        const va = getValor(a), vb = getValor(b);
+        const cmp = type === 'number' ? (va - vb) : va.localeCompare(vb, 'es');
+        return sortDir === 'asc' ? cmp : -cmp;
     });
     filas.forEach(fila => tbody.appendChild(fila));
 
-    document.querySelectorAll('#mod-bancos .data-table th.sortable').forEach(th => {
+    document.querySelectorAll('#mod-tipos-pago .data-table th.sortable').forEach(th => {
         const icon   = th.querySelector('.sort-icon');
         const activo = th.dataset.sortKey === key;
         th.classList.toggle('sort-active', activo);
         if (icon) {
             icon.className = activo
-                ? `fas sort-icon ${bancosSortDir === 'asc' ? 'fa-caret-up' : 'fa-caret-down'}`
+                ? `fas sort-icon ${sortDir === 'asc' ? 'fa-caret-up' : 'fa-caret-down'}`
                 : 'fas fa-caret-down sort-icon';
         }
     });
 
-    bancosPage = 1;
-    renderBancosPage();
+    tiposPagoPage = 1;
+    renderPage();
 }
 
-function initBancosSorting() {
-    document.querySelectorAll('#mod-bancos .data-table th.sortable').forEach(th => {
-        th.addEventListener('click', () => sortBancoRows(th.dataset.sortKey, th.dataset.sortType));
+function initSorting() {
+    document.querySelectorAll('#mod-tipos-pago .data-table th.sortable').forEach(th => {
+        th.addEventListener('click', () => sortRows(th.dataset.sortKey, th.dataset.sortType));
     });
 }
 
 // ---- ALTO DINÁMICO DE LA TABLA (evita el doble scroll) ----
-function ajustarAlturaTablaBancos() {
-    const scrollBox = document.getElementById('bancos-table-scroll');
+function ajustarAlturaTabla() {
+    const scrollBox = document.getElementById('tipos-pago-table-scroll');
     if (!scrollBox) return;
-    const footer = document.querySelector('#mod-bancos .table-footer');
+    const footer = document.querySelector('#mod-tipos-pago .table-footer');
     const top = scrollBox.getBoundingClientRect().top;
     const alturaFooter = footer ? footer.offsetHeight : 0;
 
@@ -233,185 +281,115 @@ function ajustarAlturaTablaBancos() {
 }
 
 // ============================================================
-// 5. MODAL DE CONFIRMACIÓN DE ELIMINACIÓN (estilo módulo Compras)
+// 5. CONFIRMAR ACTIVAR / INACTIVAR (borrado lógico)
 // ============================================================
-let _confirmDeleteAction = null;
+let _confirmEstadoAction = null;
 
-function abrirConfirmEliminar(titulo, mensaje, accion) {
-    setText('confirm-eliminar-title', titulo);
-    setText('confirm-eliminar-body', mensaje);
-    _confirmDeleteAction = accion;
-    show('modal-confirm-eliminar');
+function abrirConfirmEstado(tipo, accion) {
+    const inactivar = accion === 'inactivar';
+    const icon = document.getElementById('confirm-estado-icon');
+    const ok   = document.getElementById('confirm-estado-ok-btn');
+
+    setText('confirm-estado-title', `${inactivar ? 'Inactivar' : 'Activar'} "${tipo.nombre}"`);
+    setText('confirm-estado-body', inactivar
+        ? `¿Desea inactivar el tipo de pago "${tipo.nombre}"? Dejará de estar disponible, pero se puede volver a activar.`
+        : `¿Desea activar de nuevo el tipo de pago "${tipo.nombre}"?`);
+
+    if (icon) {
+        icon.classList.toggle('activar', !inactivar);
+        icon.innerHTML = inactivar
+            ? '<i class="fas fa-exclamation-triangle"></i>'
+            : '<i class="fas fa-check-circle"></i>';
+    }
+    if (ok) {
+        ok.textContent = inactivar ? 'Sí, inactivar' : 'Sí, activar';
+        ok.classList.toggle('btn-eliminar', inactivar);
+        ok.classList.toggle('btn-activar', !inactivar);
+    }
+
+    _confirmEstadoAction = () => ejecutarCambioEstado(tipo.id, accion);
+    show('modal-confirm-estado');
 }
 
-function cerrarConfirmEliminar() {
-    hide('modal-confirm-eliminar');
-    _confirmDeleteAction = null;
+function cerrarConfirmEstado() {
+    hide('modal-confirm-estado');
+    _confirmEstadoAction = null;
 }
 
-// ============================================================
-// 5.1 ELIMINAR BANCO (borrado lógico, función global)
-// ============================================================
-window.eliminarBanco = function(idBanco, nombreBanco) {
-    abrirConfirmEliminar(
-        `Eliminar "${nombreBanco}"`,
-        `¿Desea eliminar el banco ${nombreBanco} (${idBanco})? Esta acción es reversible desde la base de datos.`,
-        () => ejecutarEliminarBanco(idBanco)
-    );
-};
-
-function ejecutarEliminarBanco(idBanco) {
+function ejecutarCambioEstado(id, accion) {
     const formData = new FormData();
-    formData.append('btn_eliminar', '1');
-    formData.append('hid_del_id_banco', idBanco);
-    fetch(window.location.href, {
-        method: 'POST',
-        body: formData
-    })
-    .then(res => res.text())
-    .then(text => {
-        let result;
-        try { result = JSON.parse(text); } catch (e) { result = { success: false, message: 'Respuesta inválida' }; }
-        if (result.success) {
-            showToast(result.message, 'success');
-            location.reload();
-        } else {
-            showToast(result.message || 'Error al eliminar', 'error');
-        }
-    })
-    .catch(() => showToast('Error de conexión', 'error'));
+    formData.append('btn_estado', '1');
+    formData.append('hid_est_id', id);
+    formData.append('hid_est_accion', accion);
+    enviarFormulario(formData, 'Error al cambiar el estado');
 }
 
 // ============================================================
-// 6. ACTIVAR / DESACTIVAR RÁPIDO (función global)
+// 6. INICIALIZACIÓN GENERAL
 // ============================================================
-window.toggleEstadoBanco = function(idBanco, nuevoEstado) {
-    const formData = new FormData();
-    formData.append('btn_toggle_estado', '1');
-    formData.append('hid_toggle_id_banco', idBanco);
-    formData.append('hid_toggle_estado', nuevoEstado ? 'true' : 'false');
-    fetch(window.location.href, {
-        method: 'POST',
-        body: formData
-    })
-    .then(res => res.text())
-    .then(text => {
-        let result;
-        try { result = JSON.parse(text); } catch (e) { result = { success: false, message: 'Respuesta inválida' }; }
-        if (result.success) {
-            showToast(result.message, 'success');
-            location.reload();
-        } else {
-            showToast(result.message || 'Error al actualizar el estado', 'error');
-        }
-    })
-    .catch(() => showToast('Error de conexión', 'error'));
-};
+document.addEventListener('DOMContentLoaded', initTiposPagoModule);
 
-// ============================================================
-// 7. INICIALIZACIÓN GENERAL
-// ============================================================
-document.addEventListener('DOMContentLoaded', function() {
-    initBancosModule();
-});
+function initTiposPagoModule() {
+    document.getElementById('btn-add-tipo-pago')?.addEventListener('click', openNewModal);
 
-function initBancosModule() {
-    document.getElementById('btn-add-banco')?.addEventListener('click', openNewModal);
+    initCamposNombre();
 
-    document.getElementById('banco-search')?.addEventListener('input', applyFilters);
+    // ---------- FILTROS ----------
+    document.getElementById('tipo-pago-search')?.addEventListener('input', applyFilters);
+    document.querySelectorAll('#tipo-pago-estado-filtro .filter-toggle').forEach(btn => {
+        btn.addEventListener('click', () => setEstadoFiltro(btn.dataset.estado));
+    });
     document.getElementById('btn-clear-filters')?.addEventListener('click', clearFilters);
 
-    document.querySelectorAll('.filter-toggle').forEach(btn => {
-        btn.addEventListener('click', function() {
-            document.querySelectorAll('.filter-toggle').forEach(b => b.classList.remove('active'));
-            this.classList.add('active');
-            applyFilters();
-        });
+    // ---------- TABLA ----------
+    initPagination();
+    initSorting();
+    renderPage();
+    ajustarAlturaTabla();
+    window.addEventListener('resize', ajustarAlturaTabla);
+
+    // Botones de cada fila (delegación: no hay onclick inline)
+    document.getElementById('tipos-pago-tbody')?.addEventListener('click', e => {
+        const btn  = e.target.closest('button');
+        const fila = e.target.closest('tr[data-id]');
+        if (!btn || !fila) return;
+        const tipo = datosFila(fila);
+        if (btn.classList.contains('btn-editar')) openEditModal(tipo);
+        if (btn.classList.contains('btn-estado')) abrirConfirmEstado(tipo, btn.dataset.accion);
     });
 
-    // ---------- PAGINACIÓN Y ORDENAMIENTO ----------
-    initBancosPagination();
-    initBancosSorting();
-    renderBancosPage();
-    ajustarAlturaTablaBancos();
-    window.addEventListener('resize', ajustarAlturaTablaBancos);
-
+    // ---------- CERRAR MODALES (solo con X o Cancelar) ----------
     document.querySelectorAll('.btn-close-new-modal, .btn-cancel-new-modal')
         .forEach(btn => btn.addEventListener('click', closeNewModal));
     document.querySelectorAll('.btn-close-edit-modal, .btn-cancel-edit-modal')
         .forEach(btn => btn.addEventListener('click', closeEditModal));
 
-    // Los modales NO se cierran al hacer clic por fuera (en el fondo oscuro):
-    // así no se pierde lo que se lleva escrito en un formulario por un clic
-    // accidental. Se cierran solo con la X, "Cancelar" o "Cerrar".
-
-    // ---------- MODAL: CONFIRMAR ELIMINACIÓN ----------
-    document.getElementById('confirm-eliminar-cancel-btn')?.addEventListener('click', cerrarConfirmEliminar);
-    document.getElementById('confirm-eliminar-ok-btn')?.addEventListener('click', () => {
-        const accion = _confirmDeleteAction;
-        cerrarConfirmEliminar();
+    // ---------- CONFIRMAR ESTADO ----------
+    document.getElementById('confirm-estado-cancel-btn')?.addEventListener('click', cerrarConfirmEstado);
+    document.getElementById('confirm-estado-ok-btn')?.addEventListener('click', () => {
+        const accion = _confirmEstadoAction;
+        cerrarConfirmEstado();
         if (typeof accion === 'function') accion();
     });
 
-    // ---------- SUBMIT: NUEVO BANCO ----------
-    document.getElementById('new-btn-save')?.addEventListener('click', async function() {
-        const form = document.getElementById('new-banco-form');
+    // ---------- GUARDAR ----------
+    document.getElementById('new-btn-save')?.addEventListener('click', () => {
         clearAllFieldErrors('new');
-        const formData = new FormData(form);
-
-        try {
-            const response = await fetch(window.location.href, {
-                method: 'POST',
-                body: formData
-            });
-            const text = await response.text();
-            let result;
-            try { result = JSON.parse(text); } catch (e) { result = { success: false, message: 'Respuesta inválida del servidor' }; }
-
-            if (result.success) {
-                showToast(result.message, 'success');
-                closeNewModal();
-                location.reload();
-            } else if (result.errors && Object.keys(result.errors).length > 0) {
-                Object.entries(result.errors).forEach(([spanId, mensaje]) => {
-                    showFieldError(spanId, mensaje);
-                });
-            } else {
-                showToast(result.message || 'Error al guardar', 'error');
-            }
-        } catch (err) {
-            showToast('Error de conexión', 'error');
-        }
+        const formData = new FormData(document.getElementById('new-tipo-pago-form'));
+        enviarFormulario(formData, 'Error al guardar', closeNewModal);
     });
 
-    // ---------- SUBMIT: EDITAR BANCO ----------
-    document.getElementById('edit-btn-save')?.addEventListener('click', async function() {
-        const form = document.getElementById('edit-banco-form');
+    document.getElementById('edit-btn-save')?.addEventListener('click', () => {
         clearAllFieldErrors('edit');
-        const formData = new FormData(form);
+        const formData = new FormData(document.getElementById('edit-tipo-pago-form'));
+        enviarFormulario(formData, 'Error al actualizar', closeEditModal);
+    });
 
-        try {
-            const response = await fetch(window.location.href, {
-                method: 'POST',
-                body: formData
-            });
-            const text = await response.text();
-            let result;
-            try { result = JSON.parse(text); } catch (e) { result = { success: false, message: 'Respuesta inválida del servidor' }; }
-
-            if (result.success) {
-                showToast(result.message, 'success');
-                closeEditModal();
-                location.reload();
-            } else if (result.errors && Object.keys(result.errors).length > 0) {
-                Object.entries(result.errors).forEach(([spanId, mensaje]) => {
-                    showFieldError(spanId, mensaje);
-                });
-            } else {
-                showToast(result.message || 'Error al actualizar', 'error');
-            }
-        } catch (err) {
-            showToast('Error de conexión', 'error');
-        }
+    // Enter dentro del nombre = guardar (en vez de recargar la página)
+    document.getElementById('new-tipo-pago-form')?.addEventListener('submit', e => {
+        e.preventDefault(); document.getElementById('new-btn-save')?.click();
+    });
+    document.getElementById('edit-tipo-pago-form')?.addEventListener('submit', e => {
+        e.preventDefault(); document.getElementById('edit-btn-save')?.click();
     });
 }

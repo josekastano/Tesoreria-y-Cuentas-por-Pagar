@@ -20,6 +20,7 @@ require_once('prepare_tescxp.php');
 // ============================================================
 // LIMPIAR MENSAJE DE ERROR DE POSTGRESQL
 // ============================================================
+if (!function_exists('limpiar_error_pgsql')) {
 function limpiar_error_pgsql(string $msg): string {
     if (preg_match('/ERROR:\s*ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
         return trim($m[1]);
@@ -29,14 +30,59 @@ function limpiar_error_pgsql(string $msg): string {
     }
     return $msg;
 }
+}
+
+// ============================================================
+// RESPONDER JSON
+// ------------------------------------------------------------
+// menu_principal.php ya imprimió el layout antes de incluir esta página:
+// se descarta todo lo que haya en los buffers y se envía SOLO el JSON.
+// ============================================================
+if (!function_exists('responder_json')) {
+    function responder_json(array $respuesta): void {
+        $previo = '';
+        while (ob_get_level() > 0) {
+            $previo = ((string)ob_get_clean()) . $previo;
+        }
+        $previo = trim(strip_tags($previo));
+        if ($previo !== '' && preg_match('/(fatal|error|warning|notice|deprecated|exception)/i', $previo)) {
+            $respuesta['debug_salida_previa'] = substr($previo, 0, 800);
+        }
+        if (!headers_sent()) {
+            header('Content-Type: application/json; charset=utf-8');
+        }
+        echo json_encode($respuesta, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+        exit;
+    }
+}
+
+// ="900123456" (formato texto para Excel) -> 900123456
+function limpiar_celda($valor): string {
+    $v = trim((string)$valor);
+    if (preg_match('/^="(.*)"$/s', $v, $m)) {
+        $v = trim($m[1]);
+    }
+    return $v;
+}
+
+// Acepta AAAA-MM-DD o DD/MM/AAAA (si alguien guardó la respuesta desde Excel)
+function fecha_iso(string $f): ?string {
+    if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $f)) {
+        $d = DateTime::createFromFormat('Y-m-d', $f);
+        return ($d && $d->format('Y-m-d') === $f) ? $f : null;
+    }
+    if (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/', $f, $m)) {
+        return checkdate((int)$m[2], (int)$m[1], (int)$m[3])
+            ? sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]) : null;
+    }
+    return null;
+}
 
 // ============================================================
 // MANEJO DE PETICIONES POST (SIEMPRE RESPONDEN CON JSON)
 // ============================================================
-// Este módulo es de consulta: el único POST es el detalle de un pago.
-// La exportación a CSV se arma en el navegador con las filas ya filtradas.
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    header('Content-Type: application/json');
+    ob_start();
     $respuesta = ['success' => false, 'message' => '', 'errors' => []];
 
     try {
@@ -57,170 +103,142 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $respuesta['success'] = true;
             $respuesta['pago']    = $pago;
-            echo json_encode($respuesta);
-            exit;
+            responder_json($respuesta);
         }
 
         // ---------- APLICAR RESPUESTA DEL BANCO (CSV) ----------
-        // >>> CORREGIDO: esta importación es la que CREA el historial de pagos,
-        // no la actualización de un pago que ya existía. Cada fila identifica el
-        // giro por (id_archivo_plano, id_factura, id_cuota) — el mismo trío que
-        // ya se le envió al banco en tab_det_archivo_plano — y de ahí se toma
-        // val_a_pagar (nunca del archivo del banco, para que nadie pueda inflar
-        // o desinflar un pago con una fila mal armada).
+        // El archivo plano que se envía al banco NO lleva factura ni cuota, así
+        // que el banco identifica cada pago por su CONSECUTIVO: la posición de
+        // la línea dentro del archivo (1, 2, 3...). Aquí se vuelve a leer el
+        // detalle con $list_det_archivo_plano, que tiene el MISMO orden que la
+        // descarga (nom_tercero, id_factura, id_cuota), y la línea N es la
+        // fila N. Además se comparan documento, cuenta y valor, para no aplicar
+        // la respuesta a otro pago si el orden no coincide.
+        //
+        // El valor del pago NUNCA se toma del archivo del banco: lo pone
+        // fun_insert_pagos_cxp desde tab_det_archivo_plano.val_a_pagar.
         if (isset($_POST['btn_importar'])) {
-            $filas_json = $_POST['hid_filas_importar'] ?? '';
-            $filas      = json_decode($filas_json, true);
+            $filas = json_decode($_POST['hid_filas_importar'] ?? '', true);
 
             if (!is_array($filas) || count($filas) === 0) {
                 throw new Exception('No se recibió ninguna fila para aplicar.');
             }
 
-            // Mapa cod_bancario -> id_motivo_rechazo (solo motivos activos)
-            $list_motivos_rechazo->execute();
-            $mapa_motivos = [];
-            foreach ($list_motivos_rechazo->fetchAll(PDO::FETCH_ASSOC) as $m) {
-                $cod = trim((string)($m['cod_bancario'] ?? ''));
-                if ($cod !== '') {
-                    $mapa_motivos[strtoupper($cod)] = (int)$m['id_motivo_rechazo'];
-                }
-            }
-
             $aplicadas = 0;
             $omitidas  = [];
+            $detalles  = [];   // id_archivo_plano => líneas en el orden de la descarga
 
             $pdo->beginTransaction();
 
             foreach ($filas as $f) {
-                $id_archivo = trim((string)($f['id_archivo_plano'] ?? ''));
-                $id_factura = trim((string)($f['id_factura'] ?? ''));
-                $id_cuota   = trim((string)($f['id_cuota'] ?? ''));
-                $estado     = strtoupper(trim((string)($f['estado_pago'] ?? '')));
-                $ref        = trim((string)($f['referencia_bancaria'] ?? ''));
-                $cod        = strtoupper(trim((string)($f['cod_bancario'] ?? '')));
-                $fec_pago   = trim((string)($f['fec_pago'] ?? '')) ?: date('Y-m-d');
+                $id_archivo = limpiar_celda($f['id_archivo_plano'] ?? '');
+                $consec     = limpiar_celda($f['consecutivo'] ?? '');
+                $estado_txt = strtoupper(limpiar_celda($f['estado'] ?? ''));
+                $id_codigo  = limpiar_celda($f['codigo_respuesta'] ?? '');
+                $fec_txt    = limpiar_celda($f['fecha_pago'] ?? '');
+                $doc        = limpiar_celda($f['documento_proveedor'] ?? '');
+                $cuenta     = limpiar_celda($f['cuenta_destino'] ?? '');
+                $valor      = limpiar_celda($f['valor_a_pagar'] ?? '');
 
-                $etiqueta = "Archivo {$id_archivo} / Factura {$id_factura} / Cuota {$id_cuota}";
+                $etiqueta = "Archivo {$id_archivo} / línea {$consec}";
 
-                if ($id_archivo === '' || !ctype_digit($id_archivo) ||
-                    $id_factura === '' || !ctype_digit($id_factura) ||
-                    $id_cuota   === '' || !ctype_digit($id_cuota)) {
-                    $omitidas[] = "{$etiqueta}: identificadores no válidos.";
+                if (!ctype_digit($id_archivo) || !ctype_digit($consec) || (int)$consec < 1) {
+                    $omitidas[] = "{$etiqueta}: ID de archivo o consecutivo no válido.";
                     continue;
                 }
 
-                // estado_pago CHECK IN ('PENDIENTE','APROBADO','RECHAZADO')
-                if (!in_array($estado, ['APROBADO', 'RECHAZADO'], true)) {
-                    $omitidas[] = "{$etiqueta}: el estado '{$estado}' no es APROBADO ni RECHAZADO.";
+                // 2 = APROBADO, 3 = RECHAZADO (1 = PENDIENTE no llega en una respuesta)
+                $estados = ['APROBADO' => 2, 'RECHAZADO' => 3];
+                if (!isset($estados[$estado_txt])) {
+                    $omitidas[] = "{$etiqueta}: el estado '{$estado_txt}' no es APROBADO ni RECHAZADO.";
+                    continue;
+                }
+                $estado_pago = $estados[$estado_txt];
+
+                // id_codigo VARCHAR(10), obligatorio también en los aprobados
+                if ($id_codigo === '' || strlen($id_codigo) > 10) {
+                    $omitidas[] = "{$etiqueta}: falta el código de respuesta del banco o supera 10 caracteres.";
                     continue;
                 }
 
-                // referencia_bancaria VARCHAR(30)
-                if (strlen($ref) > 30) {
-                    $omitidas[] = "{$etiqueta}: la referencia bancaria supera 30 caracteres.";
+                $fec_pago = $fec_txt === '' ? date('Y-m-d') : fecha_iso($fec_txt);
+                if ($fec_pago === null) {
+                    $omitidas[] = "{$etiqueta}: la fecha de pago '{$fec_txt}' no es válida (use AAAA-MM-DD).";
                     continue;
                 }
 
-                // id_motivo_rechazo es obligatorio si el estado es RECHAZADO
-                $id_motivo = null;
-                if ($estado === 'RECHAZADO') {
-                    if ($cod === '') {
-                        $omitidas[] = "{$etiqueta}: rechazado sin código bancario.";
-                        continue;
-                    }
-                    if (!isset($mapa_motivos[$cod])) {
-                        $omitidas[] = "{$etiqueta}: el código '{$cod}' no está en el catálogo de motivos.";
-                        continue;
-                    }
-                    $id_motivo = $mapa_motivos[$cod];
+                // Detalle del archivo, una sola consulta por archivo
+                if (!isset($detalles[$id_archivo])) {
+                    $list_det_archivo_plano->execute([':wid_archivo_plano' => (int)$id_archivo]);
+                    $detalles[$id_archivo] = $list_det_archivo_plano->fetchAll(PDO::FETCH_ASSOC);
+                }
+                $detalle = $detalles[$id_archivo];
+
+                if (empty($detalle)) {
+                    $omitidas[] = "{$etiqueta}: el archivo plano {$id_archivo} no existe o no tiene pagos.";
+                    continue;
                 }
 
-                // La línea tiene que existir de verdad en el archivo plano enviado al banco
-                $get_linea_archivo_plano->execute([
-                    ':wid_archivo_plano' => (int)$id_archivo,
-                    ':wid_factura'       => (int)$id_factura,
-                    ':wid_cuota'         => (int)$id_cuota,
-                ]);
-                $linea = $get_linea_archivo_plano->fetch(PDO::FETCH_ASSOC);
-
+                $linea = $detalle[(int)$consec - 1] ?? null;
                 if (!$linea) {
-                    $omitidas[] = "{$etiqueta}: esa línea no existe en el archivo plano.";
+                    $omitidas[] = "{$etiqueta}: el archivo plano solo tiene " . count($detalle) . " línea(s).";
                     continue;
                 }
 
-                // No duplicar el historial si el archivo de respuesta se importa dos veces
+                // Control cruzado: la línea N del ERP debe ser el mismo pago que respondió el banco
+                if ($doc !== '' && $doc !== trim((string)$linea['id_proveedor'])) {
+                    $omitidas[] = "{$etiqueta}: el documento {$doc} no coincide con el de esa línea ({$linea['id_proveedor']}).";
+                    continue;
+                }
+                if ($cuenta !== '' && $cuenta !== trim((string)$linea['cta_proveedor'])) {
+                    $omitidas[] = "{$etiqueta}: la cuenta {$cuenta} no coincide con la de esa línea ({$linea['cta_proveedor']}).";
+                    continue;
+                }
+                if ($valor !== '' && (!is_numeric($valor) || abs((float)$valor - (float)$linea['val_a_pagar']) > 0.5)) {
+                    $omitidas[] = "{$etiqueta}: el valor {$valor} no coincide con el de esa línea (" . number_format((float)$linea['val_a_pagar'], 0, '', '') . ").";
+                    continue;
+                }
+
+                // ¿Esa línea ya tiene respuesta? Si está PENDIENTE (1) se actualiza;
+                // si ya está resuelta, se omite (archivo importado dos veces).
                 $check_pago_de_linea->execute([
                     ':wid_archivo_plano' => (int)$id_archivo,
-                    ':wid_factura'       => (int)$id_factura,
-                    ':wid_cuota'         => (int)$id_cuota,
+                    ':wid_factura'       => (int)$linea['id_factura'],
+                    ':wid_cuota'         => (int)$linea['id_cuota'],
                 ]);
-                if ($check_pago_de_linea->fetch(PDO::FETCH_ASSOC)) {
-                    $omitidas[] = "{$etiqueta}: ya tiene un pago registrado (¿archivo reimportado?).";
+                $previo = $check_pago_de_linea->fetch(PDO::FETCH_ASSOC);
+
+                if ($previo && (int)$previo['estado_pago'] !== 1) {
+                    $ya = (int)$previo['estado_pago'] === 2 ? 'APROBADO' : 'RECHAZADO';
+                    $omitidas[] = "{$etiqueta}: ya tiene respuesta registrada ({$ya}).";
                     continue;
                 }
 
-                // ---- Cada fila en su propio SAVEPOINT: si algo falla aquí (incluida
-                // cualquier validación de las funciones de la base), solo se revierte
-                // esta fila, no todo el lote, y el motivo queda visible en "omitidas".
+                // Cada fila en su propio SAVEPOINT: si la base la rechaza, solo se
+                // revierte esa fila y el motivo queda en "omitidas".
                 $pdo->exec('SAVEPOINT sp_fila');
                 try {
-                    // ---- CREAR EL PAGO — el valor sale de tab_det_archivo_plano, no del CSV ----
-                    $ins_pago_cxp->execute([
-                        ':wid_factura'          => (int)$id_factura,
-                        ':wid_cuota'            => (int)$id_cuota,
-                        ':wid_archivo_plano'    => (int)$id_archivo,
-                        ':wfec_pago'            => $fec_pago,
-                        ':wval_pago'            => (float)$linea['val_a_pagar'],
-                        ':wreferencia_bancaria' => $ref !== '' ? $ref : null,
-                    ]);
-                    // fun_insert_pagos_cxp devuelve BOOLEAN (no el id_pago), así que
-                    // el id recién creado se recupera con la misma consulta que ya
-                    // usamos para detectar duplicados.
-                    $check_pago_de_linea->execute([
-                        ':wid_archivo_plano' => (int)$id_archivo,
-                        ':wid_factura'       => (int)$id_factura,
-                        ':wid_cuota'         => (int)$id_cuota,
-                    ]);
-                    $fila_creada   = $check_pago_de_linea->fetch(PDO::FETCH_ASSOC);
-                    $id_pago_nuevo = (int)($fila_creada['id_pago'] ?? 0);
-
-                    if ($id_pago_nuevo <= 0) {
-                        throw new Exception('no se pudo recuperar el id_pago recién creado.');
+                    if ($previo) {
+                        $upd_estado_pago_cxp->execute([
+                            ':wid_pago'     => (int)$previo['id_pago'],
+                            ':westado_pago' => $estado_pago,
+                            ':wid_codigo'   => $id_codigo,
+                        ]);
+                    } else {
+                        $ins_pago_cxp->execute([
+                            ':wid_archivo_plano' => (int)$id_archivo,
+                            ':wid_factura'       => (int)$linea['id_factura'],
+                            ':wid_cuota'         => (int)$linea['id_cuota'],
+                            ':wfec_pago'         => $fec_pago,
+                            ':westado_pago'      => $estado_pago,
+                            ':wid_codigo'        => $id_codigo,
+                        ]);
                     }
-
-                    // ---- FIJAR EL ESTADO FINAL QUE TRAJO EL BANCO ----
-                    $upd_estado_pago_cxp->execute([
-                        ':wid_pago'             => $id_pago_nuevo,
-                        ':westado_pago'         => $estado,
-                        ':wreferencia_bancaria' => $ref !== '' ? $ref : null,
-                        ':wid_motivo_rechazo'   => $id_motivo,
-                    ]);
-
-                    // ---- SI QUEDÓ APROBADO: cuota pagada, saldo recalculado, cronograma cerrado ----
-                    if ($estado === 'APROBADO') {
-                        $mark_cuota_pagada->execute([
-                            ':wid_factura' => (int)$id_factura,
-                            ':wid_cuota'   => (int)$id_cuota,
-                        ]);
-                        $recalc_saldo_factura->execute([
-                            ':wid_factura' => (int)$id_factura,
-                        ]);
-                        $get_cronograma_de_cuota->execute([
-                            ':wid_factura' => (int)$id_factura,
-                            ':wid_cuota'   => (int)$id_cuota,
-                        ]);
-                        $cronograma = $get_cronograma_de_cuota->fetch(PDO::FETCH_ASSOC);
-                        if ($cronograma) {
-                            $cerrar_cronograma_si_pagado->execute([
-                                ':wid_cronograma' => (int)$cronograma['id_cronograma'],
-                            ]);
-                        }
-                    }
-
                     $pdo->exec('RELEASE SAVEPOINT sp_fila');
-                } catch (Exception $e) {
+                } catch (Throwable $e) {
                     $pdo->exec('ROLLBACK TO SAVEPOINT sp_fila');
-                    $omitidas[] = "{$etiqueta}: " . $e->getMessage();
+                    $omitidas[] = "{$etiqueta} (factura {$linea['id_factura']}, cuota {$linea['id_cuota']}): "
+                                . limpiar_error_pgsql($e->getMessage());
                     continue;
                 }
 
@@ -235,16 +253,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $respuesta['message']   = $aplicadas > 0
                 ? "Se registraron {$aplicadas} pago(s) a partir de la respuesta del banco." . (count($omitidas) ? ' ' . count($omitidas) . ' fila(s) omitida(s).' : '')
                 : 'Ninguna fila se pudo aplicar.';
-            echo json_encode($respuesta);
-            exit;
+            responder_json($respuesta);
         }
 
         $respuesta['message'] = 'Acción no válida.';
-        echo json_encode($respuesta);
-        exit;
+        responder_json($respuesta);
 
-    } catch (Exception $e) {
-        if (isset($pdo) && $pdo->inTransaction()) {
+    } catch (Throwable $e) {
+        if (isset($pdo) && $pdo instanceof PDO && $pdo->inTransaction()) {
             $pdo->rollBack();
         }
         $mensaje = limpiar_error_pgsql($e->getMessage());
@@ -252,19 +268,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $mensaje = $e->getMessage();
         }
         $respuesta['message'] = $mensaje;
-        echo json_encode($respuesta);
-        exit;
+        responder_json($respuesta);
     }
 }
 
 // ============================================================
 // CARGAR TABLA (SOLO PARA LA VISTA INICIAL)
 // ============================================================
-// $list_pagos_cxp_full debe traer, además de tab_pagos_cxp:
-//   nom_tercero  (join con tab_terceros vía tab_facturasxproveedor)
-//   nom_archivo  (join con tab_encabezado_archivo_plano, NULL si fue pago manual)
-//   des_motivo   (join con tab_motivos_rechazo, NULL si no fue rechazado)
-//   cod_bancario (join con tab_motivos_rechazo)
+// $list_pagos_cxp trae estado_pago numérico (1, 2, 3) y nom_estado_pago
+// ('PENDIENTE', 'APROBADO', 'RECHAZADO'); la vista usa el nombre.
 $list_pagos_cxp->execute();
 $pagos = $list_pagos_cxp->fetchAll(PDO::FETCH_ASSOC);
 
@@ -278,7 +290,7 @@ $rechazados = 0;
 $val_aprobado = 0.0;
 
 foreach ($pagos as $p) {
-    switch ($p['estado_pago']) {
+    switch ($p['nom_estado_pago']) {
         case 'APROBADO':
             $aprobados++;
             $val_aprobado += (float)$p['val_pago'];
@@ -369,7 +381,7 @@ ob_start();
     <div class="filter-bar">
         <div class="search-wrapper">
             <span class="search-icon"><i class="fas fa-search"></i></span>
-            <input type="text" id="pago-search" class="search-input" placeholder="Buscar por pago, factura o referencia bancaria...">
+            <input type="text" id="pago-search" class="search-input" placeholder="Buscar por pago, factura, proveedor o código del banco...">
         </div>
         <div class="filter-toggle-group">
             <button class="filter-toggle active" data-filter="all">Todos</button>
@@ -417,10 +429,10 @@ ob_start();
                 <tr>
                     <th class="sortable" data-sort-key="0" data-sort-type="number">Pago <i class="fas fa-caret-down sort-icon"></i></th>
                     <th class="sortable" data-sort-key="1" data-sort-type="number">Factura / Cuota <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="2" data-sort-type="text">Origen <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="2" data-sort-type="number">Archivo Plano <i class="fas fa-caret-down sort-icon"></i></th>
                     <th class="sortable" data-sort-key="3" data-sort-type="text">Fecha de Pago <i class="fas fa-caret-down sort-icon"></i></th>
                     <th class="text-right sortable" data-sort-key="4" data-sort-type="number">Valor <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="5" data-sort-type="text">Referencia Bancaria <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="5" data-sort-type="text">Respuesta del Banco <i class="fas fa-caret-down sort-icon"></i></th>
                     <th class="text-center">Estado</th>
                     <th class="text-center">Acciones</th>
                 </tr>
@@ -432,41 +444,37 @@ ob_start();
                         <div class="empty-state">
                             <i class="fas fa-receipt"></i>
                             <p>No hay pagos registrados</p>
-                            <span>Los pagos aparecen aquí cuando se registran desde el archivo plano o como pago manual</span>
+                            <span>Los pagos aparecen aquí al importar la respuesta del banco a un archivo plano</span>
                         </div>
                     </td>
                 </tr>
             <?php else: ?>
                 <?php foreach ($pagos as $p):
-                    $rechazado = $p['estado_pago'] === 'RECHAZADO';
-                    $ref       = trim((string)($p['referencia_bancaria'] ?? ''));
-                    $archivo   = trim((string)($p['nom_archivo'] ?? ''));
+                    $estado    = (string)$p['nom_estado_pago'];
+                    $rechazado = $estado === 'RECHAZADO';
+                    $codigo    = trim((string)($p['id_codigo'] ?? ''));
+                    $motivo    = trim((string)($p['des_motivo'] ?? ''));
                 ?>
                 <tr data-id-pago="<?= (int)$p['id_pago'] ?>"
-                    data-estado="<?= htmlspecialchars($p['estado_pago']) ?>"
-                    data-fecha="<?= htmlspecialchars($p['fec_pago']) ?>"
+                    data-estado="<?= htmlspecialchars($estado) ?>"
+                    data-fecha="<?= htmlspecialchars((string)$p['fec_pago']) ?>"
                     class="<?= $rechazado ? 'rechazado' : '' ?>">
                     <td data-sort="<?= (int)$p['id_pago'] ?>"><strong>#<?= (int)$p['id_pago'] ?></strong></td>
                     <td data-sort="<?= (int)$p['id_factura'] * 1000 + (int)$p['id_cuota'] ?>">
                         Fact. #<?= (int)$p['id_factura'] ?> — Cuota <?= (int)$p['id_cuota'] ?><br>
                         <small style="color:#94a3b8;font-size:11px"><?= htmlspecialchars($p['nom_tercero'] ?? '') ?></small>
                     </td>
-                    <td data-sort="<?= htmlspecialchars($archivo) ?>">
-                        <?php if ($archivo !== ''): ?>
-                            <?= htmlspecialchars($archivo) ?>
-                        <?php else: ?>
-                            <span class="origen-manual">Pago manual</span>
-                        <?php endif; ?>
-                    </td>
+                    <td data-sort="<?= (int)$p['id_archivo_plano'] ?>">Archivo #<?= (int)$p['id_archivo_plano'] ?></td>
                     <td data-sort="<?= htmlspecialchars((string)($p['fec_pago'] ?? '')) ?>"><?= fecha_larga($p['fec_pago']) ?></td>
                     <td class="text-right" data-sort="<?= (float)$p['val_pago'] ?>">$<?= number_format((float)$p['val_pago'], 0, ',', '.') ?></td>
-                    <td class="ref-bancaria<?= $ref === '' ? ' ref-vacia' : '' ?>" data-sort="<?= htmlspecialchars($ref) ?>">
-                        <?= $ref !== '' ? htmlspecialchars($ref) : 'Sin referencia' ?>
+                    <td class="ref-bancaria" data-sort="<?= htmlspecialchars($codigo) ?>">
+                        <strong><?= htmlspecialchars($codigo) ?></strong>
+                        <?php if ($motivo !== ''): ?><br><small style="color:#94a3b8;font-size:11px"><?= htmlspecialchars($motivo) ?></small><?php endif; ?>
                     </td>
-                    <td class="text-center"><?= estado_badge($p['estado_pago']) ?></td>
+                    <td class="text-center"><?= estado_badge($estado) ?></td>
                     <td class="text-center">
                         <button class="btn-icon-sm view" title="Ver detalle"
-                                onclick='openDetailModal(<?= json_encode($p, JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'>
+                                onclick='openDetailModal(<?= json_encode($p, JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_TAG | JSON_HEX_AMP) ?>)'>
                             <i class="fas fa-eye"></i>
                         </button>
                     </td>
@@ -509,10 +517,10 @@ ob_start();
 
                 <p class="config-hint">
                     <i class="fas fa-info-circle"></i>
-                    <span>El archivo debe traer las columnas <strong>id_archivo_plano</strong>, <strong>id_factura</strong>,
-                    <strong>id_cuota</strong>, <strong>estado_pago</strong> (APROBADO o RECHAZADO),
-                    <strong>referencia_bancaria</strong> y <strong>cod_bancario</strong> (obligatorio en los rechazos).
-                    Cada fila crea el pago en el historial; si esa línea ya tiene un pago registrado, se omite.</span>
+                    <span>El archivo debe traer <strong>ID Archivo Plano</strong>, <strong>Consecutivo</strong> (número de línea
+                    del pago en el archivo plano), <strong>Estado</strong> (APROBADO o RECHAZADO), <strong>Código Respuesta</strong>
+                    y <strong>Fecha Pago</strong>. Se verifica que documento, cuenta y valor coincidan con la línea del archivo plano.
+                    Si esa línea ya tiene respuesta, se omite.</span>
                 </p>
 
                 <div class="import-resumen" id="import-resumen">
@@ -566,8 +574,8 @@ ob_start();
 <div id="toast" class="hidden"><span id="toast-message"></span></div>
 
 <script>
-// Datos completos para el detalle y la exportación a CSV
-const pagosData = <?= json_encode($pagos) ?>;
+// Datos completos para el detalle y los totales filtrados
+const pagosData = <?= json_encode($pagos, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) ?>;
 </script>
 
 <script src="modules/tescxp/js/pagos_tescxp.js"></script>

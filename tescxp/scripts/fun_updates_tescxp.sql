@@ -1,4 +1,21 @@
 --------------------------------------------------------------------------------------------------------------------------------------
+-- LIMPIEZA DE VERSIONES ANTERIORES
+-- Borra las funciones de este archivo que cambiaron de parámetros o que ya no
+-- existen (motivos de rechazo). CREATE OR REPLACE no reemplaza una función
+-- cuya firma cambió: crearía una segunda versión al lado de la vieja.
+--------------------------------------------------------------------------------------------------------------------------------------
+DO $$
+DECLARE r RECORD;
+BEGIN
+    FOR r IN SELECT oid::regprocedure AS fn
+               FROM pg_proc
+              WHERE proname IN ('fun_update_motivos_rechazo',
+                                'fun_update_pagos_cxp') LOOP
+        EXECUTE 'DROP FUNCTION ' || r.fn;
+    END LOOP;
+END $$;
+
+--------------------------------------------------------------------------------------------------------------------------------------
 -- FUNCIÓN DE UPDATE DE FESTIVOS
 --------------------------------------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fun_update_festivos (wid_festivo     tab_festivos.id_festivo%TYPE,
@@ -444,6 +461,69 @@ $BODY$
 LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN DE UPDATE DE TIPOS DE PAGO
+-- NOTA: El ID es la llave primaria y no se cambia. Actualiza el nombre y el indicador de
+--       borrado: con wind_borrado = FALSE se reactiva un tipo de pago inactivo. Para
+--       inactivar se usa fun_delete_tipos_pago, que valida los archivos planos pendientes.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_update_tipos_pago (wid_tipo_pago     tab_tipos_pago.id_tipo_pago%TYPE,
+                                                  wnom_tipo_pago    tab_tipos_pago.nom_tipo_pago%TYPE,
+                                                  wind_borrado      tab_tipos_pago.ind_borrado%TYPE) RETURNS BOOLEAN AS
+$BODY$
+BEGIN
+
+-- VALIDAR QUE LOS CAMPOS NO SEAN NULOS
+    IF wid_tipo_pago IS NULL THEN
+        RAISE EXCEPTION 'El ID del tipo de pago no puede ser nulo.';
+    END IF;
+
+    IF wnom_tipo_pago IS NULL THEN
+        RAISE EXCEPTION 'El nombre del tipo de pago no puede ser nulo.';
+    END IF;
+
+    IF wind_borrado IS NULL THEN
+        RAISE EXCEPTION 'El indicador de borrado no puede ser nulo.';
+    END IF;
+
+-- VALIDAR QUE EL TIPO DE PAGO EXISTA
+    IF NOT EXISTS (SELECT 1 FROM tab_tipos_pago WHERE id_tipo_pago = wid_tipo_pago) THEN
+        RAISE EXCEPTION 'El tipo de pago % no existe.', wid_tipo_pago;
+    END IF;
+
+-- VALIDAR LONGITUD DEL NOMBRE
+    IF LENGTH(TRIM(wnom_tipo_pago)) < 1 OR LENGTH(TRIM(wnom_tipo_pago)) > 15 THEN
+        RAISE EXCEPTION 'El nombre del tipo de pago debe tener entre 1 y 15 caracteres.';
+    END IF;
+
+-- VALIDAR QUE EL NOMBRE NO LO TENGA OTRO TIPO DE PAGO
+    IF EXISTS (SELECT 1 FROM tab_tipos_pago
+                WHERE UPPER(nom_tipo_pago) = UPPER(TRIM(wnom_tipo_pago))
+                  AND id_tipo_pago <> wid_tipo_pago) THEN
+        RAISE EXCEPTION 'Ya existe otro tipo de pago con el nombre %.', UPPER(TRIM(wnom_tipo_pago));
+    END IF;
+
+-- NO SE INACTIVA POR AQUÍ (hay que pasar por las validaciones de fun_delete_tipos_pago)
+    IF wind_borrado = TRUE AND EXISTS (SELECT 1 FROM tab_tipos_pago
+                                        WHERE id_tipo_pago = wid_tipo_pago AND ind_borrado = FALSE) THEN
+        RAISE EXCEPTION 'Para inactivar un tipo de pago use la opción de inactivar.';
+    END IF;
+
+-- SI TODO VA BIEN, SE ACTUALIZA
+    UPDATE tab_tipos_pago
+    SET    nom_tipo_pago = UPPER(TRIM(wnom_tipo_pago)),
+           ind_borrado   = wind_borrado
+    WHERE  id_tipo_pago  = wid_tipo_pago;
+
+    RETURN TRUE;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
 -- FUNCIÓN DE UPDATE DE ENCABEZADO DE ARCHIVO PLANO
 -- NOTA: Solo se permite editar mientras el archivo plano NO haya sido generado (ind_generado = FALSE).
 --------------------------------------------------------------------------------------------------------------------------------------
@@ -509,67 +589,59 @@ $BODY$
 LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
--- FUNCIÓN DE UPDATE DE MOTIVOS DE RECHAZO DE CUENTAS POR PAGAR
+-- FUNCIÓN DE UPDATE DE CÓDIGOS DE RESPUESTA DEL BANCO
+-- NOTA: id_codigo e id_banco identifican el registro y no se cambian. Con
+--       wind_borrado = FALSE se puede reactivar un código dado de baja.
 --------------------------------------------------------------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION fun_update_motivos_rechazo (wid_motivo_rechazo tab_motivos_rechazo.id_motivo_rechazo%TYPE,
-													   wdes_motivo tab_motivos_rechazo.des_motivo%TYPE, 
-                                                       wcod_bancario tab_motivos_rechazo.cod_bancario%TYPE, 
-                                                       wind_borrado tab_motivos_rechazo.ind_borrado%TYPE) RETURNS BOOLEAN AS $BODY$ 
-BEGIN 
-    -- 1. VALIDACIONES DE NULIDAD
-    IF wid_motivo_rechazo IS NULL THEN 
-		RAISE EXCEPTION 'El ID del motivo de rechazo no puede ser nulo.'; 
-	END IF;
-	
+CREATE OR REPLACE FUNCTION fun_update_codigos_respuesta_banco (wid_codigo      tab_codigos_respuesta_banco.id_codigo%TYPE,
+                                                               wid_banco       tab_codigos_respuesta_banco.id_banco%TYPE,
+                                                               wdes_motivo     tab_codigos_respuesta_banco.des_motivo%TYPE,
+                                                               wind_borrado    tab_codigos_respuesta_banco.ind_borrado%TYPE) RETURNS BOOLEAN AS
+$BODY$
+BEGIN
+
+-- VALIDAR QUE LOS CAMPOS NO SEAN NULOS
+    IF wid_codigo IS NULL THEN
+        RAISE EXCEPTION 'El código de respuesta no puede ser nulo.';
+    END IF;
+
+    IF wid_banco IS NULL THEN
+        RAISE EXCEPTION 'El ID del banco no puede ser nulo.';
+    END IF;
+
     IF wdes_motivo IS NULL THEN
-		RAISE EXCEPTION 'La descripción del motivo no puede ser nula.';
-	END IF;
-	
-    IF wcod_bancario IS NULL THEN
-		RAISE EXCEPTION 'El código bancario no puede ser nulo.';
-	END IF;
-	
+        RAISE EXCEPTION 'La descripción del código no puede ser nula.';
+    END IF;
+
     IF wind_borrado IS NULL THEN
-		RAISE EXCEPTION 'El indicador de borrado no puede ser nulo.';
-	END IF;
-
-    -- 2. VALIDAR QUE EL REGISTRO REALMENTE EXISTA PARA PODER ACTUALIZARLO
-    IF NOT EXISTS (SELECT 1 FROM tab_motivos_rechazo WHERE id_motivo_rechazo = wid_motivo_rechazo) THEN 
-        RAISE EXCEPTION 'El motivo de rechazo % no existe para ser actualizado.', wid_motivo_rechazo; 
+        RAISE EXCEPTION 'El indicador de borrado no puede ser nulo.';
     END IF;
 
-    -- 3. VALIDAR QUE EL CÓDIGO BANCARIO NO ESTÉ ASIGNADO A *OTRO* REGISTRO DIFERENTE
-    IF EXISTS (SELECT 1 FROM tab_motivos_rechazo WHERE cod_bancario = wcod_bancario AND id_motivo_rechazo != wid_motivo_rechazo) THEN 
-        RAISE EXCEPTION 'El código bancario % ya está asignado a otro motivo de rechazo.', wcod_bancario; 
+-- VALIDAR QUE EL CÓDIGO EXISTA
+    IF NOT EXISTS (SELECT 1 FROM tab_codigos_respuesta_banco WHERE id_codigo = wid_codigo AND id_banco = wid_banco) THEN
+        RAISE EXCEPTION 'El código % no existe para el banco %.', wid_codigo, wid_banco;
     END IF;
 
-    -- 4. VALIDACIONES DE RANGOS Y LONGITUDES
-    IF wid_motivo_rechazo < 1 OR wid_motivo_rechazo > 999 THEN 
-        RAISE EXCEPTION 'El ID del motivo de rechazo debe estar entre 1 y 999.'; 
-    END IF;
-	
-    IF LENGTH(wdes_motivo) < 3 OR LENGTH(wdes_motivo) > 200 THEN 
-        RAISE EXCEPTION 'La descripción del motivo debe tener entre 3 y 200 caracteres.'; 
-    END IF;
-	
-    IF LENGTH(wcod_bancario) < 1 OR LENGTH(wcod_bancario) > 10 THEN 
-        RAISE EXCEPTION 'El código bancario debe tener entre 1 y 10 caracteres.'; 
+-- VALIDAR LONGITUD DE LA DESCRIPCIÓN
+    IF LENGTH(TRIM(wdes_motivo)) < 3 OR LENGTH(wdes_motivo) > 100 THEN
+        RAISE EXCEPTION 'La descripción del código debe tener entre 3 y 100 caracteres.';
     END IF;
 
-    -- 5. EJECUCIÓN DEL UPDATE
-    UPDATE tab_motivos_rechazo 
-    SET    des_motivo        = wdes_motivo, 
-           cod_bancario      = wcod_bancario, 
-           ind_borrado       = wind_borrado 
-    WHERE  id_motivo_rechazo = wid_motivo_rechazo;
+-- SI TODO VA BIEN, SE ACTUALIZA
+    UPDATE tab_codigos_respuesta_banco
+    SET    des_motivo  = TRIM(wdes_motivo),
+           ind_borrado = wind_borrado
+    WHERE  id_codigo   = wid_codigo
+      AND  id_banco    = wid_banco;
 
     RETURN TRUE;
 
-EXCEPTION 
-    WHEN OTHERS THEN 
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM); 
-END; 
-$BODY$ LANGUAGE PLPGSQL;
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
 -- FUNCIÓN DE UPDATE DE BANCOS
@@ -643,77 +715,84 @@ LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
 -- FUNCIÓN DE UPDATE DE PAGOS DE CUENTAS POR PAGAR
--- NOTA: Fija el estado final que respondió el banco (APROBADO o RECHAZADO)
---       sobre un pago creado por fun_insert_pagos_cxp. Solo aplica sobre
---       pagos que sigan en PENDIENTE; no se puede volver a resolver uno
---       que ya quedó APROBADO o RECHAZADO.
+-- NOTA: Solo resuelve pagos que siguen en 1 (PENDIENTE): los pasa a 2
+--       (APROBADO) o 3 (RECHAZADO) con el código que mandó el banco. Un pago
+--       ya resuelto no se vuelve a cambiar; si fue rechazado, la cuota se
+--       reintenta en un archivo plano nuevo.
 --------------------------------------------------------------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION fun_update_pagos_cxp (wid_pago               tab_pagos_cxp.id_pago%TYPE,
-                                                 westado_pago           tab_pagos_cxp.estado_pago%TYPE,
-                                                 wreferencia_bancaria   tab_pagos_cxp.referencia_bancaria%TYPE,
-                                                 wid_motivo_rechazo     tab_pagos_cxp.id_motivo_rechazo%TYPE) RETURNS BOOLEAN AS
+CREATE OR REPLACE FUNCTION fun_update_pagos_cxp (wid_pago        tab_pagos_cxp.id_pago%TYPE,
+                                                 westado_pago    tab_pagos_cxp.estado_pago%TYPE,
+                                                 wid_codigo      tab_pagos_cxp.id_codigo%TYPE) RETURNS BOOLEAN AS
 $BODY$
 
-DECLARE westado_actual tab_pagos_cxp.estado_pago%TYPE;
+DECLARE westado_actual  tab_pagos_cxp.estado_pago%TYPE;
+        wid_banco       tab_pagos_cxp.id_banco%TYPE;
+        wid_factura     tab_pagos_cxp.id_factura%TYPE;
+        wid_cuota       tab_pagos_cxp.id_cuota%TYPE;
+        wid_cronograma  tab_pagos_cxp.id_cronograma%TYPE;
 
 BEGIN
 
--- VALIDAR QUE EL ID DEL PAGO NO SEA NULO
+-- VALIDAR QUE LOS CAMPOS NO SEAN NULOS
     IF wid_pago IS NULL THEN
         RAISE EXCEPTION 'El ID del pago no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE EL ESTADO DEL PAGO NO SEA NULO
     IF westado_pago IS NULL THEN
         RAISE EXCEPTION 'El estado del pago no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE EL PAGO EXISTA Y OBTENER SU ESTADO ACTUAL
-    SELECT estado_pago INTO westado_actual
-    FROM   tab_pagos_cxp
-    WHERE  id_pago = wid_pago;
+    IF wid_codigo IS NULL THEN
+        RAISE EXCEPTION 'El código de respuesta del banco no puede ser nulo.';
+    END IF;
 
-    IF westado_actual IS NULL THEN
+-- VALIDAR QUE EL PAGO EXISTA Y TRAER SUS DATOS
+    SELECT estado_pago, id_banco, id_factura, id_cuota, id_cronograma
+      INTO westado_actual, wid_banco, wid_factura, wid_cuota, wid_cronograma
+      FROM tab_pagos_cxp
+     WHERE id_pago = wid_pago;
+
+    IF NOT FOUND THEN
         RAISE EXCEPTION 'El pago % no existe.', wid_pago;
     END IF;
 
--- VALIDAR QUE EL PAGO SIGA EN PENDIENTE (NO SE PUEDE VOLVER A RESOLVER UNO YA RESUELTO)
-    IF westado_actual <> 'PENDIENTE' THEN
-        RAISE EXCEPTION 'El pago % ya está en %.', wid_pago, westado_actual;
+-- VALIDAR QUE SIGA EN PENDIENTE
+    IF westado_actual <> 1 THEN
+        RAISE EXCEPTION 'El pago % ya fue resuelto (estado %) y no puede modificarse.', wid_pago,
+            CASE westado_actual WHEN 2 THEN 'APROBADO' ELSE 'RECHAZADO' END;
     END IF;
 
 -- VALIDAR QUE EL ESTADO NUEVO SEA APROBADO O RECHAZADO
-    IF westado_pago NOT IN ('APROBADO', 'RECHAZADO') THEN
-        RAISE EXCEPTION 'El estado % no es válido: debe ser APROBADO o RECHAZADO.', westado_pago;
+    IF westado_pago NOT IN (2, 3) THEN
+        RAISE EXCEPTION 'El estado % no es válido: debe ser 2 (Aprobado) o 3 (Rechazado).', westado_pago;
     END IF;
 
--- VALIDAR QUE EL MOTIVO DE RECHAZO VENGA SOLO CUANDO EL ESTADO ES RECHAZADO
-    IF westado_pago = 'RECHAZADO' AND wid_motivo_rechazo IS NULL THEN
-        RAISE EXCEPTION 'El motivo de rechazo es obligatorio cuando el estado es RECHAZADO.';
+-- VALIDAR QUE EL CÓDIGO EXISTA Y ESTÉ ACTIVO PARA EL BANCO DEL PAGO
+    IF NOT EXISTS (SELECT 1 FROM tab_codigos_respuesta_banco
+                    WHERE id_codigo   = wid_codigo
+                      AND id_banco    = wid_banco
+                      AND ind_borrado = FALSE) THEN
+        RAISE EXCEPTION 'El código % no existe o está inactivo para el banco %.', wid_codigo, wid_banco;
     END IF;
 
-    IF westado_pago <> 'RECHAZADO' AND wid_motivo_rechazo IS NOT NULL THEN
-        RAISE EXCEPTION 'El motivo de rechazo solo aplica cuando el estado es RECHAZADO.';
-    END IF;
-
--- VALIDAR QUE EL MOTIVO DE RECHAZO EXISTA, SI SE ENVIÓ
-    IF wid_motivo_rechazo IS NOT NULL THEN
-        IF NOT EXISTS (SELECT 1 FROM tab_motivos_rechazo WHERE id_motivo_rechazo = wid_motivo_rechazo) THEN
-            RAISE EXCEPTION 'El motivo de rechazo % no existe.', wid_motivo_rechazo;
-        END IF;
-    END IF;
-
--- VALIDAR QUE LA REFERENCIA BANCARIA NO SUPERE 30 CARACTERES
-    IF wreferencia_bancaria IS NOT NULL AND LENGTH(wreferencia_bancaria) > 30 THEN
-        RAISE EXCEPTION 'La referencia bancaria no puede superar 30 caracteres.';
+-- SI SE VA A APROBAR, VALIDAR QUE LA CUOTA NO ESTÉ YA PAGADA
+    IF westado_pago = 2 AND EXISTS (SELECT 1 FROM tab_cuotasxfactura
+                                     WHERE id_factura = wid_factura
+                                       AND id_cuota   = wid_cuota
+                                       AND ind_pagada = TRUE) THEN
+        RAISE EXCEPTION 'La cuota % de la factura % ya fue pagada.', wid_cuota, wid_factura;
     END IF;
 
 -- SI TODO VA BIEN, SE ACTUALIZA EN tab_pagos_cxp
     UPDATE tab_pagos_cxp
-    SET    estado_pago         = westado_pago,
-           referencia_bancaria = wreferencia_bancaria,
-           id_motivo_rechazo   = wid_motivo_rechazo
-    WHERE  id_pago             = wid_pago;
+    SET    estado_pago = westado_pago,
+           id_codigo   = wid_codigo
+    WHERE  id_pago     = wid_pago;
+
+-- SI QUEDÓ APROBADO: CUOTA PAGADA Y, SI ES LA ÚLTIMA, CRONOGRAMA CERRADO
+    IF westado_pago = 2 THEN
+        PERFORM fun_aplicar_pago_aprobado(wid_factura, wid_cuota, wid_cronograma);
+    END IF;
 
     RETURN TRUE;
 
@@ -723,3 +802,4 @@ EXCEPTION
 END;
 $BODY$
 LANGUAGE PLPGSQL;
+

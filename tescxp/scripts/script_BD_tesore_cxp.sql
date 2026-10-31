@@ -1,5 +1,5 @@
 DROP TABLE IF EXISTS tab_pagos_cxp;
-DROP TABLE IF EXISTS tab_motivos_rechazo;
+DROP TABLE IF EXISTS tab_codigos_respuesta_banco;
 DROP TABLE IF EXISTS tab_det_archivo_plano;
 DROP TABLE IF EXISTS tab_enc_archivo_plano;
 DROP TABLE IF EXISTS tab_tipos_pago;
@@ -235,14 +235,14 @@ CREATE TABLE tab_tipos_pago
 CREATE TABLE tab_enc_archivo_plano 
 (
     id_archivo_plano      DECIMAL(10,0) NOT NULL CHECK((id_archivo_plano) >= 0 AND (id_archivo_plano) <= 9999999999),                       -- Identificador del archivo plano
-    nom_archivo           VARCHAR(30)         NOT NULL CHECK(LENGTH(nom_archivo) >= 3 AND (LENGTH(nom_archivo) <= 30)) DEFAULT 'archivo_plano',   -- Nombre del archivo plano
+    nom_archivo           VARCHAR(30)   NOT NULL CHECK(LENGTH(nom_archivo) >= 3 AND (LENGTH(nom_archivo) <= 30)) DEFAULT 'archivo_plano',   -- Nombre del archivo plano
     id_empresa	          VARCHAR(10)	NOT NULL,													                                        -- Identificador de la empresa
     nom_empresa	          VARCHAR       NOT NULL CHECK(LENGTH(nom_empresa) >= 5 AND LENGTH(nom_empresa) <= 60),                             -- Nombre de la empresa
     id_banco              VARCHAR       NOT NULL,                                                                                           -- Identificador del banco
     ind_tipocuenta        BOOLEAN       NOT NULL DEFAULT FALSE,                                                                             -- TRUE = Corriente / FALSE = Ahorros
     cta_empresa           VARCHAR(16)   NOT NULL CHECK(LENGTH(cta_empresa) >= 10 AND LENGTH(cta_empresa) <= 16),                            -- Número de cuenta bancaria de la empresa de la cuál va a salir el dinero
     fecha_aplicacion      DATE          NOT NULL DEFAULT CURRENT_DATE,
-    id_tipo_pago          DECIMAL(1,0) NOT NULL CHECK((id_tipo_pago) >= 1 AND (id_tipo_pago) < 10),
+    id_tipo_pago          DECIMAL(1,0)  NOT NULL CHECK((id_tipo_pago) >= 1 AND (id_tipo_pago) < 10),
     fec_generacion        DATE,                                                                                                             -- Fecha de generación del archivo(NULL Si no se ha creado)
     ind_generado          BOOLEAN       NOT NULL DEFAULT FALSE,                                                                             -- Indicador de generado del archivo
 
@@ -280,24 +280,27 @@ CREATE TABLE tab_det_archivo_plano
     FOREIGN KEY(id_archivo_plano)                   REFERENCES tab_enc_archivo_plano(id_archivo_plano),
     FOREIGN KEY(id_cronograma,id_factura,id_cuota)  REFERENCES tab_det_cronopagos(id_cronograma,id_factura,id_cuota),
     FOREIGN KEY(id_proveedor,cta_proveedor)         REFERENCES tab_bancoxprov(id_proveedor,cta_proveedor),
-    FOREIGN KEY(id_banco)                           REFERENCES tab_bancos(id_banco),
-
-    CONSTRAINT uq_cuota_en_archivo UNIQUE (id_factura, id_cuota)
+    FOREIGN KEY(id_banco)                           REFERENCES tab_bancos(id_banco)
+    -- Sin UNIQUE (id_factura, id_cuota): una cuota RECHAZADA puede ir a otro archivo
+    -- plano. fun_insert_det_archivo_plano valida que no esté en otro archivo vigente.
 );
+-- Consultas tipo: "¿en qué archivos planos ha estado esta cuota?"
+CREATE INDEX idx_detarch_cuota ON tab_det_archivo_plano(id_factura, id_cuota);
 
 -------------------------------------
 -- TABLA DE MOTIVOS DE RECHAZO     --
 -------------------------------------
--- TABLA 14: Catálogo de motivos. Lo usa tab_pagos
+-- TABLA 14: Catálogo de respuestas de bancos. Lo usa tab_pagos
 -- ind_borrado permite dar de baja un motivo sin romper los registros históricos.
-CREATE TABLE tab_motivos_rechazo
+CREATE TABLE tab_codigos_respuesta_banco
 (
-    id_motivo_rechazo       DECIMAL(3,0) NOT NULL CHECK(id_motivo_rechazo >= 1 AND id_motivo_rechazo <= 999),   -- Identificador del motivo
+    id_codigo       		VARCHAR(10)  NOT NULL CHECK(LENGTH(id_codigo) >= 1 AND LENGTH(id_codigo) <= 10),   -- Código que devuelve el banco
+	id_banco                VARCHAR      NOT NULL,
     des_motivo              VARCHAR(100) NOT NULL CHECK(LENGTH(des_motivo) >= 3),               -- Descripción del motivo
-    cod_bancario            VARCHAR(10),                                                        -- Código que devuelve el banco, si lo hay
     ind_borrado             BOOLEAN      NOT NULL DEFAULT FALSE,                                -- TRUE: Borrado lógico (Inactivo) / FALSE: Activo
 
-    PRIMARY KEY (id_motivo_rechazo)
+    PRIMARY KEY (id_codigo,id_banco),
+	FOREIGN KEY (id_banco)                REFERENCES tab_bancos(id_banco)
 );
 
 -----------------------
@@ -307,10 +310,10 @@ CREATE TABLE tab_motivos_rechazo
 -- rechazado). 
 -- Nunca se borra un intento rechazado.
 -- Alcance: aquí van únicamente los pagos de cuotas. Caja menor y sus
--- reembolsos NO entran a esta tabla (ver tab_det_caja_menor y
--- tab_reembolsos_caja).
--- Nota: sin trigger, marcar la cuota como pagada y descontar el saldo de la
--- factura al aprobar un pago queda a cargo de la aplicación.
+-- reembolsos NO entran a esta tabla (ver tab_det_caja_menor).
+-- estado_pago: 1 = PENDIENTE, 2 = APROBADO, 3 = RECHAZADO.
+-- Al aprobar, fun_insert_pagos_cxp / fun_update_pagos_cxp marcan la cuota como
+-- pagada y cierran el cronograma; los triggers descuentan los saldos.
 CREATE TABLE tab_pagos_cxp
 (
     id_pago             DECIMAL(10,0) NOT NULL CHECK(id_pago >= 1 AND id_pago <= 9999999999),
@@ -320,15 +323,16 @@ CREATE TABLE tab_pagos_cxp
 	id_cronograma       DECIMAL(10,0) NOT NULL,
     fec_pago            DATE          NOT NULL DEFAULT CURRENT_DATE,                                    -- un pago se registra cuando ya ocurrió; la app valida que no sea futura al registrarlo
     val_pago            DECIMAL(10,0) NOT NULL CHECK(val_pago > 0 AND val_pago <= 9999999999),
-    estado_pago         VARCHAR(10)   NOT NULL DEFAULT 'PENDIENTE' CHECK(estado_pago IN ('PENDIENTE','APROBADO','RECHAZADO')),
-    id_motivo_rechazo   DECIMAL(3,0),                                                                   -- Obligatorio si el estado es RECHAZADO
+    estado_pago         DECIMAL(1,0)  NOT NULL DEFAULT 1 CHECK(estado_pago IN (1,2,3)),
+    id_codigo       	VARCHAR(10)   NOT NULL CHECK(LENGTH(id_codigo) >= 1 AND LENGTH(id_codigo) <= 10),   -- Código que devuelve el banco
+	id_banco            VARCHAR       NOT NULL,                                                         -- Banco que respondió (el de la cuenta de origen del archivo plano)
 
     PRIMARY KEY (id_pago),
-    FOREIGN KEY (id_factura, id_cuota)                   REFERENCES tab_cuotasxfactura(id_factura, id_cuota),
-    FOREIGN KEY (id_archivo_plano,id_cronograma,id_factura,id_cuota) REFERENCES tab_det_archivo_plano(id_archivo_plano,id_cronograma,id_factura,id_cuota),
-    FOREIGN KEY (id_motivo_rechazo)                      REFERENCES tab_motivos_rechazo(id_motivo_rechazo)
+    FOREIGN KEY (id_factura, id_cuota)                                  REFERENCES tab_cuotasxfactura(id_factura, id_cuota),
+    FOREIGN KEY (id_archivo_plano,id_cronograma,id_factura,id_cuota)    REFERENCES tab_det_archivo_plano(id_archivo_plano,id_cronograma,id_factura,id_cuota),
+    FOREIGN KEY (id_codigo, id_banco)                                   REFERENCES tab_codigos_respuesta_banco(id_codigo, id_banco)
 );
 -- Una cuota solo puede tener UN pago APROBADO. El índice es parcial a propósito:
 -- los intentos RECHAZADOS no cuentan, así una cuota se puede reintentar las veces
 -- que haga falta, pero aprobarse una sola vez.
-CREATE UNIQUE INDEX uq_pago_aprobado_cuota ON tab_pagos_cxp(id_factura, id_cuota) WHERE estado_pago = 'APROBADO';
+CREATE UNIQUE INDEX uq_pago_aprobado_cuota ON tab_pagos_cxp(id_factura, id_cuota) WHERE estado_pago = 2;

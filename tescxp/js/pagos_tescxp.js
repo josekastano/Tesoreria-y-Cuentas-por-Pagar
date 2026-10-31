@@ -18,7 +18,7 @@ function showToast(message, type = 'success') {
     toast.style.background = type === 'error' ? '#ef4444' : '#0f172a';
     toast.classList.remove('hidden');
     clearTimeout(toast._timer);
-    toast._timer = setTimeout(() => toast.classList.add('hidden'), 3500);
+    toast._timer = setTimeout(() => toast.classList.add('hidden'), type === 'error' ? 7000 : 4000);
 }
 
 function formatMoney(valor) {
@@ -235,24 +235,23 @@ function ajustarAlturaTablaPagos() {
 // 3. MODAL: DETALLE DEL PAGO
 // ============================================================
 function openDetailModal(pago) {
+    // estado_pago es numérico (1, 2, 3); nom_estado_pago trae el nombre
+    const estado = String(pago.nom_estado_pago || '');
     setText('detail-title', `Pago #${pago.id_pago}`);
-    setText('detail-subtitle', `${capEstado(pago.estado_pago)} — ${formatFecha(pago.fec_pago)}`);
+    setText('detail-subtitle', `${capEstado(estado)} — ${formatFecha(pago.fec_pago)}`);
 
-    const rechazado = pago.estado_pago === 'RECHAZADO';
-    const archivo   = (pago.nom_archivo ?? '').trim();
+    const rechazado = estado === 'RECHAZADO';
 
     const bloqueMotivo = rechazado ? `
         <div class="motivo-rechazo">
             <i class="fas fa-circle-exclamation"></i>
             <div class="motivo-rechazo-texto">
                 <span class="motivo-rechazo-label">Motivo del rechazo</span>
-                <span class="motivo-rechazo-valor">${esc(pago.des_motivo) || 'Sin motivo registrado'}${pago.cod_bancario ? ' (' + esc(pago.cod_bancario) + ')' : ''}</span>
+                <span class="motivo-rechazo-valor">${esc(pago.des_motivo) || 'Sin motivo registrado'}${pago.id_codigo ? ' (' + esc(pago.id_codigo) + ')' : ''}</span>
             </div>
         </div>` : '';
 
-    const origen = archivo !== ''
-        ? `Archivo plano #${esc(pago.id_archivo_plano)} — ${esc(archivo)}`
-        : 'Pago manual (cheque o transferencia individual)';
+    const origen = `Archivo plano #${esc(pago.id_archivo_plano)} — Cronograma #${esc(pago.id_cronograma)}`;
 
     document.getElementById('detail-content').innerHTML = `
         ${bloqueMotivo}
@@ -272,7 +271,7 @@ function openDetailModal(pago) {
             <div class="detail-item">
                 <span class="detail-label">Estado</span>
                 <span class="detail-value">
-                    <span class="badge-${String(pago.estado_pago).toLowerCase()}">${capEstado(pago.estado_pago)}</span>
+                    <span class="badge-${estado.toLowerCase()}">${capEstado(estado)}</span>
                 </span>
             </div>
             <div class="detail-item">
@@ -280,8 +279,8 @@ function openDetailModal(pago) {
                 <span class="detail-value">${formatFecha(pago.fec_pago)}</span>
             </div>
             <div class="detail-item">
-                <span class="detail-label">Referencia Bancaria</span>
-                <span class="detail-value">${esc(pago.referencia_bancaria) || '—'}</span>
+                <span class="detail-label">Respuesta del Banco</span>
+                <span class="detail-value">${esc(pago.id_codigo) || '—'}${pago.des_motivo ? '<br><small>' + esc(pago.des_motivo) + '</small>' : ''}</span>
             </div>
             <div class="detail-item" style="grid-column:1/-1">
                 <span class="detail-label">Origen</span>
@@ -302,8 +301,12 @@ window.openDetailModal = openDetailModal;
 // ============================================================
 // 4. IMPORTAR RESPUESTA DEL BANCO (CSV)
 // ============================================================
-// El banco devuelve un archivo con el resultado de cada giro. Aquí se lee,
-// se valida contra los pagos PENDIENTE y se muestra antes de aplicar nada.
+// Formato (el que genera simulador_respuesta_banco.html):
+//   ID Archivo Plano; Consecutivo; <12 columnas del archivo plano>;
+//   Estado; Código Respuesta; Descripción Respuesta; Fecha Pago
+// El archivo plano no lleva factura ni cuota: el banco identifica cada pago
+// por su consecutivo (línea 1, 2, 3...) y el servidor lo cruza con
+// tab_det_archivo_plano en el mismo orden de la descarga.
 let filasImportadas = [];
 
 // Detecta ';' o ',' según cuál aparezca más en el encabezado
@@ -311,6 +314,13 @@ function detectarSeparador(linea) {
     const puntoYComa = (linea.match(/;/g) || []).length;
     const coma       = (linea.match(/,/g) || []).length;
     return puntoYComa >= coma ? ';' : ',';
+}
+
+// ="900123456" (formato texto para Excel) -> 900123456
+function limpiarCelda(v) {
+    v = String(v ?? '').trim();
+    const m = v.match(/^="(.*)"$/);
+    return m ? m[1].trim() : v;
 }
 
 // Parser de una línea CSV que respeta las comillas dobles
@@ -325,26 +335,35 @@ function parsearLinea(linea, sep) {
             if (enComillas && linea[i + 1] === '"') { actual += '"'; i++; }
             else { enComillas = !enComillas; }
         } else if (c === sep && !enComillas) {
-            campos.push(actual.trim());
+            campos.push(limpiarCelda(actual));
             actual = '';
         } else {
             actual += c;
         }
     }
-    campos.push(actual.trim());
+    campos.push(limpiarCelda(actual));
     return campos;
 }
 
 function normalizarEncabezado(texto) {
     return texto.toLowerCase()
-        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '');
 }
 
+// Primer nombre de columna que exista en el encabezado (acepta sinónimos)
+function indiceColumna(cols, ...nombres) {
+    for (const n of nombres) {
+        const i = cols.indexOf(n);
+        if (i !== -1) return i;
+    }
+    return -1;
+}
+
 function parsearCSV(texto) {
     // Quitar BOM y separar en líneas no vacías
-    const lineas = texto.replace(/^\uFEFF/, '')
+    const lineas = texto.replace(/^﻿/, '')
         .split(/\r\n|\n|\r/)
         .filter(l => l.trim() !== '');
 
@@ -352,64 +371,69 @@ function parsearCSV(texto) {
         return { error: 'El archivo no tiene filas de datos.' };
     }
 
-    const sep = detectarSeparador(lineas[0]);
+    const sep  = detectarSeparador(lineas[0]);
     const cols = parsearLinea(lineas[0], sep).map(normalizarEncabezado);
 
-    const iArchivo = cols.indexOf('id_archivo_plano');
-    const iFactura = cols.indexOf('id_factura');
-    const iCuota   = cols.indexOf('id_cuota');
-    const iEstado  = cols.indexOf('estado_pago') !== -1 ? cols.indexOf('estado_pago') : cols.indexOf('estado');
-    const iRef     = cols.indexOf('referencia_bancaria') !== -1 ? cols.indexOf('referencia_bancaria') : cols.indexOf('referencia');
-    const iCod     = cols.indexOf('cod_bancario') !== -1 ? cols.indexOf('cod_bancario') : cols.indexOf('codigo_bancario');
-    const iFecha   = cols.indexOf('fec_pago') !== -1 ? cols.indexOf('fec_pago') : cols.indexOf('fecha');
+    const iArchivo = indiceColumna(cols, 'id_archivo_plano', 'archivo_plano');
+    const iConsec  = indiceColumna(cols, 'consecutivo', 'linea', 'secuencia');
+    const iEstado  = indiceColumna(cols, 'estado', 'estado_pago');
+    const iCodigo  = indiceColumna(cols, 'codigo_respuesta', 'id_codigo', 'codigo');
+    const iDesc    = indiceColumna(cols, 'descripcion_respuesta', 'descripcion', 'des_motivo');
+    const iFecha   = indiceColumna(cols, 'fecha_pago', 'fec_pago', 'fecha');
+    const iDoc     = indiceColumna(cols, 'documento_proveedor');
+    const iNombre  = indiceColumna(cols, 'nombre_proveedor');
+    const iCuenta  = indiceColumna(cols, 'cuenta_destino');
+    const iValor   = indiceColumna(cols, 'valor_a_pagar', 'valor');
 
-    if (iArchivo === -1 || iFactura === -1 || iCuota === -1 || iEstado === -1) {
-        return { error: 'El archivo debe tener al menos las columnas id_archivo_plano, id_factura, id_cuota y estado_pago.' };
+    if (iArchivo === -1 || iConsec === -1 || iEstado === -1 || iCodigo === -1) {
+        return { error: 'El archivo debe tener al menos las columnas ID Archivo Plano, Consecutivo, Estado y Código Respuesta.' };
     }
+
+    const celda = (c, i) => (i !== -1 ? (c[i] ?? '').trim() : '');
 
     const filas = lineas.slice(1).map((linea, n) => {
         const c = parsearLinea(linea, sep);
         return {
-            linea: n + 2,
-            id_archivo_plano: (c[iArchivo] ?? '').trim(),
-            id_factura: (c[iFactura] ?? '').trim(),
-            id_cuota: (c[iCuota] ?? '').trim(),
-            estado_pago: (c[iEstado] ?? '').trim().toUpperCase(),
-            referencia_bancaria: iRef !== -1 ? (c[iRef] ?? '').trim() : '',
-            cod_bancario: iCod !== -1 ? (c[iCod] ?? '').trim().toUpperCase() : '',
-            fec_pago: iFecha !== -1 ? (c[iFecha] ?? '').trim() : ''
+            linea:               n + 2,
+            id_archivo_plano:    celda(c, iArchivo),
+            consecutivo:         celda(c, iConsec),
+            estado:              celda(c, iEstado).toUpperCase(),
+            codigo_respuesta:    celda(c, iCodigo),
+            descripcion:         celda(c, iDesc),
+            fecha_pago:          celda(c, iFecha),
+            documento_proveedor: celda(c, iDoc),
+            nombre_proveedor:    celda(c, iNombre),
+            cuenta_destino:      celda(c, iCuenta),
+            valor_a_pagar:       celda(c, iValor)
         };
     });
 
     return { filas };
 }
 
-// Valida contra los pagos que ya están en pantalla. El servidor vuelve a
-// validar todo: esto es solo para que el usuario vea qué va a pasar.
-function validarFila(fila) {
-    if (!/^\d+$/.test(fila.id_archivo_plano) || !/^\d+$/.test(fila.id_factura) || !/^\d+$/.test(fila.id_cuota)) {
-        return 'id_archivo_plano, id_factura e id_cuota deben ser números.';
+// Validación previa para que el usuario vea qué va a pasar. El servidor
+// vuelve a validar todo contra tab_det_archivo_plano y la base.
+function validarFila(fila, vistas) {
+    if (!/^\d+$/.test(fila.id_archivo_plano) || !/^\d+$/.test(fila.consecutivo) || Number(fila.consecutivo) < 1) {
+        return 'ID Archivo Plano y Consecutivo deben ser números.';
     }
-    if (!['APROBADO', 'RECHAZADO'].includes(fila.estado_pago)) {
-        return `Estado "${fila.estado_pago || 'vacío'}": debe ser APROBADO o RECHAZADO.`;
+    if (!['APROBADO', 'RECHAZADO'].includes(fila.estado)) {
+        return `Estado "${fila.estado || 'vacío'}": debe ser APROBADO o RECHAZADO.`;
     }
-    if (fila.estado_pago === 'RECHAZADO' && fila.cod_bancario === '') {
-        return 'Un rechazo necesita el código bancario del motivo.';
+    if (fila.codigo_respuesta === '') {
+        return 'Falta el código de respuesta del banco (también en los aprobados).';
     }
-    if (fila.referencia_bancaria.length > 30) {
-        return 'La referencia bancaria supera 30 caracteres.';
+    if (fila.codigo_respuesta.length > 10) {
+        return 'El código de respuesta supera 10 caracteres.';
     }
-
-    // Chequeo local con lo que ya está cargado en pantalla. El servidor vuelve
-    // a validar contra tab_det_archivo_plano, que aquí no está disponible.
-    const yaExiste = pagosData.some(p =>
-        Number(p.id_archivo_plano) === Number(fila.id_archivo_plano) &&
-        Number(p.id_factura)       === Number(fila.id_factura) &&
-        Number(p.id_cuota)         === Number(fila.id_cuota)
-    );
-    if (yaExiste) {
-        return 'Esa línea ya tiene un pago registrado en el historial.';
+    if (fila.fecha_pago !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(fila.fecha_pago) && !/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(fila.fecha_pago)) {
+        return `Fecha de pago "${fila.fecha_pago}" no válida (use AAAA-MM-DD).`;
     }
+    const clave = `${Number(fila.id_archivo_plano)}-${Number(fila.consecutivo)}`;
+    if (vistas.has(clave)) {
+        return `La línea ${fila.consecutivo} del archivo ${fila.id_archivo_plano} está repetida en la respuesta.`;
+    }
+    vistas.add(clave);
     return null;
 }
 
@@ -426,30 +450,32 @@ function renderImportacion() {
         lista.innerHTML = '<p class="import-vacio">El archivo no trae filas para aplicar.</p>';
     } else {
         lista.innerHTML = filasImportadas.map(f => {
+            const valor   = f.valor_a_pagar !== '' ? ' — ' + formatMoney(f.valor_a_pagar) : '';
             const detalle = f.error
                 ? esc(f.error)
-                : `${capEstado(f.estado_pago)}${f.cod_bancario ? ' — ' + esc(f.cod_bancario) : ''}${f.referencia_bancaria ? ' — Ref. ' + esc(f.referencia_bancaria) : ''}`;
+                : `${capEstado(f.estado)} — ${esc(f.codigo_respuesta)}${f.descripcion ? ' ' + esc(f.descripcion) : ''}${f.fecha_pago ? ' — ' + esc(formatFecha(f.fecha_pago)) : ''}`;
             return `
                 <div class="import-row ${f.error ? 'invalida' : 'valida'}">
                     <span class="import-row-icon">
                         <i class="fas fa-${f.error ? 'xmark' : 'check'}"></i>
                     </span>
                     <div class="import-row-info">
-                        <span class="import-row-pago">Archivo #${esc(f.id_archivo_plano) || '—'} — Fact. #${esc(f.id_factura) || '—'} / Cuota ${esc(f.id_cuota) || '—'}</span>
-                        <span class="import-row-meta">Línea ${f.linea} · ${detalle}</span>
+                        <span class="import-row-pago">Archivo #${esc(f.id_archivo_plano) || '—'} — Línea ${esc(f.consecutivo) || '—'}${f.nombre_proveedor ? ' · ' + esc(f.nombre_proveedor) : ''}${valor}</span>
+                        <span class="import-row-meta">Fila ${f.linea} del CSV · ${detalle}</span>
                     </div>
                 </div>`;
         }).join('');
     }
 
     setVal('hid-filas-importar', JSON.stringify(validas.map(f => ({
-        id_archivo_plano: f.id_archivo_plano,
-        id_factura: f.id_factura,
-        id_cuota: f.id_cuota,
-        estado_pago: f.estado_pago,
-        referencia_bancaria: f.referencia_bancaria,
-        cod_bancario: f.cod_bancario,
-        fec_pago: f.fec_pago
+        id_archivo_plano:    f.id_archivo_plano,
+        consecutivo:         f.consecutivo,
+        estado:              f.estado,
+        codigo_respuesta:    f.codigo_respuesta,
+        fecha_pago:          f.fecha_pago,
+        documento_proveedor: f.documento_proveedor,
+        cuenta_destino:      f.cuenta_destino,
+        valor_a_pagar:       f.valor_a_pagar
     }))));
 
     const btn = document.getElementById('import-btn-apply');
@@ -468,10 +494,12 @@ function leerArchivoCSV(archivo) {
 
         if (error) {
             showToast(error, 'error');
+            setVal('csv-input', '');
             return;
         }
 
-        filasImportadas = filas.map(f => ({ ...f, error: validarFila(f) }));
+        const vistas = new Set();
+        filasImportadas = filas.map(f => ({ ...f, error: validarFila(f, vistas) }));
         renderImportacion();
         show('modal-import');
     };
@@ -500,12 +528,23 @@ async function aplicarImportacion() {
         });
         const text = await response.text();
         let result;
-        try { result = JSON.parse(text); } catch (e) { result = { success: false, message: 'Respuesta inválida del servidor' }; }
+        try { result = JSON.parse(text); }
+        catch (e) {
+            console.error('[pagos] Respuesta del servidor que no es JSON:', text);
+            result = { success: false, message: 'Respuesta inválida del servidor (revise la consola).' };
+        }
+        if (result.debug_salida_previa) console.warn('[pagos] Salida de PHP antes del JSON:', result.debug_salida_previa);
+        if (Array.isArray(result.omitidas) && result.omitidas.length) {
+            console.warn('[pagos] Filas omitidas:\n' + result.omitidas.join('\n'));
+        }
 
         if (result.success) {
-            showToast(result.message, 'success');
+            const extra = Array.isArray(result.omitidas) && result.omitidas.length
+                ? ' Omitidas: ' + result.omitidas.slice(0, 2).join(' | ') + (result.omitidas.length > 2 ? ' (ver consola)' : '')
+                : '';
+            showToast(result.message + extra, 'success');
             closeImportModal();
-            location.reload();
+            setTimeout(() => location.reload(), result.omitidas?.length ? 4000 : 800);
         } else {
             const detalle = Array.isArray(result.omitidas) && result.omitidas.length
                 ? ' — ' + result.omitidas.slice(0, 3).join(' | ')

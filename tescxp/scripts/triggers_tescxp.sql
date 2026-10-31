@@ -1,5 +1,8 @@
 -- =========================================================================
 -- TRIGGERS - MÓDULO DE TESORERÍA Y CUENTAS POR PAGAR
+-- Cada CREATE TRIGGER va precedido de DROP TRIGGER IF EXISTS: el archivo se
+-- puede ejecutar varias veces (antes fallaba con "ya existe" y algunos
+-- triggers quedaban sin crear).
 -- =========================================================================
 
 -- =========================================================================
@@ -16,6 +19,7 @@ END;
 $BODY$ 
 LANGUAGE PLPGSQL;
 
+DROP TRIGGER IF EXISTS trg_monto_disponible_caja_menor ON tab_enc_caja_menor;
 CREATE TRIGGER trg_monto_disponible_caja_menor BEFORE INSERT ON tab_enc_caja_menor
 FOR EACH ROW EXECUTE FUNCTION fun_monto_disponible_caja_menor();
 
@@ -33,6 +37,7 @@ END;
 $BODY$
 LANGUAGE PLPGSQL;
 
+DROP TRIGGER IF EXISTS trg_fecha_cierre_caja_menor ON tab_enc_caja_menor;
 CREATE TRIGGER trg_fecha_cierre_caja_menor BEFORE UPDATE ON tab_enc_caja_menor
 FOR EACH ROW WHEN (OLD.ind_estado_caja_m IS DISTINCT FROM NEW.ind_estado_caja_m)
 EXECUTE FUNCTION fun_fecha_cierre_caja_menor();
@@ -51,6 +56,7 @@ END;
 $BODY$
 LANGUAGE PLPGSQL;
 
+DROP TRIGGER IF EXISTS trg_fecha_movimiento_caja_menor ON tab_det_caja_menor;
 CREATE TRIGGER trg_fecha_movimiento_caja_menor BEFORE INSERT ON tab_det_caja_menor
 FOR EACH ROW EXECUTE FUNCTION fun_fecha_movimiento_caja_menor();
 
@@ -81,6 +87,7 @@ END;
 $BODY$
 LANGUAGE PLPGSQL;
 
+DROP TRIGGER IF EXISTS trg_actualizar_disponible_caja_menor ON tab_det_caja_menor;
 CREATE TRIGGER trg_actualizar_disponible_caja_menor AFTER UPDATE ON tab_det_caja_menor
 FOR EACH ROW WHEN (OLD.ind_estado IS DISTINCT FROM NEW.ind_estado)
 EXECUTE FUNCTION fun_actualizar_disponible_caja_menor();
@@ -105,6 +112,7 @@ END;
 $BODY$
 LANGUAGE PLPGSQL;
 
+DROP TRIGGER IF EXISTS trg_saldo_factura ON tab_cuentasxpagar;
 CREATE TRIGGER trg_saldo_factura BEFORE INSERT ON tab_cuentasxpagar FOR EACH ROW
 EXECUTE FUNCTION fun_saldo_factura();
 
@@ -152,6 +160,7 @@ END;
 $BODY$
 LANGUAGE PLPGSQL;
 
+DROP TRIGGER IF EXISTS trg_generar_cuotas_factura ON tab_cuentasxpagar;
 CREATE TRIGGER trg_generar_cuotas_factura AFTER INSERT ON tab_cuentasxpagar FOR EACH ROW
 EXECUTE FUNCTION fun_generar_cuotas_factura();
 
@@ -189,6 +198,7 @@ END;
 $BODY$
 LANGUAGE PLPGSQL;
 
+DROP TRIGGER IF EXISTS trg_calcular_total_cronograma ON tab_det_cronopagos;
 CREATE TRIGGER trg_calcular_total_cronograma AFTER INSERT OR UPDATE OR DELETE ON tab_det_cronopagos
 FOR EACH ROW EXECUTE FUNCTION fun_calcular_total_cronograma();
 
@@ -217,6 +227,7 @@ END;
 $BODY$
 LANGUAGE PLPGSQL;
 
+DROP TRIGGER IF EXISTS trg_val_a_pagar_cronograma ON tab_det_cronopagos;
 CREATE TRIGGER trg_val_a_pagar_cronograma BEFORE INSERT ON tab_det_cronopagos FOR EACH ROW
 EXECUTE FUNCTION fun_val_a_pagar_cronograma();
 
@@ -308,6 +319,7 @@ END;
 $BODY$
 LANGUAGE PLPGSQL;
 
+DROP TRIGGER IF EXISTS trg_validar_fecha_cronograma ON tab_enc_cronopagos;
 CREATE TRIGGER trg_validar_fecha_cronograma
 BEFORE INSERT OR UPDATE OF fec_programacion ON tab_enc_cronopagos
 FOR EACH ROW EXECUTE FUNCTION fun_validar_fecha_cronograma();
@@ -328,6 +340,7 @@ END;
 $BODY$
 LANGUAGE PLPGSQL;
 
+DROP TRIGGER IF EXISTS trg_fecha_generacion_archivo ON tab_enc_archivo_plano;
 CREATE TRIGGER trg_fecha_generacion_archivo BEFORE UPDATE ON tab_enc_archivo_plano
 FOR EACH ROW WHEN (OLD.ind_generado IS DISTINCT FROM NEW.ind_generado)
 EXECUTE FUNCTION fun_fecha_generacion_archivo();
@@ -337,38 +350,11 @@ EXECUTE FUNCTION fun_fecha_generacion_archivo();
 -- 8. tab_det_archivo_plano 
 -- =========================================================================
 
--- 8.1 Al insertar una fila de detalle, traer val_a_pagar desde el cronograma
---     ya programado (tab_det_cronopagos), no desde la cuota original, para
---     reflejar exactamente lo que se programó pagar.
-CREATE OR REPLACE FUNCTION fun_val_a_pagar_archivo_plano() RETURNS TRIGGER AS
-$BODY$
-DECLARE
-    v_id_cronograma DECIMAL(10,0);
-BEGIN
-    SELECT id_cronograma
-    INTO v_id_cronograma
-    FROM tab_enc_archivo_plano
-    WHERE id_archivo_plano = NEW.id_archivo_plano;
-
-    SELECT val_a_pagar
-    INTO NEW.val_a_pagar
-    FROM tab_det_cronopagos
-    WHERE id_cronograma = v_id_cronograma
-      AND id_factura     = NEW.id_factura
-      AND id_cuota        = NEW.id_cuota;
-
-    IF NEW.val_a_pagar IS NULL THEN
-        RAISE EXCEPTION 'La cuota % de la factura % no está programada en el cronograma del archivo plano %',
-            NEW.id_cuota, NEW.id_factura, NEW.id_archivo_plano;
-    END IF;
-
-    RETURN NEW;
-END;
-$BODY$
-LANGUAGE PLPGSQL;
-
-CREATE TRIGGER trg_val_a_pagar_archivo_plano BEFORE INSERT ON tab_det_archivo_plano
-FOR EACH ROW EXECUTE FUNCTION fun_val_a_pagar_archivo_plano();
+-- 8.1 Ya no hay trigger aquí: val_a_pagar lo asigna fun_insert_det_archivo_plano
+--     con el valor de la cuota (tab_cuotasxfactura.val_cuota). Se borra el
+--     trigger anterior si existe.
+DROP TRIGGER IF EXISTS trg_val_a_pagar_archivo_plano ON tab_det_archivo_plano;
+DROP FUNCTION IF EXISTS fun_val_a_pagar_archivo_plano();
 
 
 -- =========================================================================
@@ -397,6 +383,7 @@ END;
 $BODY$
 LANGUAGE PLPGSQL;
 
+DROP TRIGGER IF EXISTS trg_marcar_cuotas_pagadas ON tab_enc_cronopagos;
 CREATE TRIGGER trg_marcar_cuotas_pagadas AFTER UPDATE ON tab_enc_cronopagos
 FOR EACH ROW WHEN (OLD.ind_estado IS DISTINCT FROM NEW.ind_estado)
 EXECUTE FUNCTION fun_marcar_cuotas_pagadas();
@@ -419,11 +406,16 @@ END;
 $BODY$
 LANGUAGE PLPGSQL;
 
+DROP TRIGGER IF EXISTS trg_actualizar_saldo_factura ON tab_cuotasxfactura;
 CREATE TRIGGER trg_actualizar_saldo_factura AFTER UPDATE ON tab_cuotasxfactura
 FOR EACH ROW WHEN (OLD.ind_pagada IS DISTINCT FROM NEW.ind_pagada)
 EXECUTE FUNCTION fun_actualizar_saldo_factura();
 
--- NOTA: esta cadena cubre el flujo "pagar TODO el cronograma de una vez".
+-- NOTA: con el flujo de archivo plano, las cuotas se marcan pagadas una por
+-- una desde fun_insert_pagos_cxp / fun_update_pagos_cxp al aprobar el pago
+-- (fun_aplicar_pago_aprobado), y el cronograma se cierra cuando ya no le
+-- quedan cuotas sin pagar; 9.1 entonces no encuentra nada más que marcar.
+-- Esta cadena también cubre el flujo "pagar TODO el cronograma de una vez".
 -- Si en algún momento necesitas marcar una sola cuota como pagada de forma
 -- manual e independiente (sin pasar por un cronograma), el trigger 9.2 ya
 -- lo soporta automáticamente, porque escucha cambios directos sobre
@@ -433,9 +425,8 @@ EXECUTE FUNCTION fun_actualizar_saldo_factura();
 -- 10. ACTUALIZAR SALDO PROVEEDOR: Saldo proveedor = saldo proveedor - valor del saldo de la factura
 -- =========================================================================
 
--- 10 Cuando una cuota pasa a pagada (ind_pagada: FALSE -> TRUE), descontar
---     su valor del saldo de la factura, y si el saldo llega a 0, marcar la
---     factura como pagada (ind_estado = TRUE).
+-- 10 Cuando baja el saldo de una factura, descontar esa diferencia de la
+--    deuda del proveedor (tab_proveedores.val_saldo_deuda).
 
 CREATE OR REPLACE FUNCTION fun_actualizar_saldo_proveedor()
 RETURNS TRIGGER AS
@@ -458,6 +449,7 @@ END;
 $BODY$
 LANGUAGE PLPGSQL;
 
+DROP TRIGGER IF EXISTS trg_actualizar_saldo_proveedor ON tab_cuentasxpagar;
 CREATE TRIGGER trg_actualizar_saldo_proveedor
 AFTER UPDATE OF val_saldo ON tab_cuentasxpagar
 FOR EACH ROW

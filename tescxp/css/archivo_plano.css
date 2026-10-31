@@ -272,16 +272,20 @@
        recalcula los anchos según las filas visibles, así las columnas no
        se mueven al ordenar, filtrar o cambiar de página. */
     table-layout: fixed;
-    min-width: 860px;
+    min-width: 980px;
 }
 
 /* Reparto proporcional del ancho (suma 100%) */
-#mod-archivo-plano .data-table col.col-archivo     { width: 24%; }
-#mod-archivo-plano .data-table col.col-cronograma  { width: 22%; }
-#mod-archivo-plano .data-table col.col-banco       { width: 18%; }
-#mod-archivo-plano .data-table col.col-generacion  { width: 13%; }
+#mod-archivo-plano .data-table col.col-archivo     { width: 20%; }
+#mod-archivo-plano .data-table col.col-origen      { width: 21%; }
+#mod-archivo-plano .data-table col.col-tipo-pago   { width: 13%; }
+#mod-archivo-plano .data-table col.col-aplicacion  { width: 11%; }
+#mod-archivo-plano .data-table col.col-generacion  { width: 11%; }
 #mod-archivo-plano .data-table col.col-estado      { width: 12%; }
-#mod-archivo-plano .data-table col.col-acciones    { width: 11%; }
+#mod-archivo-plano .data-table col.col-acciones    { width: 12%; }
+
+/* Segunda línea gris dentro de una celda (id, número de cuenta) */
+#mod-archivo-plano .cell-sub { color: var(--dash-text-muted); font-size: 11px; }
 
 #mod-archivo-plano .data-table th {
     text-align: left; padding: 14px 16px;
@@ -445,8 +449,11 @@
 #mod-archivo-plano .badge-active   { background: var(--dash-green-light); color: var(--dash-green-dark); }
 #mod-archivo-plano .badge-inactive { background: var(--dash-red-light);   color: var(--dash-red); }
 
+#mod-archivo-plano .badge-pending  { background: var(--dash-amber-light); color: var(--dash-amber); }
+
 #mod-archivo-plano .badge-active::before   { background: var(--dash-green-dark); }
-#mod-archivo-plano .badge-inactive::before { background: currentColor; }
+#mod-archivo-plano .badge-inactive::before,
+#mod-archivo-plano .badge-pending::before  { background: currentColor; }
 
 /* ---- BOTONES DE ACCIÓN EN TABLA ---- */
 #mod-archivo-plano .btn-icon-sm {
@@ -570,6 +577,81 @@
     font-family: 'DM Sans', system-ui, sans-serif;
 }
 
+.modal-box.modal-box-lg { max-width: 720px; }
+
+/* ============================================
+   MODAL NUEVO ARCHIVO PLANO: DOS COLUMNAS
+   Izquierda: datos del archivo. Derecha: cronograma y proveedores.
+   La columna derecha no aporta altura (height: 0 + min-height: 100%):
+   la fija la izquierda, y la lista de proveedores usa su propio scroll.
+   Así el modal no crece con la cantidad de proveedores ni pide scroll.
+   ============================================ */
+.modal-box.modal-box-xl { max-width: 1200px; }
+
+.ap-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    gap: 28px;
+}
+
+.ap-col { min-width: 0; }
+
+.ap-col-pagos {
+    display: flex;
+    flex-direction: column;
+    height: 0;
+    min-height: 100%;
+    padding-left: 28px;
+    border-left: 1px solid #e9edf2;
+}
+
+/* Empresa de la cuenta de origen (sale de tab_pmtros_grales, no se digita) */
+.ap-empresa {
+    display: block;
+    margin-top: 5px; padding-left: 16px;
+    font-size: 11px; font-weight: 600;
+    color: #64748b;
+}
+
+.ap-empresa:empty { display: none; }
+
+.ap-col-pagos .cuota-picker-list {
+    flex: 1 1 auto;
+    min-height: 90px;
+    max-height: none;
+}
+
+.ap-col-pagos .picker-total { flex-shrink: 0; }
+
+/* Formulario más compacto dentro de este modal */
+#modal-new-archivo .modal-body { padding: 20px 24px; }
+#modal-new-archivo .form-field { margin-bottom: 12px; }
+#modal-new-archivo .form-grid  { gap: 14px; margin-bottom: 0; }
+#modal-new-archivo .form-input,
+#modal-new-archivo .form-select { height: 40px; padding-top: 8px; padding-bottom: 8px; }
+#modal-new-archivo .detail-subheading { margin-bottom: 14px; }
+
+/* Nota de ayuda a la izquierda del pie del modal (no ocupa alto en el cuerpo) */
+.modal-footer .ap-nota {
+    display: flex; gap: 6px; align-items: center;
+    margin: 0 auto 0 0;
+    max-width: 60%;
+    font-size: 11px; line-height: 1.4;
+}
+
+.modal-footer .ap-nota i { color: #94a3b8; flex-shrink: 0; }
+
+#modal-new-archivo .modal-footer { align-items: center; }
+
+/* Pantallas angostas: una columna y la lista con alto propio */
+@media (max-width: 900px) {
+    .ap-layout { grid-template-columns: 1fr; gap: 8px; }
+    .ap-col-pagos { height: auto; min-height: 0; padding-left: 0; border-left: none; }
+    .modal-footer .ap-nota { max-width: none; flex-basis: 100%; }
+    #modal-new-archivo .modal-footer { flex-wrap: wrap; }
+    .ap-col-pagos .cuota-picker-list { max-height: 260px; }
+}
+
 .modal-header {
     padding: 18px 24px;
     display: flex; justify-content: space-between; align-items: center;
@@ -687,13 +769,21 @@
     transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
 }
 
+.form-select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%2394a3b8' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 16px center;
+    padding-right: 36px;
+    text-overflow: ellipsis;
+}
+
 .form-select:hover {
-    background: color-mix(in srgb, var(--color-primary, #2d8653) 8%, white);
+    background-color: color-mix(in srgb, var(--color-primary, #2d8653) 8%, white);
     border-color: color-mix(in srgb, var(--color-primary, #2d8653) 52%, white);
 }
 
 .form-select:focus {
-    background: color-mix(in srgb, var(--color-primary, #2d8653) 8%, white);
+    background-color: color-mix(in srgb, var(--color-primary, #2d8653) 8%, white);
     border-color: var(--color-primary, #2d8653);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #2d8653) 12%, transparent);
 }
@@ -710,6 +800,9 @@
     font-size: 11px; color: #94a3b8; margin-top: 6px;
     line-height: 1.45;
 }
+
+/* Nota debajo de una fila de campos (form-grid) */
+.form-hint-top { margin: -14px 0 8px; }
 
 .section-title {
     font-size: 11px; font-weight: 800;
@@ -756,10 +849,15 @@
 
 .detail-subheading i { color: var(--color-primary, #2d8653); }
 
+/* El primer subtítulo del modal no necesita margen arriba */
+.detail-subheading.detail-subheading-first { margin-top: 0; }
+
+.detail-value small { font-size: 11px; font-weight: 500; color: #94a3b8; }
+
 /* ---- CUOTAS (lista dentro del modal de detalle) ---- */
 .cuota-row {
     display: grid;
-    grid-template-columns: 1fr auto auto auto;
+    grid-template-columns: 1fr auto auto;
     align-items: center;
     gap: 12px;
     padding: 12px 16px;
@@ -771,7 +869,15 @@
 
 .cuota-num {
     font-size: 13px; font-weight: 700; color: #1e293b;
+    display: flex; flex-direction: column; gap: 2px; min-width: 0;
 }
+
+.cuota-num small { font-size: 11px; font-weight: 500; color: #94a3b8; }
+.cuota-num small.motivo-rechazo { color: #ef4444; font-weight: 600; }
+
+/* Mensajes dentro de la lista de pagos del detalle */
+.detalle-msg { font-size: 12px; color: #94a3b8; text-align: center; padding: 12px; }
+.detalle-msg.error { color: #ef4444; }
 
 .cuota-fecha {
     font-size: 10px; font-weight: 700;
@@ -798,7 +904,9 @@
 }
 
 .cuota-row .badge-active   { background: #ecfdf5; color: #059669; }
-.cuota-row .badge-inactive { background: #fffbeb; color: #f59e0b; }
+.cuota-row .badge-inactive { background: #fef2f2; color: #ef4444; }
+.cuota-row .badge-pending  { background: #fffbeb; color: #f59e0b; }
+.cuota-row .badge-muted    { background: #f1f5f9; color: #64748b; }
 
 /* ---- ESTADO VACÍO DENTRO DE MODALES ---- */
 .modal-body .empty-state { text-align: center; padding: 24px 12px; }
@@ -834,7 +942,7 @@
 
 .cuota-picker-row {
     display: grid;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: 1fr auto;
     align-items: center;
     gap: 12px;
     padding: 12px;
@@ -853,6 +961,8 @@
     line-height: 1.35;
 }
 
+.cuota-picker-prov small { font-weight: 500; color: #94a3b8; margin-left: 4px; }
+
 .cuota-picker-fecha {
     font-size: 10.5px; font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.4px;
@@ -864,13 +974,55 @@
     color: #0a0c1a; white-space: nowrap;
 }
 
-/* El selector de cuenta cuando el proveedor tiene varias */
-.cuota-picker-row .prov-cta-select {
-    height: 36px;
-    padding: 8px 14px;
-    font-size: 12px;
-    max-width: 100%;
+/* Tipo de documento + cuenta del proveedor, en una fila */
+.picker-controles {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 8px; margin-top: 6px;
 }
+
+.cuota-picker-row .picker-select {
+    height: 34px;
+    padding: 6px 32px 6px 14px;
+    font-size: 12px;
+    width: auto;
+    flex: 1 1 220px;
+    min-width: 0;
+    background-position: right 12px center;
+}
+
+.picker-cuenta-unica {
+    font-size: 12px; font-weight: 600; color: #475569;
+}
+
+.picker-sin-cuenta {
+    font-size: 12px; font-weight: 700; color: #ef4444;
+}
+
+.cuota-picker-row.sin-cuenta { background: #fef2f2; }
+
+/* Etiqueta en las cuotas que vuelven tras un rechazo del banco */
+.tag-reintento {
+    display: inline-block;
+    padding: 1px 8px; margin-left: 2px;
+    border-radius: 30px;
+    background: #fffbeb; color: #b45309;
+    font-size: 9.5px; font-weight: 800;
+    letter-spacing: 0.4px; vertical-align: 1px;
+}
+
+/* Total de lo que se va a incluir en el archivo */
+.picker-total {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 10px; padding: 12px 16px;
+    border-radius: 12px;
+    background: #f9fafb; border: 1px solid #e9edf2;
+    font-size: 12px; color: #475569;
+}
+
+.picker-total strong { font-size: 15px; font-weight: 800; color: #0a0c1a; }
+
+/* El aviso también se usa para advertencias: sin icono, texto normal */
+#prov-cuentas-hint { margin-bottom: 10px; }
 
 /* Los botones de icono dentro de los modales viven fuera del scope del módulo */
 .modal-body .btn-icon-sm {
@@ -887,6 +1039,232 @@
 .modal-body .btn-icon-sm.edit   { background: #fffbeb; color: #f59e0b; }
 .modal-body .btn-icon-sm.reject { background: #fff1f2; color: #f43f5e; }
 .modal-body .btn-icon-sm:hover  { transform: translateY(-1px); filter: brightness(0.95); }
+
+/* ============================================
+   CAMPO DE FECHA (abre el calendario)
+   Mismo calendario que Festivos. Aquí solo se pueden elegir los
+   días de pago de Parámetros de Tesorería que no sean festivo.
+   Reemplaza al <input type="date">: es un botón con el mismo aspecto
+   de .form-input que muestra la fecha elegida.
+   ============================================ */
+.dp-trigger {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px;
+    text-align: left;
+    cursor: pointer;
+}
+
+.dp-trigger .dp-trigger-texto {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.dp-trigger .dp-trigger-texto.vacio { color: #b0b8c9; }
+.dp-trigger i { color: #94a3b8; font-size: 14px; flex-shrink: 0; transition: color 0.2s; }
+
+/* Campo con el calendario abierto: mismo aspecto que un campo con foco */
+.dp-trigger.abierto {
+    background: color-mix(in srgb, var(--color-primary, #2d8653) 8%, white);
+    border-color: var(--color-primary, #2d8653);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #2d8653) 12%, transparent);
+}
+
+.dp-trigger.abierto i { color: var(--color-primary, #2d8653); }
+
+/* ============================================
+   CALENDARIO FLOTANTE
+   Va con position:fixed (lo ubica el JS) para que el scroll
+   del modal no lo recorte.
+   ============================================ */
+.dp-pop {
+    position: fixed;
+    z-index: 1050;               /* por encima de .modal-overlay (1000) */
+    width: 300px;
+    padding: 14px;
+    background: var(--dash-card);
+    border: 1px solid var(--dash-border);
+    border-radius: var(--dash-radius);
+    box-shadow: 0 16px 36px -8px rgba(15, 23, 42, 0.22);
+    font-family: var(--dash-font);
+    color: var(--dash-text-body);
+    animation: fadeIn 0.15s ease;
+}
+
+.dp-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+}
+
+.dp-head strong {
+    font-size: 14px; font-weight: 800;
+    color: var(--dash-text-head);
+}
+
+.dp-nav-grupo { display: flex; align-items: center; gap: 2px; }
+
+.dp-nav {
+    width: 28px; height: 28px;
+    border: none; border-radius: 50%;
+    background: transparent;
+    color: var(--dash-text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.dp-nav:hover:not(:disabled) { color: var(--dash-blue); background: var(--dash-blue-light); }
+.dp-nav:disabled { opacity: 0.35; cursor: default; }
+
+.dp-semana,
+.dp-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    justify-items: center;
+}
+
+.dp-semana { margin-bottom: 4px; }
+
+.dp-semana span {
+    font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.6px;
+    color: var(--dash-text-muted);
+}
+
+.dp-grid { row-gap: 3px; }
+
+.dp-dia {
+    position: relative;
+    width: 34px; height: 34px;
+    border: 1.5px solid transparent;
+    border-radius: 50%;
+    background: transparent;
+    font-family: var(--dash-font);
+    font-size: 12.5px; font-weight: 600;
+    color: var(--dash-text-body);
+    padding: 0;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.dp-dia.vacio { cursor: default; }
+
+/* Cualquier día se puede elegir: se resalta al pasar el mouse */
+.dp-dia:not(.vacio):not(:disabled):hover {
+    background: var(--dash-blue-light);
+    border-color: var(--dash-blue);
+    color: var(--dash-blue-dark);
+}
+
+/* Fuera del min/max del campo (p. ej. emisión posterior a hoy) */
+.dp-dia.fuera {
+    color: #cbd5e1;
+    cursor: not-allowed;
+}
+
+.dp-dia.hoy { box-shadow: inset 0 0 0 1.5px var(--dash-text-muted); }
+
+/* Fecha elegida (va de último para ganarle a los demás estados) */
+.dp-dia.sel,
+.dp-dia.sel:not(.vacio):not(:disabled):hover {
+    background: var(--dash-blue);
+    border-color: var(--dash-blue);
+    color: #ffffff;
+    font-weight: 800;
+    box-shadow: 0 2px 6px color-mix(in srgb, var(--dash-blue) 35%, transparent);
+}
+
+/* Botones Hoy / Borrar */
+.dp-acciones {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px;
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid var(--dash-border);
+}
+
+.dp-accion {
+    border: none;
+    border-radius: 30px;
+    padding: 6px 14px;
+    background: var(--dash-blue-light);
+    color: var(--dash-blue-dark);
+    font-family: var(--dash-font);
+    font-size: 12px; font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.dp-accion:hover:not(:disabled) { background: color-mix(in srgb, var(--dash-blue) 20%, white); }
+.dp-accion:disabled { opacity: 0.4; cursor: default; }
+
+.dp-accion.secundaria { background: transparent; color: var(--dash-text-sub); }
+.dp-accion.secundaria:hover:not(:disabled) { background: #f1f5f9; color: var(--dash-rose); }
+
+/* Festivo: se resalta en rosa y está bloqueado */
+.dp-dia.festivo {
+    background: var(--dash-rose-light);
+    border-color: color-mix(in srgb, var(--dash-rose) 30%, white);
+    color: var(--dash-rose);
+    font-weight: 700;
+}
+
+.dp-dia.festivo::after {
+    content: '';
+    position: absolute;
+    left: 50%; bottom: 4px;
+    width: 4px; height: 4px;
+    margin-left: -2px;
+    border-radius: 50%;
+    background: var(--dash-rose);
+}
+
+.dp-dia.festivo { cursor: not-allowed; }
+
+.dp-dia.sel::after { background: #ffffff; }
+
+/* Día de pago disponible: fondo suave para que se vea qué se puede elegir */
+.dp-dia.pago:not(.sel) {
+    background: var(--dash-green-light);
+    color: var(--dash-green-dark);
+    font-weight: 700;
+}
+
+/* No es día de pago (o ya pasó): no se puede elegir */
+.dp-dia.bloqueado {
+    color: #cbd5e1;
+    cursor: not-allowed;
+}
+
+/* Motivo del día bajo el mouse (festivo, no es día de pago...) */
+.dp-info {
+    min-height: 16px;
+    margin-top: 8px;
+    font-size: 11px; font-weight: 700;
+    color: var(--dash-text-sub);
+    text-align: center;
+}
+
+.dp-leyenda {
+    display: flex; flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-top: 8px; padding-top: 10px;
+    border-top: 1px solid var(--dash-border);
+    font-size: 10.5px; font-weight: 600;
+    color: var(--dash-text-sub);
+}
+
+.dp-leyenda span { display: inline-flex; align-items: center; gap: 5px; }
+
+.dp-leyenda i {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+}
+
+.dp-leyenda .l-pago    { background: var(--dash-green-light); border: 1px solid color-mix(in srgb, var(--dash-green-dark) 30%, white); }
+.dp-leyenda .l-festivo { background: var(--dash-rose-light); border: 1px solid color-mix(in srgb, var(--dash-rose) 30%, white); }
+.dp-leyenda .l-hoy     { background: #ffffff; border: 1.5px solid var(--dash-text-muted); }
+
+/* La leyenda ya separa el calendario de los botones */
+.dp-leyenda + .dp-acciones { margin-top: 8px; }
 
 /* ---- TOAST ---- */
 #toast {
@@ -926,4 +1304,46 @@
     #mod-archivo-plano .stats-grid { grid-template-columns: 1fr; }
     .modal-box { width: 95vw; max-width: 95vw; }
     .cuota-row { grid-template-columns: 1fr auto; row-gap: 8px; }
+}
+
+/* Filas de proveedores más compactas dentro del modal de nuevo archivo */
+#modal-new-archivo .cuota-picker-list { padding: 6px; }
+#modal-new-archivo .cuota-picker-row  { padding: 8px 12px; gap: 10px; }
+#modal-new-archivo .picker-controles  { margin-top: 4px; }
+#modal-new-archivo .cuota-picker-row + .cuota-picker-row { border-top: 1px solid #f1f5f9; border-radius: 0; }
+#modal-new-archivo #prov-cuentas-hint { margin: 0 0 10px; padding: 10px 12px; }
+
+/* Con el modal ancho, cada proveedor ocupa una sola línea:
+   nombre y cuotas a la izquierda, cuenta en el medio, valor a la derecha */
+#modal-new-archivo .cuota-picker-info {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+    column-gap: 12px;
+    align-items: center;
+}
+
+#modal-new-archivo .picker-controles {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    margin-top: 0;
+}
+
+#modal-new-archivo .cuota-picker-row .picker-select { flex: 1 1 100%; height: 32px; }
+
+@media (max-width: 900px) {
+    #modal-new-archivo .cuota-picker-info { grid-template-columns: 1fr; }
+    #modal-new-archivo .picker-controles { grid-column: 1; grid-row: auto; margin-top: 4px; }
+}
+
+/* Nombre y documento del proveedor en una sola línea (con "…" si no cabe) */
+#modal-new-archivo .cuota-picker-prov {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Alto del modal de nuevo archivo: el cuerpo tiene un alto mínimo para que
+   la lista de proveedores muestre más filas (sigue sin scroll en el modal) */
+#modal-new-archivo .ap-layout { min-height: 340px; }
+#modal-new-archivo .form-field { margin-bottom: 18px; }
+@media (max-width: 900px) {
+    #modal-new-archivo .ap-layout { min-height: 0; }
 }

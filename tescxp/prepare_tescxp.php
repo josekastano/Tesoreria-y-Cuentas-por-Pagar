@@ -1,57 +1,84 @@
 <?php
 /**
  * CENTRAL DE INSTRUCCIONES PREPARADAS - Módulo Tesorería y CxP
- * Versión: 2.1 — Alineada al modelo script_BD_tesore_cxp.sql (14 tablas)
+ * Versión: 3.1 — Alineada a script_BD_tesore_cxp.sql (modelo con
+ *                tab_codigos_respuesta_banco y estado_pago numérico),
+ *                fun_inserts / fun_updates / fun_deletes_tescxp.sql y
+ *                triggers_tescxp.sql
  *
  * Orden de los bloques: igual al orden de creación de tablas en el script SQL.
  *
- *   1.  tab_festivos                                        (Tabla 1)
- *   2.  tab_enc_caja_menor / tab_det_caja_menor             (Tablas 2 y 3)
- *   3.  tab_pmtros_tescxp (+ tab_pmtros_grales, solo lectura)   (Tabla 4)
- *   4.  tab_ctas_empresa                                    (Tabla 5)
- *   5.  tab_bancoxprov                                      (Tabla 6)
- *   6.  tab_cuentasxpagar / tab_cuotasxfactura              (Tablas 7 y 8)
- *   7.  tab_enc_cronopagos / tab_det_cronopagos             (Tablas 9 y 10)
- *   8.  tab_enc_archivo_plano / tab_det_archivo_plano       (Tablas 11 y 12)
- *   9.  tab_motivos_rechazo                                 (Tabla 13)
- *  10.  tab_pagos_cxp                                       (Tabla 14)
- *  11.  tab_bancos  (catálogo compartido con otros módulos)
+ *   1.  tab_pmtros_tescxp (+ tab_pmtros_grales, solo lectura)   (Tabla 1)
+ *   2.  tab_festivos                                            (Tabla 2)
+ *   3.  tab_enc_caja_menor / tab_det_caja_menor                 (Tablas 3 y 4)
+ *   4.  tab_ctas_empresa                                        (Tabla 5)
+ *   5.  tab_bancoxprov                                          (Tabla 6)
+ *   6.  tab_cuentasxpagar / tab_cuotasxfactura                  (Tablas 7 y 8)
+ *   7.  tab_enc_cronopagos / tab_det_cronopagos                 (Tablas 9 y 10)
+ *   8.  tab_tipos_pago                                          (Tabla 11)
+ *   9.  tab_enc_archivo_plano / tab_det_archivo_plano           (Tablas 12 y 13)
+ *  10.  tab_codigos_respuesta_banco                             (Tabla 14)
+ *  11.  tab_pagos_cxp                                           (Tabla 15)
+ *  12.  tab_bancos  (catálogo compartido con otros módulos)
  *
  * ---------------------------------------------------------------------------
- * MARCAS QUE VAS A ENCONTRAR EN LOS COMENTARIOS
+ * CONVENCIÓN DE ESTADOS DE PAGO (tab_pagos_cxp.estado_pago)
  * ---------------------------------------------------------------------------
- *  >>> FIRMA INFERIDA   La función no está confirmada contra el script de
- *                       funciones. Verificar nombre, orden y cantidad de
- *                       parámetros antes de publicar.
- *
- *  >>> CORREGIDO        Diferencia respecto a la versión anterior del prepare.
- *                       Se explica el motivo en el comentario.
- *
- *  >>> NUEVO            Consulta que no existía y que el módulo necesita.
- *
- *  >>> SIN TRIGGER      La lógica la ejecuta la aplicación, no la base de
- *                       datos. Debe ir dentro de una transacción.
+ *     1 = PENDIENTE     2 = APROBADO     3 = RECHAZADO
+ *  Las consultas devuelven además nom_estado_pago con el texto.
  *
  * ---------------------------------------------------------------------------
- * OJO — DOS ERRORES QUE ESTÁN EN EL SCRIPT SQL, NO EN ESTE ARCHIVO
+ * MARCAS EN LOS COMENTARIOS
  * ---------------------------------------------------------------------------
- *  1) tab_det_cronopagos NO COMPILA. Falta la coma después del segundo
- *     FOREIGN KEY y sobra la coma final antes del paréntesis de cierre:
+ *  >>> NUEVO              Consulta que no existía y que el módulo necesita.
+ *  >>> CAMBIA             Diferencia respecto a la versión anterior.
  *
- *         FOREIGN KEY(id_factura,id_cuota) REFERENCES tab_cuotasxfactura(...)   <-- falta ","
- *         CONSTRAINT uq_cuota_programada   UNIQUE (id_factura,id_cuota),        <-- sobra ","
+ * ---------------------------------------------------------------------------
+ * QUÉ SE QUITÓ
+ * ---------------------------------------------------------------------------
+ *  - $del_pmtros_tescxp           fun_delete_pmtros_tescxp no existe.
+ *  - $recalc_saldo_factura        Lo hace trg_actualizar_saldo_factura (9.2).
+ *  - $list_cuotas_pagables        Todo pago sale de un archivo plano.
+ *  - $get_cronograma_de_cuota     tab_pagos_cxp ya guarda id_cronograma.
+ *  - $mark_cuota_pagada y
+ *    $cerrar_cronograma_si_pagado Ahora los hacen fun_insert_pagos_cxp y
+ *                                 fun_update_pagos_cxp al aprobar, en la misma
+ *                                 operación (ya no hace falta transacción en PHP).
+ *  - Todo lo de tab_motivos_rechazo y referencia_bancaria.
  *
- *     Debe quedar:
+ * ---------------------------------------------------------------------------
+ * CAMBIOS EN script_BD_tesore_cxp.sql (versión adjunta)
+ * ---------------------------------------------------------------------------
+ *  - tab_pagos_cxp: la FK a códigos ahora es (id_codigo, id_banco), igual que
+ *    la PK de tab_codigos_respuesta_banco. Con la FK de una sola columna la
+ *    tabla no se creaba.
+ *  - uq_pago_aprobado_cuota: WHERE estado_pago = 2 (comparaba con 'APROBADO'
+ *    y no compilaba).
+ *  - tab_det_archivo_plano: sin UNIQUE (id_factura, id_cuota), para poder
+ *    reintentar cuotas rechazadas; en su lugar un índice normal.
+ *  - id_codigo e id_banco son NOT NULL en tab_pagos_cxp: el pago se registra
+ *    cuando llega la respuesta del banco, con su código.
  *
- *         FOREIGN KEY(id_factura,id_cuota) REFERENCES tab_cuotasxfactura(id_factura,id_cuota),
- *         CONSTRAINT uq_cuota_programada   UNIQUE (id_factura,id_cuota)
- *
- *  2) El comentario de tab_pagos_cxp menciona una tabla "tab_reembolsos_caja"
- *     que no existe en el script. O se crea, o se quita la referencia.
- *
- *     (Menor: id_banco está declarado como VARCHAR sin longitud en
- *      tab_ctas_empresa, tab_bancoxprov y tab_enc_archivo_plano. Funciona,
- *      pero conviene igualarlo al tipo real de tab_bancos.id_banco.)
+ * ---------------------------------------------------------------------------
+ * ORDEN PARA MONTAR LA BD
+ * ---------------------------------------------------------------------------
+ *  1) script_BD_tesore_cxp.sql
+ *  2) triggers_tescxp.sql
+ *  3) fun_inserts_tescxp.sql
+ *  4) fun_updates_tescxp.sql
+ *  5) fun_deletes_tescxp.sql
+ *  Cada archivo de funciones empieza borrando las versiones viejas que
+ *  cambiaron de parámetros (archivo plano, pagos) o que ya no existen
+ *  (motivos de rechazo).
+
+ *  PENDIENTE: fun_update_enc_archivo_plano deja cambiar id_banco sin cambiar
+ *  la cuenta, y entonces el banco ya no coincide con cta_empresa. Conviene que
+ *  solo cambie el nombre.
+ * ---------------------------------------------------------------------------
+ *  REINTENTO DE PAGOS RECHAZADOS:
+ *  Una cuota puede ir a un archivo plano nuevo solo si todas sus líneas
+ *  anteriores tienen un pago RECHAZADO (3). Lo valida
+ *  fun_insert_det_archivo_plano y lo refleja $list_cuotas_de_cronograma.
  * ---------------------------------------------------------------------------
  */
 
@@ -61,10 +88,69 @@ try {
     $pdo = getDBConnection();
 
     // =========================================================================
-    // 1. TAB_FESTIVOS
+    // 1. TAB_PMTROS_TESCXP (+ TAB_PMTROS_GRALES, solo lectura)       (Tabla 1)
     // =========================================================================
 
-    // ---- LISTADO PRINCIPAL DE FESTIVOS ----
+    // ---- PARÁMETROS GENERALES DE LA EMPRESA (solo lectura) ----
+    $list_pmtros_grales = $pdo->prepare(
+        "SELECT  id_empresa
+           FROM  tab_pmtros_grales
+          LIMIT  1"
+    );
+
+    // ---- PARÁMETROS DE TESORERÍA Y CXP (caso mono-empresa) ----
+    // fec_diapago1..3 son días de la semana (1 = lunes ... 6 = sábado).
+    // trg_validar_fecha_cronograma usa este mismo registro.
+    $list_pmtros_tescxp = $pdo->prepare(
+        "SELECT  id_empresa,
+                 fec_diapago1,
+                 fec_diapago2,
+                 fec_diapago3,
+                 val_min_reembolso
+           FROM  tab_pmtros_tescxp
+          WHERE  ind_borrado = FALSE
+          LIMIT  1"
+    );
+
+    // ---- PARÁMETROS DE UNA EMPRESA ESPECÍFICA ----
+    $get_pmtros_tescxp = $pdo->prepare(
+        "SELECT  id_empresa,
+                 fec_diapago1,
+                 fec_diapago2,
+                 fec_diapago3,
+                 val_min_reembolso
+           FROM  tab_pmtros_tescxp
+          WHERE  id_empresa  = :wid_empresa
+            AND  ind_borrado = FALSE"
+    );
+
+    // ---- INSERT — fun_insert_pmtros_tescxp (5 params) ----
+    $ins_pmtros_tescxp = $pdo->prepare(
+        "SELECT fun_insert_pmtros_tescxp(
+            :wid_empresa,
+            :wfec_diapago1,
+            :wfec_diapago2,
+            :wfec_diapago3,
+            :wval_min_reembolso
+        )"
+    );
+
+    // ---- UPDATE — fun_update_pmtros_tescxp (5 params) ----
+    $upd_pmtros_tescxp = $pdo->prepare(
+        "SELECT fun_update_pmtros_tescxp(
+            :wid_empresa,
+            :wfec_diapago1,
+            :wfec_diapago2,
+            :wfec_diapago3,
+            :wval_min_reembolso
+        )"
+    );
+
+    // =========================================================================
+    // 2. TAB_FESTIVOS                                                (Tabla 2)
+    // =========================================================================
+
+    // ---- LISTADO PRINCIPAL ----
     $list_festivos = $pdo->prepare(
         "SELECT  id_festivo,
                  fecha,
@@ -74,10 +160,7 @@ try {
           ORDER BY fecha"
     );
 
-
-    // ---- UN FESTIVO (para el formulario de edición) ----
-    // >>> NUEVO: no existía y el formulario de edición no tenía de dónde
-    //     precargar los datos de la fila que se va a modificar.
+    // ---- UN FESTIVO (formulario de edición) ----
     $get_festivo = $pdo->prepare(
         "SELECT  id_festivo,
                  fecha,
@@ -87,9 +170,20 @@ try {
             AND  ind_borrado = FALSE"
     );
 
+    // ---- VALIDACIÓN — ¿YA HAY UN FESTIVO ACTIVO EN ESA FECHA? ----
+    // >>> NUEVO. fun_update_festivos valida la fecha repetida, pero
+    //     fun_insert_festivos no; esto evita crear dos festivos el mismo día.
+    $check_festivo_fecha = $pdo->prepare(
+        "SELECT  EXISTS (
+                    SELECT 1
+                      FROM tab_festivos
+                     WHERE fecha       = :wfecha
+                       AND ind_borrado = FALSE
+                 ) AS existe"
+    );
+
     // ---- INSERT — fun_insert_festivos (2 params) ----
-    // fecha, nom_festivo
-    // (el id_festivo se autogenera dentro de la función)
+    // fecha, nom_festivo (id_festivo se autogenera)
     $ins_festivo = $pdo->prepare(
         "SELECT fun_insert_festivos(
             :wfecha,
@@ -98,7 +192,6 @@ try {
     );
 
     // ---- UPDATE — fun_update_festivos (3 params) ----
-    // id_festivo, fecha, nom_festivo
     $upd_festivo = $pdo->prepare(
         "SELECT fun_update_festivos(
             :wid_festivo,
@@ -107,20 +200,16 @@ try {
         )"
     );
 
-    // ---- DELETE — fun_delete_festivos (1 param) ----
-    // Borrado lógico (ind_borrado = TRUE)
+    // ---- DELETE — fun_delete_festivos (1 param) — borrado lógico ----
     $del_festivo = $pdo->prepare(
         "SELECT fun_delete_festivos(:wid_festivo)"
     );
 
     // =========================================================================
-    // 2. TAB_ENC_CAJA_MENOR / TAB_DET_CAJA_MENOR
+    // 3. TAB_ENC_CAJA_MENOR / TAB_DET_CAJA_MENOR                (Tablas 3 y 4)
     // =========================================================================
 
-    // ---- LISTADO DE CAJAS MENORES (ENCABEZADO) ----
-    // >>> CORREGIDO: el modelo agregó ind_borrado a tab_enc_caja_menor y la
-    //     versión anterior de esta consulta no lo filtraba, así que las cajas
-    //     borradas seguían apareciendo en pantalla.
+    // ---- LISTADO DE CAJAS MENORES ----
     $list_enc_caja_menor = $pdo->prepare(
         "SELECT  id_caja_menor,
                  nom_caja_menor,
@@ -134,7 +223,7 @@ try {
           ORDER BY fecha_apertura DESC, id_caja_menor DESC"
     );
 
-    // ---- CAJAS MENORES ACTIVAS (para selects: solo abiertas) ----
+    // ---- CAJAS ABIERTAS (para selects) ----
     $list_cajas_activas = $pdo->prepare(
         "SELECT  id_caja_menor,
                  nom_caja_menor,
@@ -145,7 +234,7 @@ try {
           ORDER BY nom_caja_menor"
     );
 
-    // ---- UNA CAJA MENOR (para el formulario de edición) ----
+    // ---- UNA CAJA MENOR ----
     $get_enc_caja_menor = $pdo->prepare(
         "SELECT  id_caja_menor,
                  nom_caja_menor,
@@ -159,7 +248,7 @@ try {
             AND  ind_borrado   = FALSE"
     );
 
-    // ---- MOVIMIENTOS DE UNA CAJA MENOR (DETALLE) ----
+    // ---- MOVIMIENTOS DE UNA CAJA ----
     $list_det_caja_menor = $pdo->prepare(
         "SELECT  id_caja_menor,
                  id_movimiento,
@@ -172,9 +261,7 @@ try {
           ORDER BY id_movimiento DESC"
     );
 
-    // ---- UN MOVIMIENTO (para el formulario de cambio de estado) ----
-    // >>> NUEVO: la PK es compuesta (id_caja_menor, id_movimiento) y no había
-    //     forma de traer una sola fila.
+    // ---- UN MOVIMIENTO (PK compuesta) ----
     $get_det_caja_menor = $pdo->prepare(
         "SELECT  id_caja_menor,
                  id_movimiento,
@@ -187,9 +274,7 @@ try {
             AND  id_movimiento = :wid_movimiento"
     );
 
-    // ---- MOVIMIENTOS FILTRADOS POR ESTADO ----
-    // >>> NUEVO. Para las pestañas Pendiente / Aprobado / Reembolsado.
-    //     (1 = Pendiente, 2 = Aprobado, 3 = Reembolsado)
+    // ---- MOVIMIENTOS POR ESTADO (1 = Pendiente, 2 = Aprobado, 3 = Reembolsado) ----
     $list_mov_caja_por_estado = $pdo->prepare(
         "SELECT  d.id_caja_menor,
                  e.nom_caja_menor,
@@ -205,8 +290,7 @@ try {
           ORDER BY d.fecha_movimiento DESC, d.id_movimiento DESC"
     );
 
-    // ---- TOTALES POR ESTADO DE UNA CAJA (1=Pend, 2=Aprob, 3=Reemb) ----
-    // Sirve para el tablero de la caja y para saber si se puede cerrar:
+    // ---- TOTALES POR ESTADO DE UNA CAJA ----
     // fun_delete_enc_caja_menor falla si quedan movimientos en estado 1 o 2.
     $sum_det_caja_menor = $pdo->prepare(
         "SELECT  ind_estado,
@@ -219,9 +303,8 @@ try {
     );
 
     // ---- ¿LA CAJA YA ALCANZÓ EL MÍNIMO PARA PEDIR REEMBOLSO? ----
-    // >>> NUEVO. tab_pmtros_tescxp.val_min_reembolso existe en el modelo pero
-    //     no se estaba usando en ninguna consulta. Compara lo aprobado y
-    //     todavía no reembolsado (estado 2) contra ese mínimo.
+    // Compara lo aprobado sin reembolsar (estado 2) contra val_min_reembolso.
+    // (El trigger 2.2 tiene esto como PENDIENTE; mientras tanto lo valida la app.)
     $check_min_reembolso = $pdo->prepare(
         "SELECT  COALESCE(SUM(d.val_movimiento), 0)      AS total_aprobado,
                  p.val_min_reembolso,
@@ -237,7 +320,7 @@ try {
 
     // ---- INSERT — fun_insert_enc_caja_menor (2 params) ----
     // nom_caja_menor, monto_asignado
-    // (id_caja_menor se autogenera; monto_disponible = monto_asignado al crear)
+    // (trg_monto_disponible_caja_menor iguala monto_disponible = monto_asignado)
     $ins_enc_caja_menor = $pdo->prepare(
         "SELECT fun_insert_enc_caja_menor(
             :wnom_caja_menor,
@@ -245,9 +328,7 @@ try {
         )"
     );
 
-    // ---- UPDATE — fun_update_enc_caja_menor (2 params) ----
-    // id_caja_menor, nom_caja_menor
-    // (Solo permite renombrar la caja; el monto asignado no se puede editar)
+    // ---- UPDATE — fun_update_enc_caja_menor (2 params) — solo renombra ----
     $upd_enc_caja_menor = $pdo->prepare(
         "SELECT fun_update_enc_caja_menor(
             :wid_caja_menor,
@@ -257,8 +338,11 @@ try {
 
     // ---- INSERT — fun_insert_det_caja_menor (4 params) ----
     // id_caja_menor, concepto, val_movimiento, fecha_movimiento
-    // (id_movimiento se autogenera; la función descuenta monto_disponible
-    //  de la caja al insertar el movimiento, que queda en estado Pendiente)
+    // >>> CAMBIA (comentario): el movimiento entra en Pendiente y NO descuenta
+    //     nada al insertarse. trg_actualizar_disponible_caja_menor descuenta
+    //     al pasar a Aprobado (1->2) y repone al pasar a Reembolsado (2->3).
+    //     Además trg_fecha_movimiento_caja_menor fuerza fecha_movimiento =
+    //     CURRENT_DATE, así que el valor que se mande aquí se ignora.
     $ins_det_caja_menor = $pdo->prepare(
         "SELECT fun_insert_det_caja_menor(
             :wid_caja_menor,
@@ -269,9 +353,7 @@ try {
     );
 
     // ---- UPDATE — fun_update_det_caja_menor (3 params) ----
-    // id_caja_menor, id_movimiento, ind_estado
-    // (1=Pendiente, 2=Aprobado, 3=Reembolsado — un trigger repone
-    //  monto_disponible de la caja cuando el movimiento pasa a Reembolsado)
+    // id_caja_menor, id_movimiento, ind_estado (solo avanza: 1 -> 2 -> 3)
     $upd_det_caja_menor = $pdo->prepare(
         "SELECT fun_update_det_caja_menor(
             :wid_caja_menor,
@@ -281,22 +363,14 @@ try {
     );
 
     // ---- CIERRE DE CAJA — fun_delete_enc_caja_menor (1 param) ----
-    // id_caja_menor
-    // (Fija fecha_cierre = CURRENT_DATE e ind_estado_caja_m = FALSE. Falla si
-    //  quedan movimientos en estado Pendiente o Aprobado sin reembolsar.)
+    // Falla si quedan movimientos en estado 1 o 2.
     $del_enc_caja_menor = $pdo->prepare(
-        "SELECT fun_delete_enc_caja_menor(
-            :wid_caja_menor
-        )"
+        "SELECT fun_delete_enc_caja_menor(:wid_caja_menor)"
     );
 
     // ---- BORRADO LÓGICO DE UNA CAJA YA CERRADA ----
-    // >>> NUEVO — resuelve el "PENDIENTE DE DEFINIR" de la versión anterior.
-    //     El modelo agregó ind_borrado a tab_enc_caja_menor, pero
-    //     fun_delete_enc_caja_menor solo CIERRA la caja, no la borra.
-    //     Mientras no exista fun_delete_logico_enc_caja_menor, este UPDATE
-    //     cubre el caso, y el WHERE impide borrar una caja que siga abierta o
-    //     que tenga movimientos sin reembolsar (estado 1 o 2).
+    // No hay función para esto (fun_delete_enc_caja_menor solo cierra).
+    // El WHERE impide borrar una caja abierta o con movimientos sin reembolsar.
     $borrar_enc_caja_menor = $pdo->prepare(
         "UPDATE tab_enc_caja_menor e
             SET ind_borrado = TRUE
@@ -312,82 +386,10 @@ try {
     );
 
     // =========================================================================
-    // 3. TAB_PMTROS_TESCXP (+ TAB_PMTROS_GRALES, solo lectura)
+    // 4. TAB_CTAS_EMPRESA                                            (Tabla 5)
     // =========================================================================
 
-    // ---- PARÁMETROS GENERALES DE LA EMPRESA (solo lectura) ----
-    $list_pmtros_grales = $pdo->prepare(
-        "SELECT  id_empresa
-           FROM  tab_pmtros_grales
-          LIMIT  1"
-    );
-
-    // ---- PARÁMETROS DE TESORERÍA Y CXP (registro único de configuración) ----
-    // fec_diapago1..3 son días de la semana (1 = lunes ... 6 = sábado).
-    $list_pmtros_tescxp = $pdo->prepare(
-        "SELECT  id_empresa,
-                 fec_diapago1,
-                 fec_diapago2,
-                 fec_diapago3,
-                 val_min_reembolso
-           FROM  tab_pmtros_tescxp
-          WHERE  ind_borrado = FALSE
-          LIMIT  1"
-    );
-
-    // ---- PARÁMETROS DE UNA EMPRESA ESPECÍFICA ----
-    // >>> NUEVO. La PK de tab_pmtros_tescxp es id_empresa, así que el modelo
-    //     admite más de una empresa. La consulta con LIMIT 1 de arriba sirve
-    //     para el caso mono-empresa; esta es la correcta si algún día hay dos.
-    $get_pmtros_tescxp = $pdo->prepare(
-        "SELECT  id_empresa,
-                 fec_diapago1,
-                 fec_diapago2,
-                 fec_diapago3,
-                 val_min_reembolso
-           FROM  tab_pmtros_tescxp
-          WHERE  id_empresa  = :wid_empresa
-            AND  ind_borrado = FALSE"
-    );
-
-    // ---- INSERT — fun_insert_pmtros_tescxp (5 params) ----
-    // id_empresa, fec_diapago1, fec_diapago2, fec_diapago3, val_min_reembolso
-    $ins_pmtros_tescxp = $pdo->prepare(
-        "SELECT fun_insert_pmtros_tescxp(
-            :wid_empresa,
-            :wfec_diapago1,
-            :wfec_diapago2,
-            :wfec_diapago3,
-            :wval_min_reembolso
-        )"
-    );
-
-    // ---- UPDATE — fun_update_pmtros_tescxp (5 params) ----
-    // id_empresa, fec_diapago1, fec_diapago2, fec_diapago3, val_min_reembolso
-    $upd_pmtros_tescxp = $pdo->prepare(
-        "SELECT fun_update_pmtros_tescxp(
-            :wid_empresa,
-            :wfec_diapago1,
-            :wfec_diapago2,
-            :wfec_diapago3,
-            :wval_min_reembolso
-        )"
-    );
-
-    // ---- DELETE — fun_delete_pmtros_tescxp (1 param) ----
-    // >>> NUEVO / FIRMA INFERIDA. La tabla tiene ind_borrado y no había
-    //     ninguna instrucción para el borrado lógico de la configuración.
-    $del_pmtros_tescxp = $pdo->prepare(
-        "SELECT fun_delete_pmtros_tescxp(:wid_empresa)"
-    );
-
-    // =========================================================================
-    // 4. TAB_CTAS_EMPRESA
-    // =========================================================================
-
-    // ---- SELECT MAESTRO — BANCOS (catálogo para selects) ----
-    // >>> CORREGIDO: antes no filtraba nada, así que los bancos borrados o
-    //     inactivos aparecían en los combos de cuentas y de archivo plano.
+    // ---- BANCOS ACTIVOS (catálogo para selects) ----
     $list_bancos = $pdo->prepare(
         "SELECT  id_banco, nom_banco
            FROM  tab_bancos
@@ -397,21 +399,26 @@ try {
     );
 
     // ---- LISTADO DE CUENTAS DE LA EMPRESA ----
+    // También es el select de cuenta de origen del archivo plano.
+    // >>> CAMBIA: trae también nom_empresa (tab_pmtros_grales), que el
+    //     archivo plano copia en su encabezado.
     $list_ctas_empresa = $pdo->prepare(
         "SELECT  c.id_empresa,
+                 g.nom_empresa,
                  c.cta_empresa,
                  c.id_banco,
                  b.nom_banco,
                  c.ind_tipocuenta
            FROM  tab_ctas_empresa  c
-           JOIN  tab_bancos        b ON b.id_banco = c.id_banco
+           JOIN  tab_bancos        b ON b.id_banco   = c.id_banco
+           JOIN  tab_pmtros_grales g ON g.id_empresa = c.id_empresa
           WHERE  c.ind_borrado = FALSE
           ORDER BY b.nom_banco, c.cta_empresa"
     );
 
-    // ---- UNA CUENTA DE LA EMPRESA (para el formulario de edición) ----
-    // >>> NUEVO. La PK es compuesta (id_empresa, cta_empresa) y no había
-    //     consulta para traer una sola fila.
+    // ---- UNA CUENTA DE LA EMPRESA ----
+    // Al armar el encabezado del archivo plano, de aquí salen id_banco e
+    // ind_tipocuenta de la cuenta elegida.
     $get_cta_empresa = $pdo->prepare(
         "SELECT  c.id_empresa,
                  c.cta_empresa,
@@ -425,9 +432,7 @@ try {
             AND  c.ind_borrado = FALSE"
     );
 
-    // ---- CUENTAS DE LA EMPRESA EN UN BANCO ESPECÍFICO ----
-    // (al generar un archivo plano, la cuenta de origen debe ser del mismo
-    //  banco al que se le entrega el archivo)
+    // ---- CUENTAS DE LA EMPRESA EN UN BANCO ----
     $list_ctas_empresa_banco = $pdo->prepare(
         "SELECT  c.id_empresa,
                  c.cta_empresa,
@@ -439,7 +444,6 @@ try {
     );
 
     // ---- INSERT — fun_insert_ctas_empresa (4 params) ----
-    // id_empresa, cta_empresa, id_banco, ind_tipocuenta
     $ins_cta_empresa = $pdo->prepare(
         "SELECT fun_insert_ctas_empresa(
             :wid_empresa,
@@ -450,8 +454,6 @@ try {
     );
 
     // ---- UPDATE — fun_update_ctas_empresa (4 params) ----
-    // id_empresa, cta_empresa, id_banco, ind_tipocuenta
-    // (id_empresa + cta_empresa actúan como llave de búsqueda / PK compuesta)
     $upd_cta_empresa = $pdo->prepare(
         "SELECT fun_update_ctas_empresa(
             :wid_empresa,
@@ -461,8 +463,8 @@ try {
         )"
     );
 
-    // ---- DELETE — fun_delete_ctas_empresa (2 params) ----
-    // id_empresa, cta_empresa — Borrado lógico (ind_borrado = TRUE)
+    // ---- DELETE — fun_delete_ctas_empresa (2 params) — borrado lógico ----
+    // (en fun_deletes_tescxp.sql)
     $del_cta_empresa = $pdo->prepare(
         "SELECT fun_delete_ctas_empresa(
             :wid_empresa,
@@ -471,10 +473,10 @@ try {
     );
 
     // =========================================================================
-    // 5. TAB_BANCOXPROV
+    // 5. TAB_BANCOXPROV                                              (Tabla 6)
     // =========================================================================
 
-    // ---- SELECT MAESTRO — PROVEEDORES (catálogo para selects) ----
+    // ---- PROVEEDORES (catálogo para selects) ----
     $list_proveedores_select = $pdo->prepare(
         "SELECT  p.id_proveedor,
                  t.nom_tercero
@@ -485,7 +487,7 @@ try {
           ORDER BY t.nom_tercero"
     );
 
-    // ---- LISTADO DE BANCOS POR PROVEEDOR ----
+    // ---- LISTADO DE CUENTAS DE PROVEEDORES ----
     $list_bancoxprov = $pdo->prepare(
         "SELECT  bp.id_proveedor,
                  t.nom_tercero,
@@ -500,8 +502,7 @@ try {
           ORDER BY t.nom_tercero, bp.cta_proveedor"
     );
 
-    // ---- UNA CUENTA DE PROVEEDOR (para el formulario de edición) ----
-    // >>> NUEVO. Igual que en tab_ctas_empresa, la PK es compuesta.
+    // ---- UNA CUENTA DE PROVEEDOR ----
     $get_bancoxprov = $pdo->prepare(
         "SELECT  bp.id_proveedor,
                  t.nom_tercero,
@@ -517,9 +518,7 @@ try {
             AND  bp.ind_borrado   = FALSE"
     );
 
-    // ---- CUENTAS ACTIVAS DE UN PROVEEDOR (para el select del archivo plano) ----
-    // >>> CORREGIDO: faltaba filtrar el banco. Se estaban ofreciendo cuentas
-    //     de bancos borrados o inactivos como destino de un pago.
+    // ---- CUENTAS ACTIVAS DE UN PROVEEDOR (en bancos activos) ----
     $list_ctas_de_proveedor = $pdo->prepare(
         "SELECT  bp.id_proveedor,
                  bp.cta_proveedor,
@@ -536,7 +535,6 @@ try {
     );
 
     // ---- INSERT — fun_insert_bancoxprov (4 params) ----
-    // id_proveedor, cta_proveedor, id_banco, ind_tipocuenta
     $ins_bancoxprov = $pdo->prepare(
         "SELECT fun_insert_bancoxprov(
             :wid_proveedor,
@@ -547,8 +545,6 @@ try {
     );
 
     // ---- UPDATE — fun_update_bancoxprov (4 params) ----
-    // id_proveedor, cta_proveedor, id_banco, ind_tipocuenta
-    // (id_proveedor + cta_proveedor actúan como llave de búsqueda / PK compuesta)
     $upd_bancoxprov = $pdo->prepare(
         "SELECT fun_update_bancoxprov(
             :wid_proveedor,
@@ -558,12 +554,8 @@ try {
         )"
     );
 
-    // ---- DELETE — fun_delete_bancoxprov (2 params) ----
-    // id_proveedor, cta_proveedor — Borrado lógico (ind_borrado = TRUE)
-    //
-    // OJO: tab_det_archivo_plano tiene FK hacia (id_proveedor, cta_proveedor),
-    // por eso el borrado tiene que ser lógico y nunca físico: si se borra la
-    // fila desaparecería la trazabilidad de archivos planos ya generados.
+    // ---- DELETE — fun_delete_bancoxprov (2 params) — borrado lógico ----
+    // Siempre lógico: tab_det_archivo_plano tiene FK a (id_proveedor, cta_proveedor).
     $del_bancoxprov = $pdo->prepare(
         "SELECT fun_delete_bancoxprov(
             :wid_proveedor,
@@ -572,11 +564,11 @@ try {
     );
 
     // =========================================================================
-    // 6. TAB_CUENTASXPAGAR / TAB_CUOTASXFACTURA
+    // 6. TAB_CUENTASXPAGAR / TAB_CUOTASXFACTURA                 (Tablas 7 y 8)
     // =========================================================================
 
-    // ---- SELECT MAESTRO — PROVEEDORES CON DÍAS DE PAGO ----
-    // (para calcular fec_vencimiento = fec_emision + ind_dias_pago)
+    // ---- PROVEEDORES CON DÍAS DE PAGO ----
+    // (fec_vencimiento = fec_emision + ind_dias_pago)
     $list_proveedores_dias_pago = $pdo->prepare(
         "SELECT  p.id_proveedor,
                  t.nom_tercero,
@@ -588,7 +580,25 @@ try {
           ORDER BY t.nom_tercero"
     );
 
-    // ---- LISTADO DE CUENTAS POR PAGAR (FACTURAS) ----
+    // ---- ÓRDENES DE COMPRA FACTURABLES DE UN PROVEEDOR ----
+    // >>> NUEVO. fun_insert_cuentasxpagar exige que la OC sea del mismo
+    //     proveedor, esté aprobada (ind_estado = 1) y tenga saldo. Este select
+    //     solo ofrece las que cumplen, con el saldo disponible para mostrarlo.
+    $list_ordenes_facturables = $pdo->prepare(
+        "SELECT  o.id_ordencompra,
+                 o.val_total,
+                 COALESCE(SUM(f.val_factura), 0)                AS val_facturado,
+                 o.val_total - COALESCE(SUM(f.val_factura), 0)  AS saldo_disponible
+           FROM  tab_enc_ordcomp   o
+           LEFT JOIN tab_cuentasxpagar f ON f.id_ordencompra = o.id_ordencompra
+          WHERE  o.id_proveedor = :wid_proveedor
+            AND  o.ind_estado   = 1
+          GROUP BY o.id_ordencompra, o.val_total
+         HAVING  o.val_total - COALESCE(SUM(f.val_factura), 0) > 0
+          ORDER BY o.id_ordencompra"
+    );
+
+    // ---- LISTADO DE FACTURAS ----
     $list_cuentasxpagar = $pdo->prepare(
         "SELECT  f.id_factura,
                  f.id_proveedor,
@@ -605,9 +615,7 @@ try {
           ORDER BY f.fec_vencimiento"
     );
 
-    // ---- UNA FACTURA (encabezado, para la vista de detalle) ----
-    // >>> NUEVO. La pantalla de cuotas necesita mostrar los datos de la
-    //     factura y no había forma de traerlos.
+    // ---- UNA FACTURA ----
     $get_cuentasxpagar = $pdo->prepare(
         "SELECT  f.id_factura,
                  f.id_proveedor,
@@ -625,8 +633,6 @@ try {
     );
 
     // ---- VALIDACIÓN — ¿YA EXISTE ESA FACTURA? ----
-    // >>> NUEVO. id_factura lo digita el usuario (no se autogenera), así que
-    //     conviene avisarle antes de que el INSERT falle por PK duplicada.
     $check_factura_existe = $pdo->prepare(
         "SELECT  EXISTS (
                     SELECT 1
@@ -638,6 +644,7 @@ try {
     // ---- FACTURAS DE UN PROVEEDOR ----
     $list_facturas_proveedor = $pdo->prepare(
         "SELECT  f.id_factura,
+                 f.id_ordencompra,
                  f.fec_emision,
                  f.fec_vencimiento,
                  f.val_factura,
@@ -649,9 +656,7 @@ try {
           ORDER BY f.fec_vencimiento"
     );
 
-    // ---- FACTURAS PENDIENTES (tablero: lo que se debe) ----
-    // >>> NUEVO. idx_facturas_estado existe en el modelo justamente para esto,
-    //     pero ninguna consulta lo aprovechaba.
+    // ---- FACTURAS PENDIENTES (tablero) ----
     $list_facturas_pendientes = $pdo->prepare(
         "SELECT  f.id_factura,
                  f.id_proveedor,
@@ -666,7 +671,7 @@ try {
           ORDER BY f.fec_vencimiento"
     );
 
-    // ---- CUOTAS DE UNA FACTURA (generadas automáticamente por trigger) ----
+    // ---- CUOTAS DE UNA FACTURA (las genera trg_generar_cuotas_factura) ----
     $list_cuotasxfactura = $pdo->prepare(
         "SELECT  id_factura,
                  id_cuota,
@@ -678,11 +683,14 @@ try {
           ORDER BY id_cuota"
     );
 
-    // ---- INSERT — fun_insert_cuentasxpagar (6 params) ----
-    // id_factura, id_proveedor, fec_emision, fec_vencimiento, val_factura, num_cuotas
-    // (val_saldo e ind_estado se calculan internamente / las cuotas las genera
-    //  un trigger al insertar — no requieren manejo desde PHP)
-    // La factura NO se puede actualizar ni eliminar una vez creada.
+    // ---- INSERT — fun_insert_cuentasxpagar (7 params) ----
+    // >>> CAMBIA (comentario): son 7 parámetros, no 6.
+    // id_factura, id_proveedor, id_ordencompra (NULL si no hay OC),
+    // fec_emision, fec_vencimiento, val_factura, num_cuotas
+    // (val_saldo y las cuotas los ponen los triggers 3.1 y 4.1.
+    //  La factura no se actualiza ni se borra.)
+    // OJO: la tabla exige fec_vencimiento > fec_emision (estricto) aunque la
+    // función deja pasar fechas iguales; validar en pantalla que sea mayor.
     $ins_cuentasxpagar = $pdo->prepare(
         "SELECT fun_insert_cuentasxpagar(
             :wid_factura,
@@ -696,13 +704,10 @@ try {
     );
 
     // =========================================================================
-    // 7. TAB_ENC_CRONOPAGOS / TAB_DET_CRONOPAGOS
+    // 7. TAB_ENC_CRONOPAGOS / TAB_DET_CRONOPAGOS               (Tablas 9 y 10)
     // =========================================================================
 
-    // ---- LISTADO DE CRONOGRAMAS DE PAGOS (ENCABEZADO) ----
-    // >>> CORREGIDO: faltaba nom_cronograma, que existe en el modelo y que
-    //     fun_update_enc_cronopagos exige como parámetro. Sin él, el formulario
-    //     de edición no tenía de dónde precargar el nombre.
+    // ---- LISTADO DE CRONOGRAMAS ----
     $list_enc_cronopagos = $pdo->prepare(
         "SELECT  id_cronograma,
                  nom_cronograma,
@@ -714,7 +719,7 @@ try {
           ORDER BY fec_programacion DESC, id_cronograma DESC"
     );
 
-    // ---- UN CRONOGRAMA (encabezado, para el formulario de edición) ----
+    // ---- UN CRONOGRAMA ----
     $get_enc_cronopagos = $pdo->prepare(
         "SELECT  id_cronograma,
                  nom_cronograma,
@@ -726,7 +731,7 @@ try {
             AND  ind_borrado   = FALSE"
     );
 
-    // ---- DETALLE DE UN CRONOGRAMA (cuotas incluidas) ----
+    // ---- DETALLE DE UN CRONOGRAMA ----
     $list_det_cronopagos = $pdo->prepare(
         "SELECT  d.id_cronograma,
                  d.id_factura,
@@ -744,53 +749,37 @@ try {
           ORDER BY t.nom_tercero, d.id_factura, d.id_cuota"
     );
 
-    // ---- CUOTAS PENDIENTES DISPONIBLES PARA ARMAR UN CRONOGRAMA ----
-    //
-    // >>> CORREGIDO — este era un bug real.
-    // tab_det_cronopagos tiene CONSTRAINT uq_cuota_programada UNIQUE
-    // (id_factura, id_cuota) a nivel GLOBAL, sin importar ind_borrado del
-    // encabezado. La versión anterior filtraba el NOT EXISTS con
-    // "ec.ind_borrado = FALSE", así que una cuota que quedó atrapada en un
-    // cronograma borrado lógicamente se mostraba como disponible y al
-    // agregarla a un cronograma nuevo reventaba con violación de UNIQUE.
-    // Ahora el NOT EXISTS mira TODO el detalle, sin filtrar por borrado.
-    //
-    // Alternativa si prefieres poder reutilizar esas cuotas: que
-    // fun_delete_enc_cronopagos borre físicamente las filas de
-    // tab_det_cronopagos al hacer el borrado lógico del encabezado. En ese
-    // caso este NOT EXISTS queda igual de correcto.
+    // ---- CUOTAS DISPONIBLES PARA ARMAR UN CRONOGRAMA ----
+    // Primera cuota pendiente de cada factura que no esté en ningún
+    // cronograma (uq_cuota_programada es global, sin mirar ind_borrado).
     $list_cuotas_pendientes = $pdo->prepare(
-    "SELECT  c.id_factura,
-             c.id_cuota,
-             c.fec_vencimiento,
-             c.val_cuota,
-             f.id_proveedor,
-             t.nom_tercero
-       FROM  tab_cuotasxfactura  c
-       JOIN  tab_cuentasxpagar   f ON f.id_factura = c.id_factura
-       JOIN  tab_terceros        t ON t.id_tercero = f.id_proveedor
-      WHERE  c.ind_pagada = FALSE
-        -- solo la primera cuota pendiente de cada factura
-        AND  NOT EXISTS (
-                SELECT 1
-                  FROM tab_cuotasxfactura c2
-                 WHERE c2.id_factura = c.id_factura
-                   AND c2.ind_pagada = FALSE
-                   AND c2.id_cuota   < c.id_cuota
-             )
-        -- y que no esté ya programada en un cronograma
-        AND  NOT EXISTS (
-                SELECT 1
-                  FROM tab_det_cronopagos dc
-                 WHERE dc.id_factura = c.id_factura
-                   AND dc.id_cuota   = c.id_cuota
-             )
-      ORDER BY c.fec_vencimiento"
+        "SELECT  c.id_factura,
+                 c.id_cuota,
+                 c.fec_vencimiento,
+                 c.val_cuota,
+                 f.id_proveedor,
+                 t.nom_tercero
+           FROM  tab_cuotasxfactura  c
+           JOIN  tab_cuentasxpagar   f ON f.id_factura = c.id_factura
+           JOIN  tab_terceros        t ON t.id_tercero = f.id_proveedor
+          WHERE  c.ind_pagada = FALSE
+            AND  NOT EXISTS (
+                    SELECT 1
+                      FROM tab_cuotasxfactura c2
+                     WHERE c2.id_factura = c.id_factura
+                       AND c2.ind_pagada = FALSE
+                       AND c2.id_cuota   < c.id_cuota
+                 )
+            AND  NOT EXISTS (
+                    SELECT 1
+                      FROM tab_det_cronopagos dc
+                     WHERE dc.id_factura = c.id_factura
+                       AND dc.id_cuota   = c.id_cuota
+                 )
+          ORDER BY c.fec_vencimiento"
     );
 
-    // ---- VENCIMIENTO DE UNA CUOTA (validar contra la fecha del cronograma) ----
-    // >>> NUEVO. Una cuota no puede entrar a un cronograma si vence después
-    //     de la fecha de programación.
+    // ---- VENCIMIENTO DE UNA CUOTA (validación en pantalla) ----
     $get_venc_cuota = $pdo->prepare(
         "SELECT  fec_vencimiento
            FROM  tab_cuotasxfactura
@@ -799,7 +788,6 @@ try {
     );
 
     // ---- VENCIMIENTO MÁS LEJANO DE LAS CUOTAS DE UN CRONOGRAMA ----
-    // >>> NUEVO. Al editar, la nueva fecha no puede quedar antes de este valor.
     $get_max_venc_cronograma = $pdo->prepare(
         "SELECT  MAX(c.fec_vencimiento)
            FROM  tab_det_cronopagos  d
@@ -809,9 +797,8 @@ try {
     );
 
     // ---- INSERT — fun_insert_enc_cronopagos (2 params) ----
-    // nom_cronograma, fec_programacion   <-- este es el orden real
-    // (id_cronograma se autogenera; total_a_pagar inicia en 0 y se recalcula
-    //  por trigger a medida que se insertan filas de detalle)
+    // nom_cronograma, fec_programacion
+    // (trg_validar_fecha_cronograma rechaza días que no sean de pago y festivos)
     $ins_enc_cronopagos = $pdo->prepare(
         "SELECT fun_insert_enc_cronopagos(
             :wnom_cronograma,
@@ -821,8 +808,8 @@ try {
 
     // ---- INSERT — fun_insert_det_cronopagos (3 params) ----
     // id_cronograma, id_factura, id_cuota
-    // (Se llama una vez por cada cuota seleccionada por el usuario —
-    //  val_a_pagar se resuelve internamente consultando tab_cuotasxfactura)
+    // (val_a_pagar lo pone trg_val_a_pagar_cronograma y total_a_pagar
+    //  lo recalcula trg_calcular_total_cronograma)
     $ins_det_cronopagos = $pdo->prepare(
         "SELECT fun_insert_det_cronopagos(
             :wid_cronograma,
@@ -832,8 +819,6 @@ try {
     );
 
     // ---- UPDATE — fun_update_enc_cronopagos (3 params) ----
-    // id_cronograma, nom_cronograma, fec_programacion
-    // (No permite editar ind_estado ni total_a_pagar ni las cuotas incluidas)
     $upd_enc_cronopagos = $pdo->prepare(
         "SELECT fun_update_enc_cronopagos(
             :wid_cronograma,
@@ -842,17 +827,15 @@ try {
         )"
     );
 
-    // ---- DELETE — fun_delete_enc_cronopagos (1 param) ----
-    // Borrado lógico (ind_borrado = TRUE)
+    // ---- DELETE — fun_delete_enc_cronopagos (1 param) — borrado lógico ----
+    // Solo cronogramas vacíos. (en fun_deletes_tescxp.sql)
     $del_enc_cronopagos = $pdo->prepare(
         "SELECT fun_delete_enc_cronopagos(:wid_cronograma)"
     );
 
-    // ---- DELETE — fun_delete_det_cronopagos (3 params) ----
-    // id_cronograma, id_factura, id_cuota
-    // Borrado FÍSICO de una línea de detalle. Solo si el cronograma está
-    // activo, pendiente (no pagado) y sin archivos planos generados.
-    // La función recalcula automáticamente total_a_pagar en el encabezado.
+    // ---- DELETE — fun_delete_det_cronopagos (3 params) — borrado físico ----
+    // No deja borrar la última cuota del cronograma ni una cuota que esté en
+    // un archivo plano. (en fun_deletes_tescxp.sql)
     $del_det_cronopagos = $pdo->prepare(
         "SELECT fun_delete_det_cronopagos(
             :wid_cronograma,
@@ -861,7 +844,7 @@ try {
         )"
     );
 
-    // ---- CRONOGRAMAS PENDIENTES (disponibles para generar archivo plano) ----
+    // ---- CRONOGRAMAS PENDIENTES (para generar archivo plano) ----
     $list_cronogramas_pendientes = $pdo->prepare(
         "SELECT  id_cronograma,
                  nom_cronograma,
@@ -873,50 +856,172 @@ try {
           ORDER BY fec_programacion"
     );
 
-    // ---- ¿EL CRONOGRAMA YA TIENE ARCHIVOS PLANOS? ----
-    // >>> NUEVO. fun_delete_det_cronopagos no debe permitir quitar una cuota de
-    //     un cronograma que ya se le entregó al banco. Esta consulta permite
-    //     desactivar el botón en pantalla antes de que la función falle.
+    // ---- ¿EL CRONOGRAMA YA TIENE LÍNEAS EN ARCHIVOS PLANOS? ----
+    // >>> CAMBIA: id_cronograma ya no está en el encabezado del archivo plano,
+    //     ahora está en el detalle. Devuelve si tiene líneas y si alguna está
+    //     en un archivo ya generado (que es lo que bloquea editar el detalle).
     $check_crono_con_archivo = $pdo->prepare(
         "SELECT  EXISTS (
                     SELECT 1
-                      FROM tab_enc_archivo_plano
-                     WHERE id_cronograma = :wid_cronograma
-                 ) AS tiene_archivo"
+                      FROM tab_det_archivo_plano d
+                     WHERE d.id_cronograma = :wid_cronograma
+                 ) AS tiene_archivo,
+                 EXISTS (
+                    SELECT 1
+                      FROM tab_det_archivo_plano d
+                      JOIN tab_enc_archivo_plano e ON e.id_archivo_plano = d.id_archivo_plano
+                     WHERE d.id_cronograma = :wid_cronograma2
+                       AND e.ind_generado  = TRUE
+                 ) AS tiene_archivo_generado"
+    );
+    // (PDO_PGSQL no permite repetir un placeholder: mandar el mismo valor en
+    //  :wid_cronograma y :wid_cronograma2)
+
+    // =========================================================================
+    // 8. TAB_TIPOS_PAGO                                             (Tabla 11)
+    // =========================================================================
+    // >>> NUEVO bloque. Lo usan archivo_plano.php (select del encabezado) y
+    //     tipos_pago.php (administración).
+    //     Funciones: fun_insert_tipos_pago, fun_update_tipos_pago y
+    //     fun_delete_tipos_pago (borrado lógico).
+
+    // ---- ACTIVOS (combo del encabezado de archivo plano) ----
+
+    $list_tipos_pago = $pdo->prepare(
+        "SELECT  id_tipo_pago,
+                 nom_tipo_pago
+           FROM  tab_tipos_pago
+          WHERE  ind_borrado = FALSE
+          ORDER BY id_tipo_pago"
+    );
+
+    $get_tipo_pago = $pdo->prepare(
+        "SELECT  id_tipo_pago,
+                 nom_tipo_pago
+           FROM  tab_tipos_pago
+          WHERE  id_tipo_pago = :wid_tipo_pago
+            AND  ind_borrado  = FALSE"
+    );
+
+    // ---- LISTADO DE ADMINISTRACIÓN (incluye inactivos, para reactivarlos) ----
+    $list_tipos_pago_admin = $pdo->prepare(
+        "SELECT  id_tipo_pago,
+                 nom_tipo_pago,
+                 ind_borrado
+           FROM  tab_tipos_pago
+          ORDER BY id_tipo_pago"
+    );
+
+    // ---- UN TIPO DE PAGO, ACTIVO O NO (para validar y para editar/reactivar) ----
+    $get_tipo_pago_admin = $pdo->prepare(
+        "SELECT  id_tipo_pago,
+                 nom_tipo_pago,
+                 ind_borrado
+           FROM  tab_tipos_pago
+          WHERE  id_tipo_pago = :wid_tipo_pago"
+    );
+
+    // ---- ¿NOMBRE REPETIDO EN OTRO TIPO DE PAGO? (para marcar el campo en el formulario) ----
+    $check_nom_tipo_pago = $pdo->prepare(
+        "SELECT  COUNT(*)
+           FROM  tab_tipos_pago
+          WHERE  UPPER(nom_tipo_pago) = UPPER(:wnom_tipo_pago)
+            AND  id_tipo_pago        <> :wid_tipo_pago"
+    );
+
+    // ---- INSERT — fun_insert_tipos_pago (2 params) ----
+    // (ind_borrado entra en FALSE por DEFAULT; el nombre se guarda en mayúsculas)
+    $ins_tipo_pago = $pdo->prepare(
+        "SELECT fun_insert_tipos_pago(
+            :wid_tipo_pago,
+            :wnom_tipo_pago
+        )"
+    );
+
+    // ---- UPDATE — fun_update_tipos_pago (3 params) ----
+    // id_tipo_pago (no cambia), nom_tipo_pago, ind_borrado
+    // (ind_borrado = FALSE reactiva; para inactivar se usa $del_tipo_pago)
+    $upd_tipo_pago = $pdo->prepare(
+        "SELECT fun_update_tipos_pago(
+            :wid_tipo_pago,
+            :wnom_tipo_pago,
+            :wind_borrado
+        )"
+    );
+
+    // ---- DELETE — fun_delete_tipos_pago (1 param) — borrado lógico ----
+    // No deja inactivar si hay archivos planos sin generar con ese tipo.
+    $del_tipo_pago = $pdo->prepare(
+        "SELECT fun_delete_tipos_pago(
+            :wid_tipo_pago
+        )"
     );
 
     // =========================================================================
-    // 8. TAB_ENC_ARCHIVO_PLANO / TAB_DET_ARCHIVO_PLANO
+    // 9. TAB_ENC_ARCHIVO_PLANO / TAB_DET_ARCHIVO_PLANO        (Tablas 12 y 13)
     // =========================================================================
+    // >>> CAMBIA todo el bloque. Con el modelo nuevo:
+    //     - El ENCABEZADO guarda la cuenta de origen (id_empresa, cta_empresa,
+    //       id_banco, ind_tipocuenta), nom_empresa, fecha_aplicacion e
+    //       id_tipo_pago. Ya no está atado a un cronograma.
+    //     - El DETALLE guarda id_cronograma y una copia de los datos del
+    //       beneficiario (id_tipo, nom_tercero, id_banco, ind_tipocuenta,
+    //       cta_proveedor), para que el archivo conserve lo que se envió.
+    //     - Un mismo archivo puede llevar cuotas de varios cronogramas.
+    //     - Una cuota puede estar en varios archivos solo como reintento: cada
+    //       archivo anterior debe tener su pago RECHAZADO.
 
-    // ---- CUOTAS DE UN CRONOGRAMA (una fila por cuota) ----
-    //
-    // >>> CORREGIDO: la consulta anterior ($list_cuotas_crono_con_cuentas)
-    //     unía en el mismo SELECT las cuotas del cronograma con las cuentas
-    //     del proveedor. Como un proveedor puede tener varias cuentas activas,
-    //     cada cuota se repetía tantas veces como cuentas tuviera y el detalle
-    //     salía duplicado en pantalla.
-    //     Ahora son dos consultas: esta trae las cuotas (una fila por cuota) y
-    //     $list_ctas_prov_de_cronograma trae las cuentas de cada proveedor
-    //     para agruparlas en PHP por id_proveedor.
+    // ---- CUOTAS DE UN CRONOGRAMA DISPONIBLES PARA UN ARCHIVO PLANO ----
+    // (una fila por cuota; las cuentas del proveedor se traen aparte)
+    // id_tipo (NIT, CC...) sale de tab_terceros y se copia al detalle del archivo.
+    // >>> CAMBIA: una cuota está disponible si nunca ha ido a un archivo, o
+    //     si todos los archivos donde fue tienen su pago RECHAZADO (3) (reintento).
+    //     Si está en un archivo sin respuesta, PENDIENTE o APROBADO, no sale.
+    //     Es la misma regla que valida fun_insert_det_archivo_plano.
     $list_cuotas_de_cronograma = $pdo->prepare(
         "SELECT  d.id_cronograma,
                  d.id_factura,
                  d.id_cuota,
                  d.val_a_pagar,
                  f.id_proveedor,
-                 t.nom_tercero
+                 t.id_tipo,
+                 t.nom_tercero,
+                 -- TRUE si la cuota ya estuvo en otro archivo y el banco la
+                 -- rechazó (por el filtro de abajo, todas sus líneas previas
+                 -- están rechazadas): es un reintento.
+                 EXISTS (
+                    SELECT 1
+                      FROM tab_det_archivo_plano ap2
+                     WHERE ap2.id_factura = d.id_factura
+                       AND ap2.id_cuota   = d.id_cuota
+                 ) AS es_reintento
            FROM  tab_det_cronopagos  d
            JOIN  tab_cuentasxpagar   f ON f.id_factura = d.id_factura
            JOIN  tab_terceros        t ON t.id_tercero = f.id_proveedor
+           JOIN  tab_cuotasxfactura  c ON c.id_factura = d.id_factura
+                                      AND c.id_cuota   = d.id_cuota
           WHERE  d.id_cronograma = :wid_cronograma
+            AND  c.ind_pagada    = FALSE
+            AND  NOT EXISTS (
+                    SELECT 1
+                      FROM tab_det_archivo_plano ap
+                     WHERE ap.id_factura = d.id_factura
+                       AND ap.id_cuota   = d.id_cuota
+                       AND NOT EXISTS (
+                               SELECT 1
+                                 FROM tab_pagos_cxp p
+                                WHERE p.id_archivo_plano = ap.id_archivo_plano
+                                  AND p.id_cronograma    = ap.id_cronograma
+                                  AND p.id_factura       = ap.id_factura
+                                  AND p.id_cuota         = ap.id_cuota
+                                  AND p.estado_pago      = 3
+                           )
+                 )
           ORDER BY t.nom_tercero, d.id_factura, d.id_cuota"
     );
 
-    // ---- CUENTAS ACTIVAS DE TODOS LOS PROVEEDORES DE UN CRONOGRAMA ----
+    // ---- CUENTAS ACTIVAS DE LOS PROVEEDORES DE UN CRONOGRAMA ----
     // (se agrupa en PHP por id_proveedor para pintar un select por proveedor)
-    // >>> CORREGIDO: se agregó el filtro de bancos activos, igual que en
-    //     $list_ctas_de_proveedor, para no ofrecer un banco dado de baja.
     $list_ctas_prov_de_cronograma = $pdo->prepare(
         "SELECT DISTINCT
                  bp.id_proveedor,
@@ -935,11 +1040,10 @@ try {
           ORDER BY bp.id_proveedor, b.nom_banco, bp.cta_proveedor"
     );
 
-    // ---- PROVEEDORES DE UN CRONOGRAMA SIN CUENTA REGISTRADA ----
-    // >>> NUEVO. Si un proveedor incluido en el cronograma no tiene ninguna
-    //     cuenta activa en tab_bancoxprov, el archivo plano no se puede armar
-    //     (la FK compuesta de tab_det_archivo_plano lo va a rechazar).
-    //     Mejor detectarlo antes de empezar a generar filas.
+    // ---- PROVEEDORES DE UN CRONOGRAMA SIN CUENTA UTILIZABLE ----
+    // >>> CAMBIA: ahora también cuenta como "sin cuenta" el proveedor cuyas
+    //     cuentas están todas en bancos borrados o inactivos, igual que el
+    //     filtro de $list_ctas_prov_de_cronograma.
     $list_prov_sin_cuenta = $pdo->prepare(
         "SELECT DISTINCT
                  f.id_proveedor,
@@ -951,8 +1055,11 @@ try {
             AND  NOT EXISTS (
                     SELECT 1
                       FROM tab_bancoxprov bp
+                      JOIN tab_bancos     b ON b.id_banco = bp.id_banco
                      WHERE bp.id_proveedor = f.id_proveedor
                        AND bp.ind_borrado  = FALSE
+                       AND b.ind_borrado   = FALSE
+                       AND b.ind_estado    = TRUE
                  )
           ORDER BY t.nom_tercero"
     );
@@ -960,56 +1067,69 @@ try {
     // ---- LISTADO DE ARCHIVOS PLANOS (ENCABEZADO) ----
     $list_enc_archivo_plano = $pdo->prepare(
         "SELECT  a.id_archivo_plano,
-                 a.id_cronograma,
-                 e.nom_cronograma,
+                 a.nom_archivo,
+                 a.id_empresa,
+                 a.nom_empresa,
+                 a.cta_empresa,
                  a.id_banco,
                  b.nom_banco,
-                 a.nom_archivo,
+                 a.ind_tipocuenta,
+                 a.fecha_aplicacion,
+                 a.id_tipo_pago,
+                 tp.nom_tipo_pago,
                  a.fec_generacion,
                  a.ind_generado
            FROM  tab_enc_archivo_plano a
-           JOIN  tab_enc_cronopagos    e ON e.id_cronograma = a.id_cronograma
-           JOIN  tab_bancos            b ON b.id_banco      = a.id_banco
+           JOIN  tab_bancos            b  ON b.id_banco      = a.id_banco
+           JOIN  tab_tipos_pago        tp ON tp.id_tipo_pago = a.id_tipo_pago
           ORDER BY a.id_archivo_plano DESC"
     );
 
-    // ---- UN ARCHIVO PLANO (encabezado) ----
+    // ---- UN ARCHIVO PLANO (ENCABEZADO) ----
     $get_enc_archivo_plano = $pdo->prepare(
         "SELECT  a.id_archivo_plano,
-                 a.id_cronograma,
-                 e.nom_cronograma,
+                 a.nom_archivo,
+                 a.id_empresa,
+                 a.nom_empresa,
+                 a.cta_empresa,
                  a.id_banco,
                  b.nom_banco,
-                 a.nom_archivo,
+                 a.ind_tipocuenta,
+                 a.fecha_aplicacion,
+                 a.id_tipo_pago,
+                 tp.nom_tipo_pago,
                  a.fec_generacion,
                  a.ind_generado
            FROM  tab_enc_archivo_plano a
-           JOIN  tab_enc_cronopagos    e ON e.id_cronograma = a.id_cronograma
-           JOIN  tab_bancos            b ON b.id_banco      = a.id_banco
+           JOIN  tab_bancos            b  ON b.id_banco      = a.id_banco
+           JOIN  tab_tipos_pago        tp ON tp.id_tipo_pago = a.id_tipo_pago
           WHERE  a.id_archivo_plano = :wid_archivo_plano"
     );
 
-    // ---- DETALLE DE UN ARCHIVO PLANO (filas de pago empresa -> proveedor) ----
+    // ---- DETALLE DE UN ARCHIVO PLANO ----
+    // nom_tercero, id_tipo, banco y tipo de cuenta son la copia guardada el
+    // día que se armó el archivo; no se vuelven a leer de los maestros.
     $list_det_archivo_plano = $pdo->prepare(
         "SELECT  d.id_archivo_plano,
-                 d.id_empresa,
-                 d.cta_empresa,
-                 d.id_proveedor,
-                 t.nom_tercero,
-                 d.cta_proveedor,
-                 d.ind_tipocuenta,
+                 d.id_cronograma,
                  d.id_factura,
                  d.id_cuota,
-                 d.val_a_pagar
+                 d.id_tipo,
+                 d.id_proveedor,
+                 d.nom_tercero,
+                 d.id_banco,
+                 b.nom_banco,
+                 d.ind_tipocuenta,
+                 d.cta_proveedor,
+                 d.val_a_pagar,
+                 d.concepto
            FROM  tab_det_archivo_plano d
-           JOIN  tab_terceros          t ON t.id_tercero = d.id_proveedor
+           JOIN  tab_bancos            b ON b.id_banco = d.id_banco
           WHERE  d.id_archivo_plano = :wid_archivo_plano
-          ORDER BY t.nom_tercero, d.id_factura, d.id_cuota"
+          ORDER BY d.nom_tercero, d.id_factura, d.id_cuota"
     );
 
-    // ---- TOTAL Y CANTIDAD DE FILAS DE UN ARCHIVO PLANO ----
-    // >>> NUEVO. Casi todos los formatos de archivo plano bancario piden un
-    //     registro de control con el número de registros y la suma a debitar.
+    // ---- TOTAL Y CANTIDAD DE REGISTROS (registro de control del archivo) ----
     $sum_det_archivo_plano = $pdo->prepare(
         "SELECT  COUNT(*)                        AS cant_registros,
                  COALESCE(SUM(val_a_pagar), 0)   AS total_a_debitar
@@ -1017,47 +1137,57 @@ try {
           WHERE  id_archivo_plano = :wid_archivo_plano"
     );
 
-    // ---- INSERT — fun_insert_enc_archivo_plano (3 params) ----
-    // id_cronograma, id_banco, nom_archivo
-    // (id_archivo_plano se autogenera internamente con MAX(id_archivo_plano)+1,
-    //  igual patrón que fun_insert_enc_cronopagos)
+    // ---- INSERT — fun_insert_enc_archivo_plano (8 params) ----
+    // Confirmada contra fun_inserts_tescxp.sql.
+    // nom_archivo, id_empresa, nom_empresa, id_banco, ind_tipocuenta,
+    // cta_empresa, fecha_aplicacion, id_tipo_pago
+    // (id_archivo_plano se autogenera; fec_generacion queda NULL e
+    //  ind_generado en FALSE)
+    // id_banco e ind_tipocuenta deben ser los de la cuenta elegida: traerlos
+    // con $get_cta_empresa, y que la función valide que coinciden con
+    // tab_ctas_empresa.
     $ins_enc_archivo_plano = $pdo->prepare(
         "SELECT fun_insert_enc_archivo_plano(
-            :wid_cronograma,
+            :wnom_archivo,
+            :wid_empresa,
+            :wnom_empresa,
             :wid_banco,
-            :wnom_archivo
+            :wind_tipocuenta,
+            :wcta_empresa,
+            :wfecha_aplicacion,
+            :wid_tipo_pago
         )"
     );
 
-    // ---- INSERT — fun_insert_det_archivo_plano (8 params) ----
-    // id_archivo_plano, id_empresa, cta_empresa, id_proveedor, cta_proveedor,
-    // ind_tipocuenta, id_factura, id_cuota
-    //
-    // >>> CORREGIDO: la versión anterior mandaba 7 placeholders y se saltaba
-    //     ind_tipocuenta, que sí existe en tab_det_archivo_plano y es NOT NULL.
-    //     Se guarda copiado (no por FK) para que el archivo conserve el tipo
-    //     de cuenta que tenía el proveedor el día del pago.
-    //
-    // >>> FIRMA INFERIDA en cuanto a la posición de ind_tipocuenta: aquí va
-    //     después de cta_proveedor, siguiendo el orden de columnas de la tabla.
-    //     Si la función lo recibe en otra posición, hay que reordenar.
-    //     (val_a_pagar se calcula internamente desde tab_det_cronopagos)
+    // ---- INSERT — fun_insert_det_archivo_plano (11 params) ----
+    // Confirmada contra fun_inserts_tescxp.sql.
+    // id_archivo_plano, id_cronograma, id_factura, id_cuota, id_tipo,
+    // id_proveedor, nom_tercero, id_banco, ind_tipocuenta, cta_proveedor,
+    // concepto (concepto admite NULL)
+    // id_banco e ind_tipocuenta deben ser los de la cuenta elegida
+    // ($list_ctas_prov_de_cronograma); la función rechaza si no coinciden.
+    // (val_a_pagar lo pone trg_val_a_pagar_archivo_plano desde tab_det_cronopagos)
     $ins_det_archivo_plano = $pdo->prepare(
         "SELECT fun_insert_det_archivo_plano(
             :wid_archivo_plano,
-            :wid_empresa,
-            :wcta_empresa,
-            :wid_proveedor,
-            :wcta_proveedor,
-            :wind_tipocuenta,
+            :wid_cronograma,
             :wid_factura,
-            :wid_cuota
+            :wid_cuota,
+            :wid_tipo,
+            :wid_proveedor,
+            :wnom_tercero,
+            :wid_banco,
+            :wind_tipocuenta,
+            :wcta_proveedor,
+            :wconcepto
         )"
     );
 
     // ---- UPDATE — fun_update_enc_archivo_plano (3 params) ----
-    // id_archivo_plano, id_banco, nom_archivo
-    // (No permite editar el cronograma asociado ni las filas de detalle)
+    // id_archivo_plano, id_banco, nom_archivo — solo si no está generado.
+    // OJO: si se cambia id_banco aquí, deja de coincidir con el banco de
+    // cta_empresa. Conviene que la función solo permita cambiar el nombre, o
+    // que cambie la cuenta completa.
     $upd_enc_archivo_plano = $pdo->prepare(
         "SELECT fun_update_enc_archivo_plano(
             :wid_archivo_plano,
@@ -1066,120 +1196,148 @@ try {
         )"
     );
 
-    // ---- UPDATE — MARCAR ARCHIVO PLANO COMO GENERADO (al descargar el CSV) ----
-    // id_archivo_plano
-    // (Se ejecuta la primera vez que se descarga el archivo: fija
-    //  ind_generado = TRUE y fec_generacion = fecha actual del servidor.
-    //  Si ya estaba generado, COALESCE evita pisar la fecha original.)
-    //
-    // >>> CORREGIDO: antes usaba NOW(), que devuelve timestamp; fec_generacion
-    //     es DATE. Se cambia a CURRENT_DATE para no depender del cast implícito.
+    // ---- ID DEL ARCHIVO PLANO RECIÉN CREADO ----
+    // >>> NUEVO. fun_insert_enc_archivo_plano devuelve TRUE, no el id. Se busca
+    //     el último encabezado sin generar con ese nombre y esa cuenta, dentro
+    //     de la misma transacción del insert.
+    $get_id_archivo_recien_creado = $pdo->prepare(
+        "SELECT  MAX(id_archivo_plano)
+           FROM  tab_enc_archivo_plano
+          WHERE  nom_archivo  = :wnom_archivo
+            AND  id_empresa   = :wid_empresa
+            AND  cta_empresa  = :wcta_empresa
+            AND  ind_generado = FALSE"
+    );
+
+    // ---- MARCAR ARCHIVO PLANO COMO GENERADO (al descargarlo) ----
+    // >>> CAMBIA: fec_generacion ya la pone trg_fecha_generacion_archivo al
+    //     pasar ind_generado de FALSE a TRUE; aquí solo se cambia el indicador.
+    //     El filtro ind_generado = FALSE hace que descargarlo otra vez no haga nada.
+    // fec_generacion se pone aquí mismo (fecha de la primera descarga), sin
+    // depender de trg_fecha_generacion_archivo: si el trigger no existe en la
+    // base, el archivo quedaba "Generado" pero sin fecha. Volver a descargar
+    // no cambia la fecha (solo actualiza si ind_generado sigue en FALSE).
     $upd_generar_archivo_plano = $pdo->prepare(
         "UPDATE tab_enc_archivo_plano
             SET ind_generado   = TRUE,
-                fec_generacion = COALESCE(fec_generacion, CURRENT_DATE)
-          WHERE id_archivo_plano = :wid_archivo_plano"
+                fec_generacion = CURRENT_DATE
+          WHERE id_archivo_plano = :wid_archivo_plano
+            AND ind_generado     = FALSE"
     );
 
     // =========================================================================
-    // 9. TAB_MOTIVOS_RECHAZO                                          (Tabla 13)
+    // 10. TAB_CODIGOS_RESPUESTA_BANCO                               (Tabla 14)
     // =========================================================================
-    // Catálogo de motivos por los que un banco rechaza un pago. Se usa desde
-    // tab_pagos_cxp. ind_borrado permite dar de baja un motivo sin romper los
-    // pagos históricos que ya lo referencian.
-    //
-    // >>> CORREGIDO — este bloque venía con tres problemas:
-    //     1) $ins_motivo_rechazo estaba declarado DOS VECES, con firmas
-    //        distintas (4 params y 2 params). En PHP la segunda asignación
-    //        pisa a la primera, así que la de 4 parámetros nunca se usaba y
-    //        quedaba como código muerto que confunde al mantener. Se dejó una
-    //        sola: la de 2 parámetros, que es la que sigue el patrón del
-    //        proyecto (el id se autogenera; ind_borrado entra por DEFAULT).
-    //     2) El comentario "LISTADO COMPLETO" estaba encima del INSERT.
-    //     3) La indentación se salía del bloque try (cosmético, pero hacía
-    //        difícil ver dónde terminaba el archivo).
+    // >>> CAMBIA todo el bloque (antes tab_motivos_rechazo).
+    // Catálogo de los códigos que devuelve cada banco en su archivo de
+    // respuesta. PK (id_codigo, id_banco): dos bancos pueden usar el mismo
+    // código con significados distintos. El banco que responde es el de la
+    // cuenta de origen del archivo plano (tab_enc_archivo_plano.id_banco).
 
-    // ---- LISTADO COMPLETO (vista de administración: incluye inactivos) ----
-    $list_motivos_rechazo = $pdo->prepare(
-        "SELECT  id_motivo_rechazo,
-                 des_motivo,
-                 cod_bancario
-           FROM  tab_motivos_rechazo
-           WHERE ind_borrado = FALSE
-          ORDER BY des_motivo"
+    // ---- LISTADO DE ADMINISTRACIÓN (incluye inactivos, para reactivarlos) ----
+    $list_codigos_respuesta = $pdo->prepare(
+        "SELECT  c.id_codigo,
+                 c.id_banco,
+                 b.nom_banco,
+                 c.des_motivo,
+                 c.ind_borrado
+           FROM  tab_codigos_respuesta_banco c
+           JOIN  tab_bancos                  b ON b.id_banco = c.id_banco
+          ORDER BY b.nom_banco, c.ind_borrado, c.id_codigo"
     );
 
-    // ---- UN MOTIVO (para el formulario de edición) ----
-    // >>> NUEVO.
-    $get_motivo_rechazo = $pdo->prepare(
-        "SELECT  id_motivo_rechazo,
+    // ---- CÓDIGOS DE UN BANCO (incluye inactivos) ----
+    $list_codigos_de_banco = $pdo->prepare(
+        "SELECT  id_codigo,
                  des_motivo,
-                 cod_bancario,
                  ind_borrado
-           FROM  tab_motivos_rechazo
-          WHERE  id_motivo_rechazo = :wid_motivo_rechazo"
+           FROM  tab_codigos_respuesta_banco
+          WHERE  id_banco = :wid_banco
+          ORDER BY ind_borrado, id_codigo"
     );
 
-    $ins_motivo_rechazo = $pdo->prepare(
-    "SELECT fun_insert_motivos_rechazo(
-        :wid_motivo_rechazo,
-        :wdes_motivo,
-        :wcod_bancario,
-        :wind_borrado)"
-);
-
-// ---- UPDATE DE UN MOTIVO ----
-    // id_motivo_rechazo, des_motivo, cod_bancario, ind_borrado
-    $upd_motivo_rechazo = $pdo->prepare(
-        "SELECT fun_update_motivos_rechazo(
-                :wid_motivo_rechazo,
-                :wdes_motivo,
-                :wcod_bancario,
-                :wind_borrado)"
+    // ---- CÓDIGOS ACTIVOS DEL BANCO DE UN ARCHIVO PLANO (combo al registrar la respuesta) ----
+    $list_codigos_de_archivo = $pdo->prepare(
+        "SELECT  c.id_codigo,
+                 c.des_motivo
+           FROM  tab_enc_archivo_plano       a
+           JOIN  tab_codigos_respuesta_banco c ON c.id_banco = a.id_banco
+          WHERE  a.id_archivo_plano = :wid_archivo_plano
+            AND  c.ind_borrado      = FALSE
+          ORDER BY c.id_codigo"
     );
 
-
-    // ---- DELETE — fun_delete_motivos_rechazo (1 param) ----
-    // Borrado lógico (ind_borrado = TRUE)
-    //
-    // >>> FIRMA INFERIDA. Debería fallar (o al menos advertir) si el motivo ya
-    //     está referenciado por algún pago rechazado, para no dejar huérfano
-    //     el histórico. Se puede validar antes con $check_motivo_en_uso.
-    $del_motivo_rechazo = $pdo->prepare(
-        "SELECT fun_delete_motivos_rechazo(:wid_motivo_rechazo)"
+    // ---- UN CÓDIGO (también sirve para traducir el código al importar la respuesta) ----
+    $get_codigo_respuesta = $pdo->prepare(
+        "SELECT  c.id_codigo,
+                 c.id_banco,
+                 b.nom_banco,
+                 c.des_motivo,
+                 c.ind_borrado
+           FROM  tab_codigos_respuesta_banco c
+           JOIN  tab_bancos                  b ON b.id_banco = c.id_banco
+          WHERE  c.id_codigo = :wid_codigo
+            AND  c.id_banco  = :wid_banco"
     );
 
-    // ---- VALIDACIÓN — ¿EL MOTIVO YA SE USÓ EN ALGÚN PAGO? ----
-    $check_motivo_en_uso = $pdo->prepare(
+    // ---- INSERT — fun_insert_codigos_respuesta_banco (3 params) ----
+    // id_codigo (el que manda el banco), id_banco, des_motivo
+    // (ind_borrado entra en FALSE por DEFAULT)
+    $ins_codigo_respuesta = $pdo->prepare(
+        "SELECT fun_insert_codigos_respuesta_banco(
+            :wid_codigo,
+            :wid_banco,
+            :wdes_motivo
+        )"
+    );
+
+    // ---- UPDATE — fun_update_codigos_respuesta_banco (4 params) ----
+    // id_codigo, id_banco (identifican el registro), des_motivo, ind_borrado
+    // (ind_borrado = FALSE reactiva un código dado de baja)
+    $upd_codigo_respuesta = $pdo->prepare(
+        "SELECT fun_update_codigos_respuesta_banco(
+            :wid_codigo,
+            :wid_banco,
+            :wdes_motivo,
+            :wind_borrado
+        )"
+    );
+
+    // ---- DELETE — fun_delete_codigos_respuesta_banco (2 params) — borrado lógico ----
+    $del_codigo_respuesta = $pdo->prepare(
+        "SELECT fun_delete_codigos_respuesta_banco(
+            :wid_codigo,
+            :wid_banco
+        )"
+    );
+
+    // ---- ¿EL CÓDIGO YA SE USÓ EN ALGÚN PAGO? (informativo) ----
+    $check_codigo_en_uso = $pdo->prepare(
         "SELECT  EXISTS (
                     SELECT 1
                       FROM tab_pagos_cxp
-                     WHERE id_motivo_rechazo = :wid_motivo_rechazo
+                     WHERE id_codigo = :wid_codigo
+                       AND id_banco  = :wid_banco
                  ) AS en_uso"
     );
 
     // =========================================================================
-    // 10. TAB_PAGOS_CXP                                               (Tabla 14)
+    // 11. TAB_PAGOS_CXP                                             (Tabla 15)
     // =========================================================================
-    // Registra cada INTENTO de pago de una cuota de factura. Los intentos
-    // rechazados nunca se borran: son el historial.
-    //
-    // Reglas del modelo que hay que respetar desde la aplicación:
-    //   - estado_pago solo admite 'PENDIENTE', 'APROBADO' o 'RECHAZADO'.
-    //   - El índice parcial uq_pago_aprobado_cuota permite UN SOLO pago
-    //     APROBADO por cuota. Se puede reintentar cuantas veces haga falta,
-    //     pero aprobar una sola vez.
-    //   - id_motivo_rechazo es obligatorio cuando el estado es 'RECHAZADO'
-    //     (la tabla no lo fuerza con un CHECK, lo valida la aplicación).
-    //   - id_archivo_plano va NULL solo si fue un pago manual. Si viene con
-    //     valor, la FK compuesta exige que exista la fila
-    //     (id_archivo_plano, id_factura, id_cuota) en tab_det_archivo_plano.
-    //
-    // >>> SIN TRIGGER: al aprobar un pago, marcar la cuota como pagada y
-    //     recalcular el saldo de la factura le toca a la aplicación.
-    //     Ver $mark_cuota_pagada y $recalc_saldo_factura más abajo.
+    // >>> CAMBIA todo el bloque.
+    // Un registro por respuesta del banco a una línea de archivo plano.
+    //   - estado_pago: 1 = PENDIENTE, 2 = APROBADO, 3 = RECHAZADO.
+    //   - id_codigo e id_banco son NOT NULL: el pago se registra cuando llega
+    //     la respuesta del banco, con su código.
+    //   - Al quedar APROBADO (2), fun_insert_pagos_cxp / fun_update_pagos_cxp
+    //     marcan la cuota como pagada y cierran el cronograma si ya no le
+    //     quedan cuotas sin pagar. Los triggers hacen el resto:
+    //       cuota pagada  -> trg_actualizar_saldo_factura   (saldo y cierre de factura)
+    //       saldo factura -> trg_actualizar_saldo_proveedor (deuda del proveedor)
+    //   - RECHAZADO (3): la cuota vuelve a quedar disponible para otro archivo
+    //     plano (ver $list_cuotas_de_cronograma).
 
-    // ---- LISTADO GENERAL DE PAGOS ----
+    // ---- LISTADO GENERAL ----
     $list_pagos_cxp = $pdo->prepare(
         "SELECT  p.id_pago,
                  p.id_factura,
@@ -1187,21 +1345,25 @@ try {
                  f.id_proveedor,
                  t.nom_tercero,
                  p.id_archivo_plano,
+                 p.id_cronograma,
                  p.fec_pago,
                  p.val_pago,
                  p.estado_pago,
-                 p.referencia_bancaria,
-                 p.id_motivo_rechazo,
-                 m.des_motivo
-           FROM  tab_pagos_cxp        p
-           JOIN  tab_cuentasxpagar    f ON f.id_factura = p.id_factura
-           JOIN  tab_terceros         t ON t.id_tercero = f.id_proveedor
-           LEFT JOIN tab_motivos_rechazo m ON m.id_motivo_rechazo = p.id_motivo_rechazo
+                 CASE p.estado_pago WHEN 1 THEN 'PENDIENTE'
+                                    WHEN 2 THEN 'APROBADO'
+                                    WHEN 3 THEN 'RECHAZADO' END AS nom_estado_pago,
+                 p.id_codigo,
+                 p.id_banco,
+                 c.des_motivo
+           FROM  tab_pagos_cxp               p
+           JOIN  tab_cuentasxpagar           f ON f.id_factura = p.id_factura
+           JOIN  tab_terceros                t ON t.id_tercero = f.id_proveedor
+           JOIN  tab_codigos_respuesta_banco c ON c.id_codigo  = p.id_codigo
+                                              AND c.id_banco   = p.id_banco
           ORDER BY p.fec_pago DESC, p.id_pago DESC"
     );
 
-    // ---- UN PAGO (para el formulario de conciliación) ----
-    // >>> NUEVO. No había forma de traer un solo intento de pago por su id.
+    // ---- UN PAGO ----
     $get_pago_cxp = $pdo->prepare(
         "SELECT  p.id_pago,
                  p.id_factura,
@@ -1209,23 +1371,25 @@ try {
                  f.id_proveedor,
                  t.nom_tercero,
                  p.id_archivo_plano,
+                 p.id_cronograma,
                  p.fec_pago,
                  p.val_pago,
                  p.estado_pago,
-                 p.referencia_bancaria,
-                 p.id_motivo_rechazo,
-                 m.des_motivo
-           FROM  tab_pagos_cxp        p
-           JOIN  tab_cuentasxpagar    f ON f.id_factura = p.id_factura
-           JOIN  tab_terceros         t ON t.id_tercero = f.id_proveedor
-           LEFT JOIN tab_motivos_rechazo m ON m.id_motivo_rechazo = p.id_motivo_rechazo
+                 CASE p.estado_pago WHEN 1 THEN 'PENDIENTE'
+                                    WHEN 2 THEN 'APROBADO'
+                                    WHEN 3 THEN 'RECHAZADO' END AS nom_estado_pago,
+                 p.id_codigo,
+                 p.id_banco,
+                 c.des_motivo
+           FROM  tab_pagos_cxp               p
+           JOIN  tab_cuentasxpagar           f ON f.id_factura = p.id_factura
+           JOIN  tab_terceros                t ON t.id_tercero = f.id_proveedor
+           JOIN  tab_codigos_respuesta_banco c ON c.id_codigo  = p.id_codigo
+                                              AND c.id_banco   = p.id_banco
           WHERE  p.id_pago = :wid_pago"
     );
 
-    // ---- PAGOS POR ESTADO (para las pestañas Pendiente / Aprobado / Rechazado) ----
-    // >>> CORREGIDO: faltaban p.id_archivo_plano y p.id_motivo_rechazo, que la
-    //     pantalla necesita para armar los enlaces y precargar el combo de
-    //     motivos al reprocesar un rechazo.
+    // ---- PAGOS POR ESTADO (1, 2 o 3) ----
     $list_pagos_por_estado = $pdo->prepare(
         "SELECT  p.id_pago,
                  p.id_factura,
@@ -1233,132 +1397,84 @@ try {
                  f.id_proveedor,
                  t.nom_tercero,
                  p.id_archivo_plano,
+                 p.id_cronograma,
                  p.fec_pago,
                  p.val_pago,
-                 p.referencia_bancaria,
-                 p.id_motivo_rechazo,
-                 m.des_motivo
-           FROM  tab_pagos_cxp        p
-           JOIN  tab_cuentasxpagar    f ON f.id_factura = p.id_factura
-           JOIN  tab_terceros         t ON t.id_tercero = f.id_proveedor
-           LEFT JOIN tab_motivos_rechazo m ON m.id_motivo_rechazo = p.id_motivo_rechazo
+                 p.id_codigo,
+                 c.des_motivo
+           FROM  tab_pagos_cxp               p
+           JOIN  tab_cuentasxpagar           f ON f.id_factura = p.id_factura
+           JOIN  tab_terceros                t ON t.id_tercero = f.id_proveedor
+           JOIN  tab_codigos_respuesta_banco c ON c.id_codigo  = p.id_codigo
+                                              AND c.id_banco   = p.id_banco
           WHERE  p.estado_pago = :westado_pago
           ORDER BY p.fec_pago DESC, p.id_pago DESC"
     );
 
     // ---- HISTORIAL DE INTENTOS DE UNA CUOTA ----
-    // >>> CORREGIDO: faltaba p.id_motivo_rechazo (solo traía la descripción,
-    //     así que no se podía enlazar al catálogo desde la pantalla).
     $list_pagos_de_cuota = $pdo->prepare(
         "SELECT  p.id_pago,
                  p.id_archivo_plano,
+                 p.id_cronograma,
                  p.fec_pago,
                  p.val_pago,
                  p.estado_pago,
-                 p.referencia_bancaria,
-                 p.id_motivo_rechazo,
-                 m.des_motivo
-           FROM  tab_pagos_cxp        p
-           LEFT JOIN tab_motivos_rechazo m ON m.id_motivo_rechazo = p.id_motivo_rechazo
+                 CASE p.estado_pago WHEN 1 THEN 'PENDIENTE'
+                                    WHEN 2 THEN 'APROBADO'
+                                    WHEN 3 THEN 'RECHAZADO' END AS nom_estado_pago,
+                 p.id_codigo,
+                 c.des_motivo
+           FROM  tab_pagos_cxp               p
+           JOIN  tab_codigos_respuesta_banco c ON c.id_codigo = p.id_codigo
+                                              AND c.id_banco  = p.id_banco
           WHERE  p.id_factura = :wid_factura
             AND  p.id_cuota   = :wid_cuota
           ORDER BY p.id_pago DESC"
     );
 
-    // ---- VALIDACIÓN — ¿ESTA CUOTA YA TIENE UN PAGO APROBADO? ----
-    // >>> NUEVO. uq_pago_aprobado_cuota es un índice UNIQUE parcial: si se
-    //     intenta aprobar un segundo pago de la misma cuota, PostgreSQL lanza
-    //     un error de índice duplicado que en pantalla no dice nada útil.
-    //     Con esto se valida antes y se muestra un mensaje entendible.
+    // ---- VALIDACIÓN — ¿LA CUOTA YA TIENE UN PAGO APROBADO? ----
     $check_cuota_pago_aprobado = $pdo->prepare(
         "SELECT  EXISTS (
                     SELECT 1
                       FROM tab_pagos_cxp
                      WHERE id_factura  = :wid_factura
                        AND id_cuota    = :wid_cuota
-                       AND estado_pago = 'APROBADO'
+                       AND estado_pago = 2
                  ) AS ya_pagada"
     );
 
-    // ---- CONCILIACIÓN — FILAS DE UN ARCHIVO PLANO CON SU ÚLTIMO INTENTO ----
-    // (pantalla para cargar la respuesta del banco: se ve cada fila enviada y
-    //  en qué quedó. El LATERAL trae solo el intento más reciente, si no se
-    //  duplicarían las filas que ya tienen varios intentos rechazados.)
+    // ---- CONCILIACIÓN — LÍNEAS DE UN ARCHIVO CON SU RESPUESTA ----
+    // id_pago NULL = la línea todavía no tiene respuesta del banco.
     $list_conciliacion_archivo = $pdo->prepare(
         "SELECT  d.id_archivo_plano,
+                 d.id_cronograma,
                  d.id_factura,
                  d.id_cuota,
                  d.id_proveedor,
-                 t.nom_tercero,
+                 d.nom_tercero,
                  d.cta_proveedor,
                  d.val_a_pagar,
                  p.id_pago,
                  p.estado_pago,
-                 p.referencia_bancaria
+                 CASE p.estado_pago WHEN 1 THEN 'PENDIENTE'
+                                    WHEN 2 THEN 'APROBADO'
+                                    WHEN 3 THEN 'RECHAZADO' END AS nom_estado_pago,
+                 p.id_codigo,
+                 c.des_motivo
            FROM  tab_det_archivo_plano d
-           JOIN  tab_terceros          t ON t.id_tercero = d.id_proveedor
-           LEFT JOIN LATERAL (
-                    SELECT pg.id_pago, pg.estado_pago, pg.referencia_bancaria
-                      FROM tab_pagos_cxp pg
-                     WHERE pg.id_archivo_plano = d.id_archivo_plano
-                       AND pg.id_factura       = d.id_factura
-                       AND pg.id_cuota         = d.id_cuota
-                     ORDER BY pg.id_pago DESC
-                     LIMIT 1
-                 ) p ON TRUE
+           LEFT JOIN tab_pagos_cxp     p ON p.id_archivo_plano = d.id_archivo_plano
+                                        AND p.id_cronograma    = d.id_cronograma
+                                        AND p.id_factura       = d.id_factura
+                                        AND p.id_cuota         = d.id_cuota
+           LEFT JOIN tab_codigos_respuesta_banco c ON c.id_codigo = p.id_codigo
+                                                  AND c.id_banco  = p.id_banco
           WHERE  d.id_archivo_plano = :wid_archivo_plano
-          ORDER BY t.nom_tercero, d.id_factura, d.id_cuota"
+          ORDER BY d.nom_tercero, d.id_factura, d.id_cuota"
     );
 
-    // ---- CUOTAS PAGABLES (para registrar un pago manual) ----
-    // >>> CORREGIDO: antes solo excluía las cuotas con un pago 'APROBADO', así
-    //     que una cuota con un intento todavía en 'PENDIENTE' seguía saliendo
-    //     en la lista y se podía registrar dos veces el mismo pago.
-    //     Ahora se excluyen APROBADO y PENDIENTE; las RECHAZADAS sí vuelven a
-    //     aparecer, que es justamente lo que se quiere para poder reintentar.
-    $list_cuotas_pagables = $pdo->prepare(
-        "SELECT  c.id_factura,
-                 c.id_cuota,
-                 c.fec_vencimiento,
-                 c.val_cuota,
-                 f.id_proveedor,
-                 t.nom_tercero
-           FROM  tab_cuotasxfactura  c
-           JOIN  tab_cuentasxpagar   f ON f.id_factura = c.id_factura
-           JOIN  tab_terceros        t ON t.id_tercero = f.id_proveedor
-          WHERE  c.ind_pagada = FALSE
-            AND  NOT EXISTS (
-                    SELECT 1
-                      FROM tab_pagos_cxp p
-                     WHERE p.id_factura  = c.id_factura
-                       AND p.id_cuota    = c.id_cuota
-                       AND p.estado_pago IN ('APROBADO', 'PENDIENTE')
-                 )
-          ORDER BY c.fec_vencimiento"
-    );
-
-    // ---- UNA LÍNEA DE ARCHIVO PLANO (para validar e importar la respuesta del banco) ----
-    // >>> NUEVO. La respuesta del banco identifica cada giro por
-    //     (id_archivo_plano, id_factura, id_cuota) porque ese es el trío que
-    //     realmente se le envió al banco (tab_det_archivo_plano). Antes de
-    //     crear el pago hay que confirmar que esa línea existe y traer
-    //     val_a_pagar, que es el valor real y no debe venir del archivo del
-    //     banco (evita que una fila mal armada infle o desinfle el pago).
-    $get_linea_archivo_plano = $pdo->prepare(
-        "SELECT  d.id_archivo_plano,
-                 d.id_factura,
-                 d.id_cuota,
-                 d.id_proveedor,
-                 d.val_a_pagar
-           FROM  tab_det_archivo_plano d
-          WHERE  d.id_archivo_plano = :wid_archivo_plano
-            AND  d.id_factura       = :wid_factura
-            AND  d.id_cuota         = :wid_cuota"
-    );
-
-    // ---- ¿ESA LÍNEA DE ARCHIVO PLANO YA TIENE UN PAGO REGISTRADO? ----
-    // >>> NUEVO. Evita duplicar el historial si el mismo archivo de respuesta
-    //     del banco se importa dos veces por error.
+    // ---- ¿ESA LÍNEA YA TIENE UN PAGO REGISTRADO? ----
+    // Evita duplicar si la misma respuesta del banco se importa dos veces.
+    // Si existe y está en 1 (PENDIENTE), se usa $upd_estado_pago_cxp.
     $check_pago_de_linea = $pdo->prepare(
         "SELECT  id_pago, estado_pago
            FROM  tab_pagos_cxp
@@ -1368,136 +1484,40 @@ try {
     );
 
     // ---- INSERT — fun_insert_pagos_cxp (6 params) ----
-    // id_factura, id_cuota, id_archivo_plano, fec_pago, val_pago, referencia_bancaria
-    //
-    // >>> FIRMA INFERIDA. Supuestos:
-    //     - id_pago se autogenera dentro de la función (patrón del proyecto).
-    //     - estado_pago entra con el DEFAULT 'PENDIENTE'; el estado final se
-    //       fija después con $upd_estado_pago_cxp.
-    //     - id_archivo_plano y referencia_bancaria admiten NULL.
+    // id_archivo_plano, id_factura, id_cuota, fec_pago, estado_pago (1, 2 o 3),
+    // id_codigo
+    // La función toma de la línea del archivo plano id_cronograma y val_pago
+    // (val_a_pagar), y del encabezado el id_banco. Exige que el archivo esté
+    // generado y que el código exista y esté activo para ese banco.
+    // Si estado_pago = 2, marca la cuota pagada y cierra el cronograma.
     $ins_pago_cxp = $pdo->prepare(
         "SELECT fun_insert_pagos_cxp(
+            :wid_archivo_plano,
             :wid_factura,
             :wid_cuota,
-            :wid_archivo_plano,
             :wfec_pago,
-            :wval_pago,
-            :wreferencia_bancaria
+            :westado_pago,
+            :wid_codigo
         )"
     );
 
-    // ---- UPDATE — fun_update_pagos_cxp (4 params) ----
-    // id_pago, estado_pago, referencia_bancaria, id_motivo_rechazo
-    //
-    // >>> FIRMA INFERIDA. Es la que aplica la respuesta del banco.
-    //     La función debería validar que id_motivo_rechazo venga con valor
-    //     cuando estado_pago = 'RECHAZADO', y NULL en los otros dos casos.
+    // ---- UPDATE — fun_update_pagos_cxp (3 params) ----
+    // id_pago, estado_pago (2 o 3), id_codigo
+    // Solo sobre pagos en 1 (PENDIENTE). Si queda en 2, marca la cuota pagada y
+    // cierra el cronograma, igual que el insert.
     $upd_estado_pago_cxp = $pdo->prepare(
         "SELECT fun_update_pagos_cxp(
             :wid_pago,
             :westado_pago,
-            :wreferencia_bancaria,
-            :wid_motivo_rechazo
+            :wid_codigo
         )"
     );
 
-    // ---- >>> SIN TRIGGER — EFECTOS DE APROBAR UN PAGO ----
-    // Los dos statements de abajo deben ejecutarse junto con
-    // $upd_estado_pago_cxp DENTRO DE LA MISMA TRANSACCIÓN, y solo cuando el
-    // pago pasa a 'APROBADO', EN ESTE ORDEN:
-    //
-    //     $pdo->beginTransaction();
-    //     $upd_estado_pago_cxp->execute([...]);
-    //     $mark_cuota_pagada->execute([':wid_factura' => $f, ':wid_cuota' => $c]);
-    //     $recalc_saldo_factura->execute([':wid_factura' => $f]);
-    //     $cerrar_cronograma_si_pagado->execute([':wid_cronograma' => $cr]);
-    //     $pdo->commit();
-    //
-    // El orden importa: $recalc_saldo_factura lee el estado de las cuotas, así
-    // que la cuota tiene que estar ya marcada como pagada.
-    //
-    // Si más adelante se agrega un trigger AFTER UPDATE sobre tab_pagos_cxp,
-    // estos statements se eliminan de aquí.
-
-    // 1) Marcar la cuota como pagada
-    $mark_cuota_pagada = $pdo->prepare(
-        "UPDATE tab_cuotasxfactura
-            SET ind_pagada = TRUE
-          WHERE id_factura = :wid_factura
-            AND id_cuota   = :wid_cuota"
-    );
-
-    // 2) Recalcular el saldo de la factura y cerrarla si quedó en cero
-    //
-    // >>> CORREGIDO — reemplaza al antiguo $desc_saldo_factura, que hacía
-    //     "val_saldo - :wval_pago" y necesitaba mandar el mismo monto en dos
-    //     placeholders distintos (:wval_pago y :wval_pago2) porque PDO_PGSQL
-    //     no admite repetir un parámetro con nombre en la misma sentencia.
-    //     Tres problemas de aquel enfoque:
-    //       a) Restar no es idempotente: si el mismo pago se procesaba dos
-    //          veces (doble clic, reintento), el saldo se descontaba dos veces.
-    //       b) Si alguien mandaba :wval_pago y :wval_pago2 con valores
-    //          distintos, val_saldo e ind_estado quedaban inconsistentes.
-    //       c) Un pago parcial mal digitado dejaba el saldo torcido para
-    //          siempre, sin forma de corregirlo.
-    //     Esta versión recalcula el saldo desde las cuotas que siguen sin
-    //     pagar: siempre da el valor correcto, se puede ejecutar las veces que
-    //     sea, y de paso usa un solo parámetro.
-    //
-    //     Si prefieres conservar el nombre anterior en el código que ya llama
-    //     a esto, agrega:  $desc_saldo_factura = $recalc_saldo_factura;
-    //     pero recuerda que ahora solo recibe :wid_factura.
-    $recalc_saldo_factura = $pdo->prepare(
-        "UPDATE tab_cuentasxpagar f
-            SET val_saldo  = (
-                    SELECT COALESCE(SUM(c.val_cuota), 0)
-                      FROM tab_cuotasxfactura c
-                     WHERE c.id_factura = f.id_factura
-                       AND c.ind_pagada = FALSE
-                 ),
-                ind_estado = NOT EXISTS (
-                    SELECT 1
-                      FROM tab_cuotasxfactura c2
-                     WHERE c2.id_factura = f.id_factura
-                       AND c2.ind_pagada = FALSE
-                 )
-          WHERE f.id_factura = :wid_factura"
-    );
-
-    // ---- >>> SIN TRIGGER — CERRAR UN CRONOGRAMA COMPLETAMENTE PAGADO ----
-    // Marca ind_estado = TRUE en el encabezado cuando ya no le quedan cuotas
-    // sin pagar. Conviene ejecutarlo después de aprobar cada pago.
-    $cerrar_cronograma_si_pagado = $pdo->prepare(
-        "UPDATE tab_enc_cronopagos e
-            SET ind_estado = TRUE
-          WHERE e.id_cronograma = :wid_cronograma
-            AND e.ind_borrado   = FALSE
-            AND NOT EXISTS (
-                    SELECT 1
-                      FROM tab_det_cronopagos d
-                      JOIN tab_cuotasxfactura c
-                        ON c.id_factura = d.id_factura
-                       AND c.id_cuota   = d.id_cuota
-                     WHERE d.id_cronograma = e.id_cronograma
-                       AND c.ind_pagada    = FALSE
-                 )"
-    );
-
-    // ---- CRONOGRAMA AL QUE PERTENECE UNA CUOTA ----
-    // >>> NUEVO. $cerrar_cronograma_si_pagado necesita el id_cronograma, y
-    //     después de aprobar un pago solo se tiene (id_factura, id_cuota).
-    $get_cronograma_de_cuota = $pdo->prepare(
-        "SELECT  d.id_cronograma
-           FROM  tab_det_cronopagos d
-          WHERE  d.id_factura = :wid_factura
-            AND  d.id_cuota   = :wid_cuota"
-    );
-
     // =========================================================================
-    // 11. TAB_BANCOS  (catálogo compartido)
+    // 12. TAB_BANCOS  (catálogo compartido)
     // =========================================================================
 
-    // ---- LISTAR (vista principal de bancos.php) ----
+    // ---- LISTADO (bancos.php) ----
     $list_bancos_full = $pdo->prepare(
         "SELECT  id_banco,
                  nom_banco,
@@ -1507,8 +1527,7 @@ try {
           ORDER BY nom_banco ASC"
     );
 
-    // ---- UN BANCO (para el formulario de edición) ----
-    // >>> NUEVO.
+    // ---- UN BANCO ----
     $get_banco = $pdo->prepare(
         "SELECT  id_banco,
                  nom_banco,
@@ -1519,38 +1538,36 @@ try {
     );
 
     // ---- INSERT — fun_insert_bancos (3 params) ----
-    // id_banco, nom_banco, ind_estado
     $ins_banco = $pdo->prepare(
         "SELECT fun_insert_bancos(:wid_banco, :wnom_banco, :wind_estado)"
     );
 
     // ---- UPDATE — fun_update_bancos (3 params) ----
-    // id_banco, nom_banco, ind_estado
     $upd_banco = $pdo->prepare(
         "SELECT fun_update_bancos(:wid_banco, :wnom_banco, :wind_estado)"
     );
 
-
-    // ---- DELETE — fun_delete_bancos (1 param) ----
-    // Borrado lógico
+    // ---- DELETE — fun_delete_bancos (1 param) — borrado lógico ----
     $del_banco = $pdo->prepare(
         "SELECT fun_delete_bancos(:wid_banco)"
     );
 
     // ---- VALIDACIÓN — ¿EL BANCO ESTÁ EN USO? ----
-    // >>> NUEVO. Antes de dar de baja un banco conviene saber si hay cuentas de
-    //     empresa, cuentas de proveedor o archivos planos que lo referencian.
+    // Las dos primeras bloquean el borrado (fun_delete_bancos); las otras son
+    // informativas.
+    // >>> CAMBIA: se agregó en_codigos_respuesta.
+    // PDO_PGSQL no permite repetir un placeholder: mandar el mismo valor en
+    // :wid_banco, :wid_banco2, :wid_banco3 y :wid_banco4.
     $check_banco_en_uso = $pdo->prepare(
         "SELECT  EXISTS (SELECT 1 FROM tab_ctas_empresa
-                          WHERE id_banco = :wid_banco AND ind_borrado = FALSE)  AS en_ctas_empresa,
+                          WHERE id_banco = :wid_banco  AND ind_borrado = FALSE) AS en_ctas_empresa,
                  EXISTS (SELECT 1 FROM tab_bancoxprov
                           WHERE id_banco = :wid_banco2 AND ind_borrado = FALSE) AS en_ctas_proveedor,
                  EXISTS (SELECT 1 FROM tab_enc_archivo_plano
-                          WHERE id_banco = :wid_banco3)                         AS en_archivos_planos"
+                          WHERE id_banco = :wid_banco3)                         AS en_archivos_planos,
+                 EXISTS (SELECT 1 FROM tab_codigos_respuesta_banco
+                          WHERE id_banco = :wid_banco4 AND ind_borrado = FALSE) AS en_codigos_respuesta"
     );
-    // OJO con la de arriba: PDO_PGSQL no permite repetir un placeholder con
-    // nombre dentro de la misma sentencia, por eso van :wid_banco, :wid_banco2
-    // y :wid_banco3. Al ejecutar hay que mandar el mismo valor en los tres.
 
 } catch (PDOException $e) {
     error_log("Error en prepare_tescxp.php: " . $e->getMessage());

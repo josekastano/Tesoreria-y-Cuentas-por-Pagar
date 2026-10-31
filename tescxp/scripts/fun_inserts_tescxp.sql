@@ -1,4 +1,24 @@
 --------------------------------------------------------------------------------------------------------------------------------------
+-- LIMPIEZA DE VERSIONES ANTERIORES
+-- Borra las funciones de este archivo que cambiaron de parámetros o que ya no
+-- existen (motivos de rechazo). CREATE OR REPLACE no reemplaza una función
+-- cuya firma cambió: crearía una segunda versión al lado de la vieja.
+--------------------------------------------------------------------------------------------------------------------------------------
+DO $$
+DECLARE r RECORD;
+BEGIN
+    FOR r IN SELECT oid::regprocedure AS fn
+               FROM pg_proc
+              WHERE proname IN ('fun_insert_enc_archivo_plano',
+                                'fun_insert_det_archivo_plano',
+                                'fun_insert_motivos_rechazo',
+                                'fun_insert_pagos_cxp',
+                                'fun_aplicar_pago_aprobado') LOOP
+        EXECUTE 'DROP FUNCTION ' || r.fn;
+    END LOOP;
+END $$;
+
+--------------------------------------------------------------------------------------------------------------------------------------
 -- FUNCIÓN DE INSERT DE PARÁMETROS DE TESORERÍA Y CXP
 --------------------------------------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fun_insert_pmtros_tescxp (wid_empresa         tab_pmtros_tescxp.id_empresa%TYPE,
@@ -649,63 +669,211 @@ $BODY$
 LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
--- FUNCIÓN DE INSERT DE ENCABEZADO DE ARCHIVO PLANO
+-- FUNCIÓN DE INSERT DE TIPOS DE PAGO
+-- NOTA: El ID va de 1 a 9 (DECIMAL(1,0)) y lo elige el usuario. El nombre se guarda en
+--       mayúsculas y no se puede repetir (sin importar mayúsculas/minúsculas).
 --------------------------------------------------------------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION fun_insert_enc_archivo_plano (wid_cronograma      tab_enc_archivo_plano.id_cronograma%TYPE,
-                                                         wid_banco           tab_enc_archivo_plano.id_banco%TYPE,
-                                                         wnom_archivo        tab_enc_archivo_plano.nom_archivo%TYPE) RETURNS BOOLEAN AS
+CREATE OR REPLACE FUNCTION fun_insert_tipos_pago (wid_tipo_pago     tab_tipos_pago.id_tipo_pago%TYPE,
+                                                  wnom_tipo_pago    tab_tipos_pago.nom_tipo_pago%TYPE) RETURNS BOOLEAN AS
 $BODY$
-
-DECLARE wid_archivo_plano	tab_enc_archivo_plano.id_archivo_plano%TYPE;
-
 BEGIN
 
--- VALIDAR QUE EL ID DEL CRONOGRAMA NO SEA NULO
-    IF wid_cronograma IS NULL THEN
-        RAISE EXCEPTION 'El ID del cronograma no puede ser nulo.';
+-- VALIDAR QUE LOS CAMPOS NO SEAN NULOS
+    IF wid_tipo_pago IS NULL THEN
+        RAISE EXCEPTION 'El ID del tipo de pago no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE EL ID DEL BANCO NO SEA NULO
-    IF wid_banco IS NULL THEN
-        RAISE EXCEPTION 'El ID del banco no puede ser nulo.';
+    IF wnom_tipo_pago IS NULL THEN
+        RAISE EXCEPTION 'El nombre del tipo de pago no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE EL NOMBRE DEL ARCHIVO NO SEA NULO
-    IF wnom_archivo IS NULL THEN
-        RAISE EXCEPTION 'El nombre del archivo plano no puede ser nulo.';
+-- VALIDAR RANGO DEL ID (mismo CHECK de la tabla)
+    IF wid_tipo_pago < 1 OR wid_tipo_pago > 9 THEN
+        RAISE EXCEPTION 'El ID del tipo de pago debe estar entre 1 y 9.';
     END IF;
 
--- VALIDAR QUE EL CRONOGRAMA EXISTA
-    IF NOT EXISTS (SELECT 1 FROM tab_enc_cronopagos WHERE id_cronograma = wid_cronograma) THEN
-        RAISE EXCEPTION 'El cronograma % no existe.', wid_cronograma;
+-- VALIDAR LONGITUD DEL NOMBRE (mismo CHECK de la tabla)
+    IF LENGTH(TRIM(wnom_tipo_pago)) < 1 OR LENGTH(TRIM(wnom_tipo_pago)) > 15 THEN
+        RAISE EXCEPTION 'El nombre del tipo de pago debe tener entre 1 y 15 caracteres.';
     END IF;
 
--- VALIDAR QUE EL BANCO EXISTA
-    IF NOT EXISTS (SELECT 1 FROM tab_bancos WHERE id_banco = wid_banco) THEN
-        RAISE EXCEPTION 'El banco % no existe.', wid_banco;
+-- VALIDAR QUE EL ID NO EXISTA (si está inactivo, se debe reactivar en vez de crearlo)
+    IF EXISTS (SELECT 1 FROM tab_tipos_pago WHERE id_tipo_pago = wid_tipo_pago AND ind_borrado = TRUE) THEN
+        RAISE EXCEPTION 'El ID % ya existe y está inactivo; actívelo en lugar de crearlo de nuevo.', wid_tipo_pago;
     END IF;
 
--- VALIDAR QUE EL NOMBRE DEL ARCHIVO NO SEA VACÍO
-    IF wnom_archivo = '' THEN
-        RAISE EXCEPTION 'El nombre del archivo plano no puede estar vacío.';
+    IF EXISTS (SELECT 1 FROM tab_tipos_pago WHERE id_tipo_pago = wid_tipo_pago) THEN
+        RAISE EXCEPTION 'El ID % ya está en uso.', wid_tipo_pago;
     END IF;
 
--- VALIDAR QUE EL NOMBRE DEL ARCHIVO TENGA ENTRE 3 Y 30 CARACTERES
-    IF LENGTH(wnom_archivo) < 3 OR LENGTH(wnom_archivo) > 30 THEN
-        RAISE EXCEPTION 'El nombre del archivo plano debe tener entre 3 y 30 caracteres.';
+-- VALIDAR QUE EL NOMBRE NO ESTÉ REPETIDO
+    IF EXISTS (SELECT 1 FROM tab_tipos_pago WHERE UPPER(nom_tipo_pago) = UPPER(TRIM(wnom_tipo_pago))) THEN
+        RAISE EXCEPTION 'Ya existe un tipo de pago con el nombre %.', UPPER(TRIM(wnom_tipo_pago));
     END IF;
 
--- SI TODO VA BIEN, SE INSERTA EN tab_enc_archivo_plano
-
-    SELECT COALESCE(MAX(id_archivo_plano), 0) + 1 INTO wid_archivo_plano
-    FROM tab_enc_archivo_plano;
-
-    INSERT INTO tab_enc_archivo_plano (id_archivo_plano, id_cronograma, id_banco, nom_archivo)
-    VALUES (wid_archivo_plano, wid_cronograma, wid_banco, wnom_archivo);
+-- SI TODO VA BIEN, SE INSERTA (ind_borrado QUEDA EN FALSE POR EL DEFAULT)
+    INSERT INTO tab_tipos_pago (id_tipo_pago, nom_tipo_pago)
+    VALUES                     (wid_tipo_pago, UPPER(TRIM(wnom_tipo_pago)));
 
     RETURN TRUE;
 
 EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN DE INSERT DE ENCABEZADO DE ARCHIVO PLANO
+--    El encabezado ya no lleva id_cronograma: lleva la cuenta de origen de la
+--    empresa, el tipo de pago y la fecha de aplicación. Un archivo puede tener
+--    cuotas de varios cronogramas (van en el detalle).
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_insert_enc_archivo_plano (wnom_archivo        tab_enc_archivo_plano.nom_archivo%TYPE,
+                                                         wid_empresa         tab_enc_archivo_plano.id_empresa%TYPE,
+                                                         wnom_empresa        tab_enc_archivo_plano.nom_empresa%TYPE,
+                                                         wid_banco           tab_enc_archivo_plano.id_banco%TYPE,
+                                                         wind_tipocuenta     tab_enc_archivo_plano.ind_tipocuenta%TYPE,
+                                                         wcta_empresa        tab_enc_archivo_plano.cta_empresa%TYPE,
+                                                         wfecha_aplicacion   tab_enc_archivo_plano.fecha_aplicacion%TYPE,
+                                                         wid_tipo_pago       tab_enc_archivo_plano.id_tipo_pago%TYPE) RETURNS BOOLEAN AS
+$BODY$
+
+DECLARE wid_archivo_plano   tab_enc_archivo_plano.id_archivo_plano%TYPE;
+        wbanco_cuenta       tab_ctas_empresa.id_banco%TYPE;
+        wtipocuenta_cuenta  tab_ctas_empresa.ind_tipocuenta%TYPE;
+        wdia1               tab_pmtros_tescxp.fec_diapago1%TYPE;
+        wdia2               tab_pmtros_tescxp.fec_diapago2%TYPE;
+        wdia3               tab_pmtros_tescxp.fec_diapago3%TYPE;
+        wnom_festivo        tab_festivos.nom_festivo%TYPE;
+        wtabla_err          TEXT;
+        wcolumna_err        TEXT;
+
+BEGIN
+
+-- VALIDAR QUE LOS CAMPOS NO SEAN NULOS
+    IF wnom_archivo IS NULL THEN
+        RAISE EXCEPTION 'El nombre del archivo plano no puede ser nulo.';
+    END IF;
+
+    IF wid_empresa IS NULL THEN
+        RAISE EXCEPTION 'El ID de la empresa no puede ser nulo.';
+    END IF;
+
+    IF wnom_empresa IS NULL THEN
+        RAISE EXCEPTION 'El nombre de la empresa no puede ser nulo.';
+    END IF;
+
+    IF wid_banco IS NULL THEN
+        RAISE EXCEPTION 'El ID del banco no puede ser nulo.';
+    END IF;
+
+    IF wind_tipocuenta IS NULL THEN
+        RAISE EXCEPTION 'El indicador de tipo de cuenta no puede ser nulo.';
+    END IF;
+
+    IF wcta_empresa IS NULL THEN
+        RAISE EXCEPTION 'La cuenta de la empresa no puede ser nula.';
+    END IF;
+
+    IF wfecha_aplicacion IS NULL THEN
+        RAISE EXCEPTION 'La fecha de aplicación no puede ser nula.';
+    END IF;
+
+    IF wid_tipo_pago IS NULL THEN
+        RAISE EXCEPTION 'El tipo de pago no puede ser nulo.';
+    END IF;
+
+-- VALIDAR LONGITUDES (mismos CHECK de la tabla)
+    IF LENGTH(TRIM(wnom_archivo)) < 3 OR LENGTH(wnom_archivo) > 30 THEN
+        RAISE EXCEPTION 'El nombre del archivo plano debe tener entre 3 y 30 caracteres.';
+    END IF;
+
+    IF LENGTH(TRIM(wnom_empresa)) < 5 OR LENGTH(wnom_empresa) > 60 THEN
+        RAISE EXCEPTION 'El nombre de la empresa debe tener entre 5 y 60 caracteres.';
+    END IF;
+
+-- VALIDAR QUE LA FECHA DE APLICACIÓN NO SEA PASADA
+    IF wfecha_aplicacion < CURRENT_DATE THEN
+        RAISE EXCEPTION 'La fecha de aplicación no puede ser anterior a la fecha actual.';
+    END IF;
+
+-- VALIDAR QUE LA FECHA DE APLICACIÓN SEA UN DÍA DE PAGO (tab_pmtros_tescxp)
+-- EXTRACT(ISODOW) devuelve 1 = lunes ... 7 = domingo, igual que fec_diapago1..3
+    SELECT fec_diapago1, fec_diapago2, fec_diapago3
+      INTO wdia1, wdia2, wdia3
+      FROM tab_pmtros_tescxp
+     WHERE id_empresa  = wid_empresa
+       AND ind_borrado = FALSE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'No hay días de pago configurados en Parámetros de Tesorería para la empresa %.', wid_empresa;
+    END IF;
+
+    IF EXTRACT(ISODOW FROM wfecha_aplicacion) NOT IN (wdia1, wdia2, wdia3) THEN
+        RAISE EXCEPTION 'La fecha de aplicación % no es un día de pago configurado en Parámetros de Tesorería.', TO_CHAR(wfecha_aplicacion, 'DD/MM/YYYY');
+    END IF;
+
+-- VALIDAR QUE LA FECHA DE APLICACIÓN NO SEA FESTIVO
+    SELECT nom_festivo INTO wnom_festivo
+      FROM tab_festivos
+     WHERE fecha       = wfecha_aplicacion
+       AND ind_borrado = FALSE
+     LIMIT 1;
+
+    IF FOUND THEN
+        RAISE EXCEPTION 'La fecha de aplicación % es festivo (%).', TO_CHAR(wfecha_aplicacion, 'DD/MM/YYYY'), wnom_festivo;
+    END IF;
+
+-- VALIDAR QUE LA CUENTA DE LA EMPRESA EXISTA Y ESTÉ ACTIVA (FK)
+    SELECT id_banco, ind_tipocuenta
+      INTO wbanco_cuenta, wtipocuenta_cuenta
+      FROM tab_ctas_empresa
+     WHERE id_empresa  = wid_empresa
+       AND cta_empresa = wcta_empresa
+       AND ind_borrado = FALSE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'La cuenta % no está registrada o está inactiva para la empresa %.', wcta_empresa, wid_empresa;
+    END IF;
+
+-- VALIDAR QUE EL BANCO Y EL TIPO DE CUENTA SEAN LOS DE ESA CUENTA
+    IF wbanco_cuenta <> wid_banco THEN
+        RAISE EXCEPTION 'La cuenta % de la empresa pertenece al banco %, no al banco %.', wcta_empresa, wbanco_cuenta, wid_banco;
+    END IF;
+
+    IF wtipocuenta_cuenta <> wind_tipocuenta THEN
+        RAISE EXCEPTION 'El tipo de cuenta enviado no coincide con el registrado para la cuenta % de la empresa.', wcta_empresa;
+    END IF;
+
+-- VALIDAR QUE EL BANCO ESTÉ ACTIVO
+    IF NOT EXISTS (SELECT 1 FROM tab_bancos WHERE id_banco = wid_banco AND ind_borrado = FALSE AND ind_estado = TRUE) THEN
+        RAISE EXCEPTION 'El banco % no existe o está inactivo.', wid_banco;
+    END IF;
+
+-- VALIDAR QUE EL TIPO DE PAGO EXISTA Y ESTÉ ACTIVO
+    IF NOT EXISTS (SELECT 1 FROM tab_tipos_pago WHERE id_tipo_pago = wid_tipo_pago AND ind_borrado = FALSE) THEN
+        RAISE EXCEPTION 'El tipo de pago % no existe o está inactivo.', wid_tipo_pago;
+    END IF;
+
+-- SI TODO VA BIEN, SE INSERTA (fec_generacion queda NULL e ind_generado en FALSE)
+    SELECT COALESCE(MAX(id_archivo_plano), 0) + 1 INTO wid_archivo_plano
+      FROM tab_enc_archivo_plano;
+
+    INSERT INTO tab_enc_archivo_plano (id_archivo_plano, nom_archivo, id_empresa, nom_empresa, id_banco,
+                                       ind_tipocuenta, cta_empresa, fecha_aplicacion, id_tipo_pago)
+    VALUES                            (wid_archivo_plano, TRIM(wnom_archivo), wid_empresa, TRIM(wnom_empresa), wid_banco,
+                                       wind_tipocuenta, wcta_empresa, wfecha_aplicacion, wid_tipo_pago);
+
+    RETURN TRUE;
+
+EXCEPTION
+    -- Campo obligatorio en NULL: se agrega qué tabla y columna, porque el
+    -- mensaje general ("Un campo obligatorio está vacío") no lo dice.
+    WHEN not_null_violation THEN
+        GET STACKED DIAGNOSTICS wtabla_err = TABLE_NAME, wcolumna_err = COLUMN_NAME;
+        RAISE EXCEPTION 'ERROR: % (%.%)', public.fun_mensaje_error(SQLSTATE, SQLERRM), wtabla_err, wcolumna_err;
     WHEN OTHERS THEN
         RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
@@ -714,107 +882,221 @@ LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
 -- FUNCIÓN DE INSERT DE DETALLE DE ARCHIVO PLANO
+-- NOTA: Una cuota puede volver a un archivo plano solo si todas sus líneas
+--       anteriores tienen un pago RECHAZADO (3).
 --------------------------------------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fun_insert_det_archivo_plano (wid_archivo_plano   tab_det_archivo_plano.id_archivo_plano%TYPE,
-                                                         wid_empresa         tab_det_archivo_plano.id_empresa%TYPE,
-                                                         wcta_empresa        tab_det_archivo_plano.cta_empresa%TYPE,
-                                                         wid_proveedor       tab_det_archivo_plano.id_proveedor%TYPE,
-                                                         wcta_proveedor      tab_det_archivo_plano.cta_proveedor%TYPE,
-                                                         wind_tipocuenta     tab_det_archivo_plano.ind_tipocuenta%TYPE,
+                                                         wid_cronograma      tab_det_archivo_plano.id_cronograma%TYPE,
                                                          wid_factura         tab_det_archivo_plano.id_factura%TYPE,
-                                                         wid_cuota           tab_det_archivo_plano.id_cuota%TYPE) RETURNS BOOLEAN AS
+                                                         wid_cuota           tab_det_archivo_plano.id_cuota%TYPE,
+                                                         wid_tipo            tab_det_archivo_plano.id_tipo%TYPE,
+                                                         wid_proveedor       tab_det_archivo_plano.id_proveedor%TYPE,
+                                                         wnom_tercero        tab_det_archivo_plano.nom_tercero%TYPE,
+                                                         wid_banco           tab_det_archivo_plano.id_banco%TYPE,
+                                                         wind_tipocuenta     tab_det_archivo_plano.ind_tipocuenta%TYPE,
+                                                         wcta_proveedor      tab_det_archivo_plano.cta_proveedor%TYPE,
+                                                         wconcepto           tab_det_archivo_plano.concepto%TYPE) RETURNS BOOLEAN AS
 $BODY$
+
+DECLARE wbanco_cuenta       tab_bancoxprov.id_banco%TYPE;
+        wtipocuenta_cuenta  tab_bancoxprov.ind_tipocuenta%TYPE;
+        wproveedor_factura  tab_cuentasxpagar.id_proveedor%TYPE;
+        wval_a_pagar        tab_det_archivo_plano.val_a_pagar%TYPE;
+        wtabla_err          TEXT;
+        wcolumna_err        TEXT;
+
 BEGIN
 
--- VALIDAR QUE EL ID DEL ARCHIVO PLANO NO SEA NULO
+-- VALIDAR QUE LOS CAMPOS OBLIGATORIOS NO SEAN NULOS (concepto es opcional)
     IF wid_archivo_plano IS NULL THEN
         RAISE EXCEPTION 'El ID del archivo plano no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE EL ID DE LA EMPRESA NO SEA NULO
-    IF wid_empresa IS NULL THEN
-        RAISE EXCEPTION 'El ID de la empresa no puede ser nulo.';
+    IF wid_cronograma IS NULL THEN
+        RAISE EXCEPTION 'El ID del cronograma no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE LA CUENTA DE LA EMPRESA NO SEA NULA
-    IF wcta_empresa IS NULL THEN
-        RAISE EXCEPTION 'La cuenta de la empresa no puede ser nula.';
-    END IF;
-
--- VALIDAR QUE EL ID DEL PROVEEDOR NO SEA NULO
-    IF wid_proveedor IS NULL THEN
-        RAISE EXCEPTION 'El ID del proveedor no puede ser nulo.';
-    END IF;
-
--- VALIDAR QUE LA CUENTA DEL PROVEEDOR NO SEA NULA
-    IF wcta_proveedor IS NULL THEN
-        RAISE EXCEPTION 'La cuenta del proveedor no puede ser nula.';
-    END IF;
-
--- VALIDAR QUE EL ID DE LA FACTURA NO SEA NULO
     IF wid_factura IS NULL THEN
         RAISE EXCEPTION 'El ID de la factura no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE EL ID DE LA CUOTA NO SEA NULO
     IF wid_cuota IS NULL THEN
         RAISE EXCEPTION 'El ID de la cuota no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE EL ARCHIVO PLANO EXISTA Y NO ESTÉ GENERADO AÚN
-    IF NOT EXISTS (SELECT 1 FROM tab_enc_archivo_plano WHERE id_archivo_plano = wid_archivo_plano AND ind_generado = FALSE) THEN
-        RAISE EXCEPTION 'El archivo plano % no existe o ya fue generado.', wid_archivo_plano;
+    IF wid_tipo IS NULL THEN
+        RAISE EXCEPTION 'El tipo de documento del proveedor no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE NO EXISTA YA ESA COMBINACIÓN EN EL DETALLE (PK COMPUESTA)
-    IF EXISTS (SELECT 1 FROM tab_det_archivo_plano WHERE id_archivo_plano = wid_archivo_plano AND id_factura = wid_factura AND id_cuota = wid_cuota) THEN
-        RAISE EXCEPTION 'La cuota % de la factura % ya está en el archivo plano %.', wid_cuota, wid_factura, wid_archivo_plano;
+    IF wid_proveedor IS NULL THEN
+        RAISE EXCEPTION 'El ID del proveedor no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE LA COMBINACIÓN EMPRESA + CUENTA EXISTA EN tab_ctas_empresa (FK)
-    IF NOT EXISTS (SELECT 1 FROM tab_ctas_empresa WHERE id_empresa = wid_empresa AND cta_empresa = wcta_empresa) THEN
-        RAISE EXCEPTION 'La cuenta % no está registrada para la empresa %.', wcta_empresa, wid_empresa;
+    IF wnom_tercero IS NULL THEN
+        RAISE EXCEPTION 'El nombre del proveedor no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE LA COMBINACIÓN PROVEEDOR + CUENTA EXISTA EN tab_bancoxprov (FK)
-    IF NOT EXISTS (SELECT 1 FROM tab_bancoxprov WHERE id_proveedor = wid_proveedor AND cta_proveedor = wcta_proveedor) THEN
-        RAISE EXCEPTION 'La cuenta % no está registrada para el proveedor %.', wcta_proveedor, wid_proveedor;
+    IF wid_banco IS NULL THEN
+        RAISE EXCEPTION 'El ID del banco no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE LA CUOTA DE LA FACTURA EXISTA EN tab_cuotasxfactura (FK)
-    IF NOT EXISTS (SELECT 1 FROM tab_cuotasxfactura WHERE id_factura = wid_factura AND id_cuota = wid_cuota) THEN
-        RAISE EXCEPTION 'La cuota % de la factura % no existe.', wid_cuota, wid_factura;
+    IF wind_tipocuenta IS NULL THEN
+        RAISE EXCEPTION 'El indicador de tipo de cuenta no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE LA CUOTA NO ESTÉ YA PAGADA
-    IF EXISTS (SELECT 1 FROM tab_cuotasxfactura WHERE id_factura = wid_factura AND id_cuota = wid_cuota AND ind_pagada = TRUE) THEN
-        RAISE EXCEPTION 'La cuota % de la factura % ya fue pagada.', wid_cuota, wid_factura;
+    IF wcta_proveedor IS NULL THEN
+        RAISE EXCEPTION 'La cuenta del proveedor no puede ser nula.';
     END IF;
 
--- VALIDAR QUE LAS LONGITUDES DE LOS CAMPOS VARCHAR SEAN CORRECTAS
-    IF LENGTH(wid_empresa) < 6 OR LENGTH(wid_empresa) > 10 THEN
-        RAISE EXCEPTION 'El ID de la empresa debe tener entre 6 y 10 caracteres.';
+-- VALIDAR FORMATOS Y LONGITUDES (mismos CHECK de la tabla, con mensaje claro)
+    IF wid_tipo !~ '^[A-Z]{2,5}$' THEN
+        RAISE EXCEPTION 'El tipo de documento debe tener entre 2 y 5 letras mayúsculas (ej. NIT, CC).';
     END IF;
 
-    IF LENGTH(wcta_empresa) < 10 OR LENGTH(wcta_empresa) > 16 THEN
-        RAISE EXCEPTION 'La cuenta de la empresa debe tener entre 10 y 16 caracteres.';
+    IF wid_proveedor !~ '^[A-Z0-9]{7,10}$' THEN
+        RAISE EXCEPTION 'El ID del proveedor debe tener entre 7 y 10 caracteres alfanuméricos.';
     END IF;
 
-    IF LENGTH(wid_proveedor) < 6 OR LENGTH(wid_proveedor) > 10 THEN
-        RAISE EXCEPTION 'El ID del proveedor debe tener entre 6 y 10 caracteres.';
+    IF LENGTH(TRIM(wnom_tercero)) < 4 OR LENGTH(wnom_tercero) > 50 THEN
+        RAISE EXCEPTION 'El nombre del proveedor debe tener entre 4 y 50 caracteres.';
+    END IF;
+
+    IF LENGTH(wid_banco) < 6 OR LENGTH(wid_banco) > 10 THEN
+        RAISE EXCEPTION 'El ID del banco debe tener entre 6 y 10 caracteres.';
     END IF;
 
     IF LENGTH(wcta_proveedor) < 10 OR LENGTH(wcta_proveedor) > 16 THEN
         RAISE EXCEPTION 'La cuenta del proveedor debe tener entre 10 y 16 caracteres.';
     END IF;
 
+    IF wconcepto IS NOT NULL AND LENGTH(wconcepto) > 80 THEN
+        RAISE EXCEPTION 'El concepto no puede superar 80 caracteres.';
+    END IF;
+
+-- VALIDAR QUE EL ARCHIVO PLANO EXISTA Y NO ESTÉ GENERADO
+    IF NOT EXISTS (SELECT 1 FROM tab_enc_archivo_plano
+                    WHERE id_archivo_plano = wid_archivo_plano
+                      AND ind_generado     = FALSE) THEN
+        RAISE EXCEPTION 'El archivo plano % no existe o ya fue generado.', wid_archivo_plano;
+    END IF;
+
+-- VALIDAR QUE EL CRONOGRAMA EXISTA, ESTÉ ACTIVO Y PENDIENTE
+    IF NOT EXISTS (SELECT 1 FROM tab_enc_cronopagos
+                    WHERE id_cronograma = wid_cronograma
+                      AND ind_borrado   = FALSE
+                      AND ind_estado    = FALSE) THEN
+        RAISE EXCEPTION 'El cronograma % no existe, está inactivo o ya fue pagado.', wid_cronograma;
+    END IF;
+
+-- VALIDAR QUE LA CUOTA ESTÉ PROGRAMADA EN ESE CRONOGRAMA (FK a tab_det_cronopagos)
+    IF NOT EXISTS (SELECT 1 FROM tab_det_cronopagos
+                    WHERE id_cronograma = wid_cronograma
+                      AND id_factura    = wid_factura
+                      AND id_cuota      = wid_cuota) THEN
+        RAISE EXCEPTION 'La cuota % de la factura % no está programada en el cronograma %.', wid_cuota, wid_factura, wid_cronograma;
+    END IF;
+
+-- VALOR A PAGAR: se copia el valor de la cuota de la factura
+-- (tab_cuotasxfactura.val_cuota). Queda guardado en la línea como historial
+-- de lo que se envió al banco, aunque después cambie la factura.
+    SELECT val_cuota INTO wval_a_pagar
+      FROM tab_cuotasxfactura
+     WHERE id_factura = wid_factura
+       AND id_cuota   = wid_cuota;
+
+    IF wval_a_pagar IS NULL OR wval_a_pagar <= 0 THEN
+        RAISE EXCEPTION 'La cuota % de la factura % no tiene valor a pagar.', wid_cuota, wid_factura;
+    END IF;
+
+-- VALIDAR QUE LA CUOTA NO ESTÉ YA PAGADA
+    IF EXISTS (SELECT 1 FROM tab_cuotasxfactura
+                WHERE id_factura = wid_factura
+                  AND id_cuota   = wid_cuota
+                  AND ind_pagada = TRUE) THEN
+        RAISE EXCEPTION 'La cuota % de la factura % ya fue pagada.', wid_cuota, wid_factura;
+    END IF;
+
+-- VALIDAR QUE EL PROVEEDOR SEA EL DUEÑO DE LA FACTURA
+    SELECT id_proveedor INTO wproveedor_factura
+      FROM tab_cuentasxpagar
+     WHERE id_factura = wid_factura;
+
+    IF wproveedor_factura IS DISTINCT FROM wid_proveedor THEN
+        RAISE EXCEPTION 'La factura % pertenece al proveedor %, no al proveedor %.', wid_factura, wproveedor_factura, wid_proveedor;
+    END IF;
+
+-- VALIDAR QUE LA CUOTA NO ESTÉ YA EN ESTE MISMO ARCHIVO (PK)
+    IF EXISTS (SELECT 1 FROM tab_det_archivo_plano
+                WHERE id_archivo_plano = wid_archivo_plano
+                  AND id_factura       = wid_factura
+                  AND id_cuota         = wid_cuota) THEN
+        RAISE EXCEPTION 'La cuota % de la factura % ya está en el archivo plano %.', wid_cuota, wid_factura, wid_archivo_plano;
+    END IF;
+
+-- VALIDAR QUE LA CUOTA NO ESTÉ EN OTRO ARCHIVO PLANO VIGENTE
+-- Solo se permite si todas las líneas anteriores de la cuota tienen un pago
+-- RECHAZADO (estado_pago = 3) (reintento). Bloquea si está en un archivo sin respuesta del
+-- banco, o con un pago PENDIENTE o APROBADO.
+    IF EXISTS (SELECT 1
+                 FROM tab_det_archivo_plano d
+                WHERE d.id_factura = wid_factura
+                  AND d.id_cuota   = wid_cuota
+                  AND NOT EXISTS (SELECT 1
+                                    FROM tab_pagos_cxp p
+                                   WHERE p.id_archivo_plano = d.id_archivo_plano
+                                     AND p.id_cronograma    = d.id_cronograma
+                                     AND p.id_factura       = d.id_factura
+                                     AND p.id_cuota         = d.id_cuota
+                                     AND p.estado_pago      = 3)) THEN
+        RAISE EXCEPTION 'La cuota % de la factura % ya está en otro archivo plano que no ha sido rechazado.', wid_cuota, wid_factura;
+    END IF;
+
+-- VALIDAR QUE LA CUENTA DEL PROVEEDOR EXISTA Y ESTÉ ACTIVA (FK a tab_bancoxprov)
+    SELECT id_banco, ind_tipocuenta
+      INTO wbanco_cuenta, wtipocuenta_cuenta
+      FROM tab_bancoxprov
+     WHERE id_proveedor  = wid_proveedor
+       AND cta_proveedor = wcta_proveedor
+       AND ind_borrado   = FALSE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'La cuenta % no está registrada o está inactiva para el proveedor %.', wcta_proveedor, wid_proveedor;
+    END IF;
+
+-- VALIDAR QUE EL BANCO Y EL TIPO DE CUENTA COINCIDAN CON LOS DE LA CUENTA
+-- (son una copia; si no coinciden, el banco recibiría datos inconsistentes)
+    IF wbanco_cuenta <> wid_banco THEN
+        RAISE EXCEPTION 'La cuenta % del proveedor % pertenece al banco %, no al banco %.', wcta_proveedor, wid_proveedor, wbanco_cuenta, wid_banco;
+    END IF;
+
+    IF wtipocuenta_cuenta <> wind_tipocuenta THEN
+        RAISE EXCEPTION 'El tipo de cuenta enviado no coincide con el registrado para la cuenta % del proveedor %.', wcta_proveedor, wid_proveedor;
+    END IF;
+
+-- VALIDAR QUE EL BANCO EXISTA Y ESTÉ ACTIVO
+    IF NOT EXISTS (SELECT 1 FROM tab_bancos
+                    WHERE id_banco    = wid_banco
+                      AND ind_borrado = FALSE
+                      AND ind_estado  = TRUE) THEN
+        RAISE EXCEPTION 'El banco % no existe o está inactivo.', wid_banco;
+    END IF;
 
 -- SI TODO VA BIEN, SE INSERTA EN tab_det_archivo_plano
-    INSERT INTO tab_det_archivo_plano (id_archivo_plano, id_empresa, cta_empresa, id_proveedor, cta_proveedor, id_factura, id_cuota)
-    VALUES (wid_archivo_plano, wid_empresa, wcta_empresa, wid_proveedor, wcta_proveedor, wid_factura, wid_cuota);
+    INSERT INTO tab_det_archivo_plano (id_archivo_plano, id_cronograma, id_factura, id_cuota,
+                                       id_tipo, id_proveedor, nom_tercero, id_banco,
+                                       ind_tipocuenta, cta_proveedor, val_a_pagar, concepto)
+    VALUES                            (wid_archivo_plano, wid_cronograma, wid_factura, wid_cuota,
+                                       wid_tipo, wid_proveedor, TRIM(wnom_tercero), wid_banco,
+                                       wind_tipocuenta, wcta_proveedor, wval_a_pagar, NULLIF(TRIM(wconcepto), ''));
+
     RETURN TRUE;
 
 EXCEPTION
+    -- Campo obligatorio en NULL: se agrega qué tabla y columna, porque el
+    -- mensaje general ("Un campo obligatorio está vacío") no lo dice.
+    WHEN not_null_violation THEN
+        GET STACKED DIAGNOSTICS wtabla_err = TABLE_NAME, wcolumna_err = COLUMN_NAME;
+        RAISE EXCEPTION 'ERROR: % (%.%)', public.fun_mensaje_error(SQLSTATE, SQLERRM), wtabla_err, wcolumna_err;
     WHEN OTHERS THEN
         RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
@@ -822,63 +1104,50 @@ $BODY$
 LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
--- FUNCIÓN DE INSERT DE MOTIVOS DE RECHAZO DE CUENTAS POR PAGAR
+-- FUNCIÓN DE INSERT DE CÓDIGOS DE RESPUESTA DEL BANCO
 --------------------------------------------------------------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION fun_insert_motivos_rechazo (wid_motivo_rechazo   tab_motivos_rechazo.id_motivo_rechazo%TYPE,
-                                                       wdes_motivo          tab_motivos_rechazo.des_motivo%TYPE,
-                                                       wcod_bancario        tab_motivos_rechazo.cod_bancario%TYPE,
-                                                       wind_borrado         tab_motivos_rechazo.ind_borrado%TYPE) RETURNS BOOLEAN AS
-
+CREATE OR REPLACE FUNCTION fun_insert_codigos_respuesta_banco (wid_codigo      tab_codigos_respuesta_banco.id_codigo%TYPE,
+                                                               wid_banco       tab_codigos_respuesta_banco.id_banco%TYPE,
+                                                               wdes_motivo     tab_codigos_respuesta_banco.des_motivo%TYPE) RETURNS BOOLEAN AS
 $BODY$
 BEGIN
 
--- VALIDAR QUE EL ID DEL MOTIVO DE RECHAZO NO SEA NULO
-    IF wid_motivo_rechazo IS NULL THEN
-        RAISE EXCEPTION 'El ID del motivo de rechazo no puede ser nulo.';
+-- VALIDAR QUE LOS CAMPOS NO SEAN NULOS
+    IF wid_codigo IS NULL THEN
+        RAISE EXCEPTION 'El código de respuesta no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE LA DESCRIPCIÓN DEL MOTIVO NO SEA NULA
+    IF wid_banco IS NULL THEN
+        RAISE EXCEPTION 'El ID del banco no puede ser nulo.';
+    END IF;
+
     IF wdes_motivo IS NULL THEN
-        RAISE EXCEPTION 'La descripción del motivo no puede ser nula.';
+        RAISE EXCEPTION 'La descripción del código no puede ser nula.';
     END IF;
 
--- VALIDAR QUE EL CÓDIGO BANCARIO NO SEA NULO
-    IF wcod_bancario IS NULL THEN
-        RAISE EXCEPTION 'El código bancario no puede ser nulo.';
+-- VALIDAR LONGITUDES (mismos CHECK de la tabla)
+    IF LENGTH(TRIM(wid_codigo)) < 1 OR LENGTH(wid_codigo) > 10 THEN
+        RAISE EXCEPTION 'El código de respuesta debe tener entre 1 y 10 caracteres.';
     END IF;
 
--- VALIDAR QUE EL INDICADOR DE BORRADO NO SEA NULO
-    IF wind_borrado IS NULL THEN
-        RAISE EXCEPTION 'El indicador de borrado no puede ser nulo.';
+    IF LENGTH(TRIM(wdes_motivo)) < 3 OR LENGTH(wdes_motivo) > 100 THEN
+        RAISE EXCEPTION 'La descripción del código debe tener entre 3 y 100 caracteres.';
     END IF;
 
--- VALIDAR QUE EL MOTIVO DE RECHAZO NO EXISTA YA (PK)
-    IF EXISTS (SELECT 1 FROM tab_motivos_rechazo WHERE id_motivo_rechazo = wid_motivo_rechazo) THEN
-        RAISE EXCEPTION 'El motivo de rechazo % ya existe.', wid_motivo_rechazo;
+-- VALIDAR QUE EL BANCO EXISTA Y NO ESTÉ BORRADO
+    IF NOT EXISTS (SELECT 1 FROM tab_bancos WHERE id_banco = wid_banco AND ind_borrado = FALSE) THEN
+        RAISE EXCEPTION 'El banco % no existe o se encuentra borrado.', wid_banco;
     END IF;
 
--- VALIDAR QUE EL CÓDIGO BANCARIO NO ESTÉ YA ASIGNADO A OTRO MOTIVO
-    IF EXISTS (SELECT 1 FROM tab_motivos_rechazo WHERE cod_bancario = wcod_bancario) THEN
-        RAISE EXCEPTION 'El código bancario % ya está asignado a otro motivo de rechazo.', wcod_bancario;
+-- VALIDAR QUE EL CÓDIGO NO EXISTA YA PARA ESE BANCO (PK)
+    IF EXISTS (SELECT 1 FROM tab_codigos_respuesta_banco WHERE id_codigo = wid_codigo AND id_banco = wid_banco) THEN
+        RAISE EXCEPTION 'El código % ya está registrado para el banco %.', wid_codigo, wid_banco;
     END IF;
 
--- VALIDAR QUE LAS LONGITUDES DE LOS CAMPOS DECIMAL SEAN CORRECTAS
-    IF wid_motivo_rechazo < 1 OR wid_motivo_rechazo > 999 THEN
-        RAISE EXCEPTION 'El ID del motivo de rechazo debe tener entre 1 y 999 caracteres.';
-    END IF;
-    
--- VALIDAR QUE LAS LONGITUDES DE LOS CAMPOS VARCHAR SEAN CORRECTAS
-    IF LENGTH(wdes_motivo) < 3 OR LENGTH(wdes_motivo) > 200 THEN
-        RAISE EXCEPTION 'La descripción del motivo debe tener entre 3 y 200 caracteres.';
-    END IF;
+-- SI TODO VA BIEN, SE INSERTA (ind_borrado QUEDA EN FALSE POR EL DEFAULT)
+    INSERT INTO tab_codigos_respuesta_banco (id_codigo, id_banco, des_motivo)
+    VALUES                                  (TRIM(wid_codigo), wid_banco, TRIM(wdes_motivo));
 
-    IF LENGTH(wcod_bancario) < 1 OR LENGTH(wcod_bancario) > 10 THEN
-        RAISE EXCEPTION 'El código bancario debe tener entre 1 y 10 caracteres.';
-    END IF;
-
--- SI TODO VA BIEN, SE INSERTA EN tab_motivos_rechazo
-    INSERT INTO tab_motivos_rechazo (id_motivo_rechazo, des_motivo, cod_bancario, ind_borrado)
-    VALUES (wid_motivo_rechazo, wdes_motivo, wcod_bancario, wind_borrado);
     RETURN TRUE;
 
 EXCEPTION
@@ -946,86 +1215,165 @@ $BODY$
 LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
--- FUNCIÓN DE INSERT DE PAGOS DE TESORERÍA Y CUENTAS POR PAGAR
+-- FUNCIÓN AUXILIAR: EFECTOS DE UN PAGO APROBADO
+-- La usan fun_insert_pagos_cxp y fun_update_pagos_cxp cuando el pago queda
+-- en 2 (APROBADO). No se llama desde PHP.
+--   1) Marca la cuota como pagada (trg_actualizar_saldo_factura descuenta el
+--      saldo de la factura y trg_actualizar_saldo_proveedor la deuda).
+--   2) Cierra el cronograma si ya no le quedan cuotas sin pagar.
 --------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_aplicar_pago_aprobado (wid_factura      tab_pagos_cxp.id_factura%TYPE,
+                                                      wid_cuota        tab_pagos_cxp.id_cuota%TYPE,
+                                                      wid_cronograma   tab_pagos_cxp.id_cronograma%TYPE) RETURNS VOID AS
+$BODY$
+BEGIN
 
-CREATE OR REPLACE FUNCTION fun_insert_pagos_cxp (wid_factura            tab_pagos_cxp.id_factura%TYPE,
-                                                 wid_cuota              tab_pagos_cxp.id_cuota%TYPE,
-                                                 wid_archivo_plano      tab_pagos_cxp.id_archivo_plano%TYPE,
-                                                 wfec_pago              tab_pagos_cxp.fec_pago%TYPE,
-                                                 wval_pago              tab_pagos_cxp.val_pago%TYPE,
-                                                 wreferencia_bancaria   tab_pagos_cxp.referencia_bancaria%TYPE) RETURNS BOOLEAN AS
+    UPDATE tab_cuotasxfactura
+    SET    ind_pagada = TRUE
+    WHERE  id_factura = wid_factura
+      AND  id_cuota   = wid_cuota
+      AND  ind_pagada = FALSE;
+
+    UPDATE tab_enc_cronopagos e
+    SET    ind_estado = TRUE
+    WHERE  e.id_cronograma = wid_cronograma
+      AND  e.ind_estado    = FALSE
+      AND  NOT EXISTS (SELECT 1
+                         FROM tab_det_cronopagos d
+                         JOIN tab_cuotasxfactura c ON c.id_factura = d.id_factura
+                                                  AND c.id_cuota   = d.id_cuota
+                        WHERE d.id_cronograma = e.id_cronograma
+                          AND c.ind_pagada    = FALSE);
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN DE INSERT DE PAGOS DE CUENTAS POR PAGAR
+-- NOTA: Registra la respuesta del banco para UNA línea de un archivo plano.
+--       Toma de la línea id_cronograma y val_a_pagar, y del encabezado el
+--       banco; por eso PHP solo manda archivo, factura, cuota, fecha, estado
+--       y código.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_insert_pagos_cxp (wid_archivo_plano  tab_pagos_cxp.id_archivo_plano%TYPE,
+                                                 wid_factura        tab_pagos_cxp.id_factura%TYPE,
+                                                 wid_cuota          tab_pagos_cxp.id_cuota%TYPE,
+                                                 wfec_pago          tab_pagos_cxp.fec_pago%TYPE,
+                                                 westado_pago       tab_pagos_cxp.estado_pago%TYPE,
+                                                 wid_codigo         tab_pagos_cxp.id_codigo%TYPE) RETURNS BOOLEAN AS
 $BODY$
 
-DECLARE wid_pago tab_pagos_cxp.id_pago%TYPE;
+DECLARE wid_pago        tab_pagos_cxp.id_pago%TYPE;
+        wid_cronograma  tab_det_archivo_plano.id_cronograma%TYPE;
+        wval_pago       tab_det_archivo_plano.val_a_pagar%TYPE;
+        wid_banco       tab_enc_archivo_plano.id_banco%TYPE;
+        wind_generado   tab_enc_archivo_plano.ind_generado%TYPE;
+        wfec_generacion tab_enc_archivo_plano.fec_generacion%TYPE;
 
 BEGIN
 
--- VALIDAR QUE EL ID DE LA FACTURA NO SEA NULO
+-- VALIDAR QUE LOS CAMPOS NO SEAN NULOS
+    IF wid_archivo_plano IS NULL THEN
+        RAISE EXCEPTION 'El ID del archivo plano no puede ser nulo.';
+    END IF;
+
     IF wid_factura IS NULL THEN
         RAISE EXCEPTION 'El ID de la factura no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE EL ID DE LA CUOTA NO SEA NULO
     IF wid_cuota IS NULL THEN
         RAISE EXCEPTION 'El ID de la cuota no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE LA FECHA DE PAGO NO SEA NULA
     IF wfec_pago IS NULL THEN
         RAISE EXCEPTION 'La fecha de pago no puede ser nula.';
     END IF;
 
--- VALIDAR QUE EL VALOR DEL PAGO NO SEA NULO
-    IF wval_pago IS NULL THEN
-        RAISE EXCEPTION 'El valor del pago no puede ser nulo.';
+    IF westado_pago IS NULL THEN
+        RAISE EXCEPTION 'El estado del pago no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE LA CUOTA DE LA FACTURA EXISTA (FK)
-    IF NOT EXISTS (SELECT 1 FROM tab_cuotasxfactura WHERE id_factura = wid_factura AND id_cuota = wid_cuota) THEN
-        RAISE EXCEPTION 'La cuota % de la factura % no existe.', wid_cuota, wid_factura;
+    IF wid_codigo IS NULL THEN
+        RAISE EXCEPTION 'El código de respuesta del banco no puede ser nulo.';
+    END IF;
+
+-- VALIDAR EL ESTADO (1 = PENDIENTE, 2 = APROBADO, 3 = RECHAZADO)
+    IF westado_pago NOT IN (1, 2, 3) THEN
+        RAISE EXCEPTION 'El estado % no es válido: debe ser 1 (Pendiente), 2 (Aprobado) o 3 (Rechazado).', westado_pago;
+    END IF;
+
+-- VALIDAR QUE EL ARCHIVO PLANO EXISTA Y YA ESTÉ GENERADO (ENVIADO AL BANCO)
+    SELECT id_banco, ind_generado, fec_generacion
+      INTO wid_banco, wind_generado, wfec_generacion
+      FROM tab_enc_archivo_plano
+     WHERE id_archivo_plano = wid_archivo_plano;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El archivo plano % no existe.', wid_archivo_plano;
+    END IF;
+
+    IF wind_generado = FALSE THEN
+        RAISE EXCEPTION 'El archivo plano % todavía no ha sido generado; no puede tener respuesta del banco.', wid_archivo_plano;
+    END IF;
+
+-- VALIDAR QUE LA CUOTA ESTÉ EN ESE ARCHIVO Y TRAER CRONOGRAMA Y VALOR
+    SELECT id_cronograma, val_a_pagar
+      INTO wid_cronograma, wval_pago
+      FROM tab_det_archivo_plano
+     WHERE id_archivo_plano = wid_archivo_plano
+       AND id_factura       = wid_factura
+       AND id_cuota         = wid_cuota;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'La cuota % de la factura % no está en el archivo plano %.', wid_cuota, wid_factura, wid_archivo_plano;
+    END IF;
+
+-- VALIDAR QUE ESA LÍNEA NO TENGA YA UNA RESPUESTA REGISTRADA
+    IF EXISTS (SELECT 1 FROM tab_pagos_cxp
+                WHERE id_archivo_plano = wid_archivo_plano
+                  AND id_factura       = wid_factura
+                  AND id_cuota         = wid_cuota) THEN
+        RAISE EXCEPTION 'La cuota % de la factura % ya tiene una respuesta registrada en el archivo plano %. Si está pendiente, actualícela.', wid_cuota, wid_factura, wid_archivo_plano;
     END IF;
 
 -- VALIDAR QUE LA CUOTA NO ESTÉ YA PAGADA
-    IF EXISTS (SELECT 1 FROM tab_cuotasxfactura WHERE id_factura = wid_factura AND id_cuota = wid_cuota AND ind_pagada = TRUE) THEN
+    IF EXISTS (SELECT 1 FROM tab_cuotasxfactura
+                WHERE id_factura = wid_factura
+                  AND id_cuota   = wid_cuota
+                  AND ind_pagada = TRUE) THEN
         RAISE EXCEPTION 'La cuota % de la factura % ya fue pagada.', wid_cuota, wid_factura;
     END IF;
 
--- VALIDAR QUE, SI VIENE ARCHIVO PLANO, LA LÍNEA EXISTA EN tab_det_archivo_plano (FK COMPUESTA)
-    IF wid_archivo_plano IS NOT NULL THEN
-        IF NOT EXISTS (SELECT 1 FROM tab_det_archivo_plano WHERE id_archivo_plano = wid_archivo_plano AND id_factura = wid_factura AND id_cuota = wid_cuota) THEN
-            RAISE EXCEPTION 'La cuota % de la factura % no está en el archivo plano %.', wid_cuota, wid_factura, wid_archivo_plano;
-        END IF;
+-- VALIDAR QUE EL CÓDIGO EXISTA Y ESTÉ ACTIVO PARA EL BANCO DEL ARCHIVO
+    IF NOT EXISTS (SELECT 1 FROM tab_codigos_respuesta_banco
+                    WHERE id_codigo   = wid_codigo
+                      AND id_banco    = wid_banco
+                      AND ind_borrado = FALSE) THEN
+        RAISE EXCEPTION 'El código % no existe o está inactivo para el banco % del archivo plano.', wid_codigo, wid_banco;
     END IF;
 
--- VALIDAR QUE NO EXISTA YA UN PAGO PARA ESA MISMA LÍNEA
-    IF wid_archivo_plano IS NOT NULL THEN
-        IF EXISTS (SELECT 1 FROM tab_pagos_cxp WHERE id_archivo_plano = wid_archivo_plano AND id_factura = wid_factura AND id_cuota = wid_cuota) THEN
-            RAISE EXCEPTION 'La cuota % de la factura % ya tiene un pago registrado para el archivo plano %.', wid_cuota, wid_factura, wid_archivo_plano;
-        END IF;
-    END IF;
-
--- VALIDAR QUE LA FECHA DE PAGO NO SEA FUTURA
+-- VALIDAR LA FECHA DE PAGO: NO FUTURA NI ANTERIOR A LA GENERACIÓN DEL ARCHIVO
     IF wfec_pago > CURRENT_DATE THEN
         RAISE EXCEPTION 'La fecha de pago no puede ser futura.';
     END IF;
 
--- VALIDAR QUE EL VALOR DEL PAGO ESTÉ ENTRE 1 Y 9999999999
-    IF wval_pago < 1 OR wval_pago > 9999999999 THEN
-        RAISE EXCEPTION 'El valor del pago debe estar entre 1 y 9.999.999.999.';
+    IF wfec_generacion IS NOT NULL AND wfec_pago < wfec_generacion THEN
+        RAISE EXCEPTION 'La fecha de pago no puede ser anterior a la generación del archivo plano (%).', TO_CHAR(wfec_generacion, 'DD/MM/YYYY');
     END IF;
 
--- VALIDAR QUE LA REFERENCIA BANCARIA NO SUPERE 30 CARACTERES
-    IF wreferencia_bancaria IS NOT NULL AND LENGTH(wreferencia_bancaria) > 30 THEN
-        RAISE EXCEPTION 'La referencia bancaria no puede superar 30 caracteres.';
-    END IF;
-
--- SI TODO VA BIEN, SE INSERTA EN tab_pagos_cxp (estado_pago QUEDA EN PENDIENTE POR EL DEFAULT DE LA TABLA)
+-- SI TODO VA BIEN, SE INSERTA EN tab_pagos_cxp
     SELECT COALESCE(MAX(id_pago), 0) + 1 INTO wid_pago
-    FROM tab_pagos_cxp;
+      FROM tab_pagos_cxp;
 
-    INSERT INTO tab_pagos_cxp (id_pago, id_factura, id_cuota, id_archivo_plano, fec_pago, val_pago, referencia_bancaria)
-    VALUES                    (wid_pago, wid_factura, wid_cuota, wid_archivo_plano, wfec_pago, wval_pago, wreferencia_bancaria);
+    INSERT INTO tab_pagos_cxp (id_pago, id_factura, id_cuota, id_archivo_plano, id_cronograma,
+                               fec_pago, val_pago, estado_pago, id_codigo, id_banco)
+    VALUES                    (wid_pago, wid_factura, wid_cuota, wid_archivo_plano, wid_cronograma,
+                               wfec_pago, wval_pago, westado_pago, wid_codigo, wid_banco);
+
+-- SI QUEDÓ APROBADO: CUOTA PAGADA Y, SI ES LA ÚLTIMA, CRONOGRAMA CERRADO
+    IF westado_pago = 2 THEN
+        PERFORM fun_aplicar_pago_aprobado(wid_factura, wid_cuota, wid_cronograma);
+    END IF;
 
     RETURN TRUE;
 
@@ -1035,3 +1383,4 @@ EXCEPTION
 END;
 $BODY$
 LANGUAGE PLPGSQL;
+
