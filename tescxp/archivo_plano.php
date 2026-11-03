@@ -200,6 +200,10 @@ $cronogramas_pend = $list_cronogramas_pendientes->fetchAll(PDO::FETCH_ASSOC);
 $list_tipos_pago->execute();
 $tipos_pago = $list_tipos_pago->fetchAll(PDO::FETCH_ASSOC);
 
+// Bancos para los modales rápidos de "Nueva cuenta" (empresa y proveedor)
+$list_bancos->execute();
+$bancos = $list_bancos->fetchAll(PDO::FETCH_ASSOC);
+
 // Días de pago de Parámetros de Tesorería (1 = lunes ... 6 = sábado)
 $list_pmtros_tescxp->execute();
 $pmtros   = $list_pmtros_tescxp->fetch(PDO::FETCH_ASSOC) ?: null;
@@ -257,6 +261,131 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $respuesta = ['success' => false, 'message' => '', 'errors' => []];
 
     try {
+        // ---------- NUEVO BANCO RÁPIDO (modal anidado de las cuentas rápidas) ----------
+        // Crea el banco sin recargar y devuelve sus datos para que el JS lo
+        // agregue a los selects de banco y lo deje seleccionado.
+        if (isset($_POST['btn_nuevo_banco'])) {
+            $id_banco  = trim($_POST['txt_banco_id']     ?? '');
+            $nom_banco = trim($_POST['txt_banco_nombre'] ?? '');
+
+            $errores = [];
+            if (mb_strlen($id_banco) < 6 || mb_strlen($id_banco) > 10) {
+                $errores['err-banco-id'] = 'El código debe tener entre 6 y 10 caracteres.';
+            }
+            if (mb_strlen($nom_banco) < 4 || mb_strlen($nom_banco) > 50) {
+                $errores['err-banco-nombre'] = 'El nombre debe tener entre 4 y 50 caracteres.';
+            }
+            if (!empty($errores)) {
+                $respuesta['errors'] = $errores;
+                responder_json($respuesta);
+            }
+
+            // Se crea siempre ACTIVO: un banco inactivo no serviría para la cuenta.
+            requerir_stmt($ins_banco ?? null, 'ins_banco')->execute([
+                ':wid_banco'   => $id_banco,
+                ':wnom_banco'  => $nom_banco,
+                ':wind_estado' => 'true',
+            ]);
+
+            $respuesta['success'] = true;
+            $respuesta['message'] = 'Banco registrado correctamente.';
+            $respuesta['banco']   = ['id_banco' => $id_banco, 'nom_banco' => $nom_banco];
+            responder_json($respuesta);
+        }
+
+        // ---------- NUEVA CUENTA DE ORIGEN (EMPRESA) RÁPIDA ----------
+        // El NIT sale de Parámetros Generales. Devuelve la cuenta ya armada
+        // (banco, tipo y empresa) para agregarla al select de cuenta de origen.
+        if (isset($_POST['btn_nueva_cta_empresa'])) {
+            $cta_empresa    = trim($_POST['txt_ctaemp_cta']      ?? '');
+            $id_banco       = trim($_POST['sel_ctaemp_banco']    ?? '');
+            $ind_tipocuenta = ($_POST['sel_ctaemp_tipocuenta']   ?? 'false') === 'true';
+
+            $stmt_grales = requerir_stmt($list_pmtros_grales ?? null, 'list_pmtros_grales');
+            $stmt_grales->execute();
+            $id_empresa = (string)(($stmt_grales->fetch(PDO::FETCH_ASSOC) ?: [])['id_empresa'] ?? '');
+
+            $errores = [];
+            if ($id_empresa === '') {
+                $errores['err-ctaemp-cta'] = 'No se encontró el NIT de la empresa en Parámetros Generales.';
+            }
+            if (!preg_match('/^[0-9]{10,16}$/', $cta_empresa)) {
+                $errores['err-ctaemp-cta'] = 'El número de cuenta debe tener entre 10 y 16 dígitos numéricos.';
+            }
+            if ($id_banco === '') {
+                $errores['err-ctaemp-banco'] = 'Seleccione un banco.';
+            }
+            if (!empty($errores)) {
+                $respuesta['errors'] = $errores;
+                responder_json($respuesta);
+            }
+
+            requerir_stmt($ins_cta_empresa ?? null, 'ins_cta_empresa')->execute([
+                ':wid_empresa'     => $id_empresa,
+                ':wcta_empresa'    => $cta_empresa,
+                ':wid_banco'       => $id_banco,
+                ':wind_tipocuenta' => $ind_tipocuenta ? 'true' : 'false',
+            ]);
+
+            // Se relee la lista para devolver la cuenta con nom_banco y nom_empresa
+            $list_ctas_empresa->execute();
+            $nueva = null;
+            foreach ($list_ctas_empresa->fetchAll(PDO::FETCH_ASSOC) as $ce) {
+                if ((string)$ce['id_empresa'] === $id_empresa && (string)$ce['cta_empresa'] === $cta_empresa) {
+                    $nueva = $ce;
+                    break;
+                }
+            }
+
+            $respuesta['success'] = true;
+            $respuesta['message'] = 'Cuenta de la empresa registrada correctamente.';
+            $respuesta['cuenta']  = [
+                'id_empresa'  => $id_empresa,
+                'cta_empresa' => $cta_empresa,
+                'nom_banco'   => $nueva['nom_banco']   ?? '',
+                'nom_empresa' => $nueva['nom_empresa'] ?? '',
+                'tipo_cuenta' => tipo_cuenta_txt($ind_tipocuenta),
+            ];
+            responder_json($respuesta);
+        }
+
+        // ---------- NUEVA CUENTA DE PROVEEDOR RÁPIDA ----------
+        // Se abre desde la lista de proveedores del cronograma. El JS vuelve a
+        // cargar el cronograma para que la cuenta aparezca en la lista.
+        if (isset($_POST['btn_nueva_cta_proveedor'])) {
+            $id_proveedor   = trim($_POST['hid_ctaprov_proveedor'] ?? '');
+            $cta_proveedor  = trim($_POST['txt_ctaprov_cta']       ?? '');
+            $id_banco       = trim($_POST['sel_ctaprov_banco']     ?? '');
+            $ind_tipocuenta = ($_POST['sel_ctaprov_tipocuenta']    ?? 'false') === 'true';
+
+            $errores = [];
+            if ($id_proveedor === '') {
+                $errores['err-ctaprov-cta'] = 'Proveedor no válido.';
+            }
+            if (!preg_match('/^[0-9]{10,16}$/', $cta_proveedor)) {
+                $errores['err-ctaprov-cta'] = 'El número de cuenta debe tener entre 10 y 16 dígitos numéricos.';
+            }
+            if ($id_banco === '') {
+                $errores['err-ctaprov-banco'] = 'Seleccione un banco.';
+            }
+            if (!empty($errores)) {
+                $respuesta['errors'] = $errores;
+                responder_json($respuesta);
+            }
+
+            requerir_stmt($ins_bancoxprov ?? null, 'ins_bancoxprov')->execute([
+                ':wid_proveedor'   => $id_proveedor,
+                ':wcta_proveedor'  => $cta_proveedor,
+                ':wid_banco'       => $id_banco,
+                ':wind_tipocuenta' => $ind_tipocuenta ? 'true' : 'false',
+            ]);
+
+            $respuesta['success'] = true;
+            $respuesta['message'] = 'Cuenta del proveedor registrada correctamente.';
+            $respuesta['cuenta']  = ['id_proveedor' => $id_proveedor, 'cta_proveedor' => $cta_proveedor];
+            responder_json($respuesta);
+        }
+
         // ---------- CUOTAS + CUENTAS DE UN CRONOGRAMA (para armar el form dinámico) ----------
         if (isset($_POST['btn_cargar_crono'])) {
             $id_cronograma = (int)($_POST['hid_id_cronograma'] ?? 0);
@@ -614,6 +743,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($mensaje)) {
             $mensaje = $e->getMessage();
         }
+
+        // Errores de los modales rápidos que se muestran debajo de su campo
+        if (isset($_POST['btn_nuevo_banco']) &&
+            (stripos($mensaje, 'ya existe') !== false ||
+             stripos($mensaje, 'duplicate key') !== false ||
+             stripos($mensaje, 'llave duplicada') !== false)) {
+            $respuesta['errors'] = ['err-banco-id' => 'Ya existe un banco registrado con ese código.'];
+            responder_json($respuesta);
+        }
+        if (isset($_POST['btn_nueva_cta_empresa']) && stripos($mensaje, 'ya está registrada') !== false) {
+            $respuesta['errors'] = ['err-ctaemp-cta' => $mensaje];
+            responder_json($respuesta);
+        }
+        if (isset($_POST['btn_nueva_cta_proveedor']) && stripos($mensaje, 'ya está registrada') !== false) {
+            $respuesta['errors'] = ['err-ctaprov-cta' => $mensaje];
+            responder_json($respuesta);
+        }
+
         $respuesta['message']      = $mensaje;
         $respuesta['debug_origen'] = basename($e->getFile()) . ':' . $e->getLine();
         responder_json($respuesta);
@@ -838,9 +985,14 @@ ob_start();
                 <!-- COLUMNA IZQUIERDA: DATOS DEL ARCHIVO -->
                 <div class="ap-col">
                     <div class="form-field">
-                        <label class="form-label">Cuenta de Origen (Empresa) <span class="required">*</span></label>
+                        <div class="label-row">
+                            <label class="form-label" for="new-cta-empresa">Cuenta de Origen (Empresa) <span class="required">*</span></label>
+                            <button type="button" class="btn-link-inline" id="btn-open-ctaemp-rapida">
+                                <i class="fas fa-plus"></i> Nueva cuenta
+                            </button>
+                        </div>
                         <select id="new-cta-empresa" name="sel_cta_empresa" class="form-select" title="El archivo se envía al banco de esta cuenta, y de ella sale el dinero">
-                            <option value="">Seleccione...</option>
+                            <option value=""><?= empty($ctas_empresa_disp) ? 'No hay cuentas registradas' : 'Seleccione...' ?></option>
                             <?php foreach ($ctas_empresa_disp as $ce): ?>
                                 <option value="<?= htmlspecialchars($ce['id_empresa']) ?>:<?= htmlspecialchars($ce['cta_empresa']) ?>"
                                         data-empresa="<?= htmlspecialchars($ce['nom_empresa'] . ' · ' . $ce['id_empresa']) ?>">
@@ -921,6 +1073,143 @@ ob_start();
             </p>
             <button type="button" class="btn btn-secondary btn-cancel-new-modal">Cancelar</button>
             <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Crear Archivo Plano</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL RÁPIDO: NUEVA CUENTA DE ORIGEN (EMPRESA) SIN SALIR DEL ARCHIVO -->
+<div id="modal-ctaemp-rapida" class="modal-overlay modal-nested hidden">
+    <div class="modal-box modal-box-sm">
+        <div class="modal-header green">
+            <div>
+                <h2>Nueva Cuenta de la Empresa</h2>
+                <p>Queda seleccionada como cuenta de origen</p>
+            </div>
+            <button type="button" class="modal-close btn-close-ctaemp-modal"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+            <form id="ctaemp-rapida-form" novalidate>
+                <input type="hidden" name="btn_nueva_cta_empresa" value="1">
+                <div class="form-field">
+                    <div class="label-row">
+                        <label class="form-label" for="ctaemp-banco">Banco <span class="required">*</span></label>
+                        <button type="button" class="btn-link-inline btn-open-banco-rapido" data-destino="ctaemp-banco">
+                            <i class="fas fa-plus"></i> Nuevo banco
+                        </button>
+                    </div>
+                    <select id="ctaemp-banco" name="sel_ctaemp_banco" class="form-select select-banco">
+                        <option value=""><?= empty($bancos) ? 'No hay bancos registrados' : 'Seleccione...' ?></option>
+                        <?php foreach ($bancos as $b): ?>
+                            <option value="<?= htmlspecialchars($b['id_banco']) ?>"><?= htmlspecialchars($b['nom_banco']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <span class="field-error" id="err-ctaemp-banco"></span>
+                </div>
+                <div class="form-field">
+                    <label class="form-label" for="ctaemp-cta">Número de Cuenta <span class="required">*</span></label>
+                    <input type="text" id="ctaemp-cta" name="txt_ctaemp_cta" class="form-input" placeholder="Ej: 1234567890" minlength="10" maxlength="16" inputmode="numeric">
+                    <span class="field-error" id="err-ctaemp-cta"></span>
+                </div>
+                <div class="form-field">
+                    <label class="form-label" for="ctaemp-tipocuenta">Tipo de Cuenta</label>
+                    <select id="ctaemp-tipocuenta" name="sel_ctaemp_tipocuenta" class="form-select">
+                        <option value="false">Ahorros</option>
+                        <option value="true">Corriente</option>
+                    </select>
+                    <p class="field-hint">El NIT de la empresa se toma de Parámetros Generales.</p>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary btn-cancel-ctaemp-modal">Cancelar</button>
+            <button type="button" id="ctaemp-rapida-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Cuenta</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL RÁPIDO: NUEVA CUENTA DE UN PROVEEDOR DEL CRONOGRAMA -->
+<div id="modal-ctaprov-rapida" class="modal-overlay modal-nested hidden">
+    <div class="modal-box modal-box-sm">
+        <div class="modal-header green">
+            <div>
+                <h2>Nueva Cuenta del Proveedor</h2>
+                <p>Se agrega a sus cuentas y queda elegida en este archivo</p>
+            </div>
+            <button type="button" class="modal-close btn-close-ctaprov-modal"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+            <form id="ctaprov-rapida-form" novalidate>
+                <input type="hidden" name="btn_nueva_cta_proveedor" value="1">
+                <input type="hidden" name="hid_ctaprov_proveedor" id="ctaprov-proveedor-hid" value="">
+                <div class="form-field">
+                    <label class="form-label">Proveedor</label>
+                    <input type="text" id="ctaprov-proveedor-display" class="form-input" disabled>
+                </div>
+                <div class="form-field">
+                    <div class="label-row">
+                        <label class="form-label" for="ctaprov-banco">Banco <span class="required">*</span></label>
+                        <button type="button" class="btn-link-inline btn-open-banco-rapido" data-destino="ctaprov-banco">
+                            <i class="fas fa-plus"></i> Nuevo banco
+                        </button>
+                    </div>
+                    <select id="ctaprov-banco" name="sel_ctaprov_banco" class="form-select select-banco">
+                        <option value=""><?= empty($bancos) ? 'No hay bancos registrados' : 'Seleccione...' ?></option>
+                        <?php foreach ($bancos as $b): ?>
+                            <option value="<?= htmlspecialchars($b['id_banco']) ?>"><?= htmlspecialchars($b['nom_banco']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <span class="field-error" id="err-ctaprov-banco"></span>
+                </div>
+                <div class="form-field">
+                    <label class="form-label" for="ctaprov-cta">Número de Cuenta <span class="required">*</span></label>
+                    <input type="text" id="ctaprov-cta" name="txt_ctaprov_cta" class="form-input" placeholder="Ej: 1234567890" minlength="10" maxlength="16" inputmode="numeric">
+                    <span class="field-error" id="err-ctaprov-cta"></span>
+                </div>
+                <div class="form-field">
+                    <label class="form-label" for="ctaprov-tipocuenta">Tipo de Cuenta</label>
+                    <select id="ctaprov-tipocuenta" name="sel_ctaprov_tipocuenta" class="form-select">
+                        <option value="false">Ahorros</option>
+                        <option value="true">Corriente</option>
+                    </select>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary btn-cancel-ctaprov-modal">Cancelar</button>
+            <button type="button" id="ctaprov-rapida-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Cuenta</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL ANIDADO: NUEVO BANCO (lo abren los dos modales de cuenta) -->
+<div id="modal-banco-rapido" class="modal-overlay modal-nested modal-nested-2 hidden">
+    <div class="modal-box modal-box-sm">
+        <div class="modal-header green">
+            <div>
+                <h2>Nuevo Banco</h2>
+                <p>Se agregará a la lista sin salir de la cuenta</p>
+            </div>
+            <button type="button" class="modal-close btn-close-banco-modal"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+            <form id="banco-rapido-form" novalidate>
+                <input type="hidden" name="btn_nuevo_banco" value="1">
+                <div class="form-field">
+                    <label class="form-label" for="banco-rapido-id">Código del Banco <span class="required">*</span></label>
+                    <input type="text" id="banco-rapido-id" name="txt_banco_id" class="form-input" placeholder="Ej: 0001234" minlength="6" maxlength="10">
+                    <span class="field-error" id="err-banco-id"></span>
+                </div>
+                <div class="form-field">
+                    <label class="form-label" for="banco-rapido-nombre">Nombre del Banco <span class="required">*</span></label>
+                    <input type="text" id="banco-rapido-nombre" name="txt_banco_nombre" class="form-input" placeholder="Ej: Bancolombia" minlength="4" maxlength="50">
+                    <span class="field-error" id="err-banco-nombre"></span>
+                    <p class="field-hint">El banco se crea en estado Activo y queda seleccionado en la cuenta.</p>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary btn-cancel-banco-modal">Cancelar</button>
+            <button type="button" id="banco-rapido-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Banco</button>
         </div>
     </div>
 </div>

@@ -50,11 +50,128 @@ function openNewModal() {
     setVal('new-id-banco', '');
     setVal('new-cta-proveedor', '');
     setVal('new-tipocuenta', 'false');
+    actualizarEstadoBancos();
     show('modal-new-cuenta');
 }
 
 function closeNewModal() {
+    closeBancoRapidoModal();
     hide('modal-new-cuenta');
+}
+
+// ============================================================
+// 2.1 MODAL ANIDADO: CREAR BANCO DESDE "NUEVA CUENTA"
+// ============================================================
+
+// ¿El select de la nueva cuenta tiene al menos un banco para escoger?
+function hayBancos() {
+    const sel = document.getElementById('new-id-banco');
+    if (!sel) return false;
+    return Array.from(sel.options).some(opt => opt.value !== '');
+}
+
+// Muestra/oculta el aviso "no hay bancos" y ajusta el texto del placeholder
+function actualizarEstadoBancos() {
+    const hay = hayBancos();
+    document.getElementById('new-banco-empty')?.classList.toggle('hidden', hay);
+    const placeholder = document.querySelector('#new-id-banco option[value=""]');
+    if (placeholder) placeholder.textContent = hay ? 'Seleccione...' : 'No hay bancos registrados';
+}
+
+function openBancoRapidoModal() {
+    clearAllFieldErrors('banco');
+    setVal('banco-rapido-id', '');
+    setVal('banco-rapido-nombre', '');
+    show('modal-banco-rapido');
+    setTimeout(() => document.getElementById('banco-rapido-id')?.focus(), 50);
+}
+
+function closeBancoRapidoModal() {
+    hide('modal-banco-rapido');
+}
+
+// Agrega el banco nuevo a los selects (nueva y editar) en orden alfabético
+function agregarBancoASelects(banco) {
+    ['new-id-banco', 'edit-id-banco'].forEach(selId => {
+        const sel = document.getElementById(selId);
+        if (!sel) return;
+        if (Array.from(sel.options).some(o => o.value === banco.id_banco)) return;
+
+        const opt = document.createElement('option');
+        opt.value = banco.id_banco;
+        opt.textContent = banco.nom_banco;
+
+        const siguiente = Array.from(sel.options).find(o =>
+            o.value !== '' && o.textContent.localeCompare(banco.nom_banco, 'es', { sensitivity: 'base' }) > 0
+        );
+        sel.insertBefore(opt, siguiente || null);
+    });
+}
+
+async function guardarBancoRapido() {
+    const btn = document.getElementById('banco-rapido-save');
+    if (btn?.disabled) return;
+    clearAllFieldErrors('banco');
+
+    const formData = new FormData(document.getElementById('banco-rapido-form'));
+    if (btn) btn.disabled = true;
+
+    try {
+        const response = await fetch(window.location.href, { method: 'POST', body: formData });
+        const text = await response.text();
+        let result;
+        try { result = JSON.parse(text); } catch (e) { result = { success: false, message: 'Respuesta inválida del servidor' }; }
+
+        if (result.success && result.banco) {
+            agregarBancoASelects(result.banco);
+            setVal('new-id-banco', result.banco.id_banco);   // queda seleccionado
+            const errBanco = document.getElementById('err-new-banco');
+            if (errBanco) { errBanco.classList.remove('visible'); errBanco.textContent = ''; }
+            actualizarEstadoBancos();
+            closeBancoRapidoModal();
+            showToast(result.message, 'success');
+            document.getElementById('new-cta-proveedor')?.focus();
+        } else if (result.errors && Object.keys(result.errors).length > 0) {
+            Object.entries(result.errors).forEach(([spanId, mensaje]) => showFieldError(spanId, mensaje));
+        } else {
+            showToast(result.message || 'Error al guardar el banco', 'error');
+        }
+    } catch (err) {
+        showToast('Error de conexión', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+function initBancoRapido() {
+    const sel = document.getElementById('new-id-banco');
+
+    // Si no hay bancos, al intentar abrir el select se abre el modal de crear banco
+    sel?.addEventListener('mousedown', e => {
+        if (!hayBancos()) { e.preventDefault(); openBancoRapidoModal(); }
+    });
+    sel?.addEventListener('keydown', e => {
+        if (!hayBancos() && ['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(e.key)) {
+            e.preventDefault();
+            openBancoRapidoModal();
+        }
+    });
+
+    document.getElementById('btn-open-banco-rapido')?.addEventListener('click', openBancoRapidoModal);
+    document.getElementById('btn-empty-crear-banco')?.addEventListener('click', openBancoRapidoModal);
+
+    document.querySelectorAll('.btn-close-banco-modal, .btn-cancel-banco-modal')
+        .forEach(btn => btn.addEventListener('click', closeBancoRapidoModal));
+
+    document.getElementById('banco-rapido-save')?.addEventListener('click', guardarBancoRapido);
+
+    // Enter dentro del formulario = guardar (sin enviar la página)
+    document.getElementById('banco-rapido-form')?.addEventListener('submit', e => {
+        e.preventDefault();
+        guardarBancoRapido();
+    });
+
+    actualizarEstadoBancos();
 }
 
 // ============================================================
@@ -312,6 +429,9 @@ function initBancoxprovModule() {
     renderCuentasPage();
     ajustarAlturaTablaCuentas();
     window.addEventListener('resize', ajustarAlturaTablaCuentas);
+
+    // ---------- MODAL ANIDADO: CREAR BANCO ----------
+    initBancoRapido();
 
     document.querySelectorAll('.btn-close-new-modal, .btn-cancel-new-modal')
         .forEach(btn => btn.addEventListener('click', closeNewModal));

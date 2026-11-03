@@ -865,6 +865,34 @@
     font-size: 12px;
 }
 
+/* Select de estado bloqueado (caja cerrada o movimiento reembolsado) */
+.mov-estado-select:disabled {
+    background: #f1f5f9;
+    border-color: #e2e8f0;
+    color: #64748b;
+    cursor: not-allowed;
+}
+
+/* ---- AVISO DE CAJA CERRADA (modal de detalle) ---- */
+.caja-cerrada-aviso {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    margin: 4px 0 8px;
+    background: var(--dash-red-light, #fef2f2);
+    border: 1px solid #fecaca;
+    border-radius: 12px;
+    color: #b91c1c;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'DM Sans', system-ui, sans-serif;
+}
+
+.caja-cerrada-aviso i { font-size: 14px; flex-shrink: 0; }
+
+#mov-btn-save:disabled { opacity: 0.6; cursor: wait; }
+
 /* ---- TOAST ---- */
 #toast {
     position: fixed; bottom: 20px; right: 20px;

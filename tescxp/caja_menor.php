@@ -41,6 +41,15 @@ function largo_texto(string $texto): int {
 }
 
 // ============================================================
+// ¿LA CAJA ESTÁ ACTIVA?
+// PDO_pgsql puede devolver el boolean como true/false o como 't'/'f'
+// según la configuración; se aceptan todas las variantes.
+// ============================================================
+function es_caja_activa($valor): bool {
+    return $valor === true || $valor === 't' || $valor === 'true' || $valor === 1 || $valor === '1';
+}
+
+// ============================================================
 // ESTADOS DE MOVIMIENTO
 // ============================================================
 const ESTADOS_MOVIMIENTO = [
@@ -136,18 +145,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         // ---------- NUEVO MOVIMIENTO ----------
+        // La validación de "caja cerrada" la hace fun_insert_det_caja_menor en la BD;
+        // si la caja está cerrada, la excepción llega al catch y se muestra como toast.
         if (isset($_POST['btn_nuevo_movimiento'])) {
-            $id_caja_menor   = (int)($_POST['hid_mov_id_caja']      ?? 0);
-            $concepto        = trim($_POST['txt_concepto']           ?? '');
-            $val_movimiento  = (float)($_POST['txt_val_movimiento']  ?? 0);
-            $fecha_movimiento = trim($_POST['txt_fecha_movimiento']  ?? '');
+            $id_caja_menor    = (int)($_POST['hid_mov_id_caja']      ?? 0);
+            $concepto         = trim($_POST['txt_concepto']           ?? '');
+            $val_movimiento   = (float)($_POST['txt_val_movimiento']  ?? 0);
+            $fecha_movimiento = trim($_POST['txt_fecha_movimiento']   ?? '');
+
+            if ($id_caja_menor <= 0) {
+                throw new Exception('Caja no válida.');
+            }
 
             $errores = [];
 
-            if ($id_caja_menor <= 0) {
-                $errores['err-mov-concepto'] = 'Caja no válida.';
-            }
-            if (strlen($concepto) < 1 || strlen($concepto) > 200) {
+            if (largo_texto($concepto) < 1 || largo_texto($concepto) > 200) {
                 $errores['err-mov-concepto'] = 'El concepto debe tener entre 1 y 200 caracteres.';
             }
             if ($val_movimiento <= 0 || $val_movimiento > 99999999) {
@@ -155,8 +167,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if (empty($fecha_movimiento)) {
                 $errores['err-mov-fecha'] = 'La fecha del movimiento es obligatoria.';
-            } elseif ($fecha_movimiento > date('Y-m-d')) {
-                $errores['err-mov-fecha'] = 'La fecha del movimiento no puede ser posterior al día de hoy.';
+            } elseif (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $fecha_movimiento)) {
+                $errores['err-mov-fecha'] = 'La fecha del movimiento no es válida.';
+            } elseif ($fecha_movimiento < date('Y-m-d')) {
+                $errores['err-mov-fecha'] = 'La fecha del movimiento no puede ser anterior al día de hoy.';
             }
 
             if (!empty($errores)) {
@@ -265,7 +279,7 @@ ob_start();
     <div class="stats-grid">
         <?php
         $total      = count($cajas);
-        $activas    = count(array_filter($cajas, fn($c) => $c['ind_estado_caja_m'] === 't' || $c['ind_estado_caja_m'] === true));
+        $activas    = count(array_filter($cajas, fn($c) => es_caja_activa($c['ind_estado_caja_m'])));
         $disponible_total = array_sum(array_column($cajas, 'monto_disponible'));
         $asignado_total   = array_sum(array_column($cajas, 'monto_asignado'));
         ?>
@@ -361,7 +375,7 @@ ob_start();
                 </tr>
             <?php else: ?>
                 <?php foreach ($cajas as $c):
-                    $activa      = ($c['ind_estado_caja_m'] === 't' || $c['ind_estado_caja_m'] === true);
+                    $activa      = es_caja_activa($c['ind_estado_caja_m']);
                     $badge       = $activa
                         ? '<span class="badge badge-active">Activa</span>'
                         : '<span class="badge badge-inactive">Cerrada</span>';
@@ -370,8 +384,11 @@ ob_start();
                     $pct_disp    = $c['monto_asignado'] > 0
                         ? round(($c['monto_disponible'] / $c['monto_asignado']) * 100)
                         : 0;
+                    // Se normaliza el estado a booleano real para el JS
+                    $c['ind_estado_caja_m'] = $activa;
+                    $json_caja = htmlspecialchars(json_encode($c), ENT_QUOTES, 'UTF-8');
                 ?>
-                <tr data-estado="<?= $filtro ?>" onclick='openDetailModal(<?= json_encode($c) ?>)'>
+                <tr data-estado="<?= $filtro ?>" onclick="openDetailModal(<?= $json_caja ?>)">
                     <td data-sort="<?= htmlspecialchars($c['nom_caja_menor']) ?>">
                         <strong><?= htmlspecialchars($c['nom_caja_menor']) ?></strong><br>
                         <small style="color:#94a3b8;font-size:11px">#<?= $id_caja_esc ?> — <?= $pct_disp ?>% disponible</small>
@@ -381,11 +398,11 @@ ob_start();
                     <td class="text-right" data-sort="<?= (float)$c['monto_disponible'] ?>">$<?= number_format((float)$c['monto_disponible'], 0, ',', '.') ?></td>
                     <td class="text-center"><?= $badge ?></td>
                     <td class="text-center" onclick="event.stopPropagation()">
-                        <button class="btn-icon-sm edit" onclick='openEditModal(<?= json_encode($c) ?>)' title="Editar nombre">
+                        <button class="btn-icon-sm edit" onclick="openEditModal(<?= $json_caja ?>)" title="Editar nombre">
                             <i class="fas fa-edit"></i>
                         </button>
                         <?php if ($activa): ?>
-                        <button class="btn-icon-sm close" onclick='cerrarCajaMenor(<?= json_encode($c) ?>)' title="Cerrar caja">
+                        <button class="btn-icon-sm close" onclick="cerrarCajaMenor(<?= $json_caja ?>)" title="Cerrar caja">
                             <i class="fas fa-lock"></i>
                         </button>
                         <?php endif; ?>
@@ -488,31 +505,40 @@ ob_start();
         <div class="modal-body">
             <div id="detail-content"></div>
 
-            <h4 class="detail-subheading"><i class="fas fa-plus-circle"></i> Nuevo Movimiento</h4>
-            <form id="new-mov-form" novalidate>
-                <input type="hidden" name="btn_nuevo_movimiento" value="1">
-                <input type="hidden" name="hid_mov_id_caja" id="mov-id-caja" value="">
-                <div class="form-grid">
-                    <div class="form-field">
-                        <label class="form-label">Concepto <span class="required">*</span></label>
-                        <input type="text" id="mov-concepto" name="txt_concepto" class="form-input" placeholder="Ej: Papelería oficina" maxlength="200">
-                        <span class="field-error" id="err-mov-concepto"></span>
+            <!-- Aviso: se muestra solo cuando la caja está cerrada -->
+            <div id="mov-caja-cerrada-aviso" class="caja-cerrada-aviso hidden">
+                <i class="fas fa-lock"></i>
+                <span>Esta caja está cerrada. No se pueden registrar ni modificar movimientos; solo consultarlos.</span>
+            </div>
+
+            <!-- Formulario de nuevo movimiento: solo para cajas activas -->
+            <div id="mov-form-section">
+                <h4 class="detail-subheading"><i class="fas fa-plus-circle"></i> Nuevo Movimiento</h4>
+                <form id="new-mov-form" novalidate>
+                    <input type="hidden" name="btn_nuevo_movimiento" value="1">
+                    <input type="hidden" name="hid_mov_id_caja" id="mov-id-caja" value="">
+                    <div class="form-grid">
+                        <div class="form-field">
+                            <label class="form-label">Concepto <span class="required">*</span></label>
+                            <input type="text" id="mov-concepto" name="txt_concepto" class="form-input" placeholder="Ej: Papelería oficina" maxlength="200">
+                            <span class="field-error" id="err-mov-concepto"></span>
+                        </div>
+                        <div class="form-field">
+                            <label class="form-label">Valor <span class="required">*</span></label>
+                            <input type="number" id="mov-valor" name="txt_val_movimiento" class="form-input" placeholder="Ej: 25000" min="1" max="99999999" step="1">
+                            <span class="field-error" id="err-mov-valor"></span>
+                        </div>
                     </div>
                     <div class="form-field">
-                        <label class="form-label">Valor <span class="required">*</span></label>
-                        <input type="number" id="mov-valor" name="txt_val_movimiento" class="form-input" placeholder="Ej: 25000" min="1" max="99999999" step="1">
-                        <span class="field-error" id="err-mov-valor"></span>
+                        <label class="form-label">Fecha del Movimiento <span class="required">*</span></label>
+                        <input type="date" id="mov-fecha" name="txt_fecha_movimiento" class="form-input" min="<?= date('Y-m-d') ?>">
+                        <span class="field-error" id="err-mov-fecha"></span>
                     </div>
-                </div>
-                <div class="form-field">
-                    <label class="form-label">Fecha del Movimiento <span class="required">*</span></label>
-                    <input type="date" id="mov-fecha" name="txt_fecha_movimiento" class="form-input" max="<?= date('Y-m-d') ?>">
-                    <span class="field-error" id="err-mov-fecha"></span>
-                </div>
-                <div class="config-actions">
-                    <button type="button" id="mov-btn-save" class="btn btn-primary"><i class="fas fa-plus"></i> Registrar Movimiento</button>
-                </div>
-            </form>
+                    <div class="config-actions">
+                        <button type="button" id="mov-btn-save" class="btn btn-primary"><i class="fas fa-plus"></i> Registrar Movimiento</button>
+                    </div>
+                </form>
+            </div>
 
             <h4 class="detail-subheading"><i class="fas fa-list"></i> Movimientos</h4>
             <div id="movimientos-list">

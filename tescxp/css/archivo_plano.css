@@ -580,6 +580,68 @@
 .modal-box.modal-box-lg { max-width: 720px; }
 
 /* ============================================
+   MODALES RÁPIDOS: NUEVA CUENTA (EMPRESA / PROVEEDOR) Y NUEVO BANCO
+   Se abren encima de "Nuevo Archivo Plano" (1000) y del calendario (1050).
+   El de banco va un nivel más arriba porque lo abren los de cuenta.
+   ============================================ */
+.modal-overlay.modal-nested {
+    z-index: 1060;
+    background: rgba(15, 23, 42, 0.35);
+}
+
+.modal-overlay.modal-nested-2 { z-index: 1070; }
+
+.modal-box.modal-box-sm { max-width: 460px; }
+
+/* Botón deshabilitado mientras se guarda (evita doble clic) */
+.modal-footer .btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.label-row .form-label { margin-bottom: 0; }
+
+.btn-link-inline {
+    background: none;
+    border: none;
+    padding: 2px 4px;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--color-primary, #2d8653);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-radius: 6px;
+    white-space: nowrap;
+}
+.btn-link-inline:hover { text-decoration: underline; }
+
+/* "+ Cuenta" dentro de cada fila de proveedor del cronograma */
+.picker-controles .picker-add-cta {
+    flex-shrink: 0;
+    font-size: 11.5px;
+    padding: 4px 8px;
+    border-radius: 30px;
+    background: color-mix(in srgb, var(--color-primary, #2d8653) 10%, white);
+}
+.picker-controles .picker-add-cta:hover {
+    text-decoration: none;
+    background: color-mix(in srgb, var(--color-primary, #2d8653) 18%, white);
+}
+
+/* Con la fila en una línea, el select comparte el espacio con "+ Cuenta" */
+#modal-new-archivo .cuota-picker-row .picker-controles { flex-wrap: nowrap; }
+
+/* ============================================
    MODAL NUEVO ARCHIVO PLANO: DOS COLUMNAS
    Izquierda: datos del archivo. Derecha: cronograma y proveedores.
    La columna derecha no aporta altura (height: 0 + min-height: 100%):
@@ -1328,7 +1390,14 @@
     margin-top: 0;
 }
 
-#modal-new-archivo .cuota-picker-row .picker-select { flex: 1 1 100%; height: 32px; }
+#modal-new-archivo .cuota-picker-row .picker-select { flex: 1 1 auto; height: 32px; }
+
+/* Cuenta única o "sin cuenta": cede espacio al botón "+ Cuenta" */
+#modal-new-archivo .picker-controles .picker-cuenta-unica,
+#modal-new-archivo .picker-controles .picker-sin-cuenta {
+    flex: 1 1 auto; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 @media (max-width: 900px) {
     #modal-new-archivo .cuota-picker-info { grid-template-columns: 1fr; }

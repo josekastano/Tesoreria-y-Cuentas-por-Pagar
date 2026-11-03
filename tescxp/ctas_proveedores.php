@@ -47,6 +47,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $respuesta = ['success' => false, 'message' => '', 'errors' => []];
 
     try {
+        // ---------- NUEVO BANCO RÁPIDO (modal dentro de "Nueva Cuenta") ----------
+        // Crea el banco sin recargar la página y devuelve sus datos para que
+        // el JS lo agregue a los selects y lo deje seleccionado.
+        if (isset($_POST['btn_nuevo_banco'])) {
+            $id_banco  = trim($_POST['txt_banco_id']     ?? '');
+            $nom_banco = trim($_POST['txt_banco_nombre'] ?? '');
+
+            $errores = [];
+
+            if (mb_strlen($id_banco) < 6 || mb_strlen($id_banco) > 10) {
+                $errores['err-banco-id'] = 'El código debe tener entre 6 y 10 caracteres.';
+            }
+            if (mb_strlen($nom_banco) < 4 || mb_strlen($nom_banco) > 50) {
+                $errores['err-banco-nombre'] = 'El nombre debe tener entre 4 y 50 caracteres.';
+            }
+
+            if (!empty($errores)) {
+                $respuesta['errors'] = $errores;
+                echo json_encode($respuesta);
+                exit;
+            }
+
+            // Se crea siempre ACTIVO: un banco inactivo no serviría para la cuenta.
+            $ins_banco->execute([
+                ':wid_banco'   => $id_banco,
+                ':wnom_banco'  => $nom_banco,
+                ':wind_estado' => 'true',
+            ]);
+
+            $respuesta['success'] = true;
+            $respuesta['message'] = 'Banco registrado correctamente.';
+            $respuesta['banco']   = ['id_banco' => $id_banco, 'nom_banco' => $nom_banco];
+            echo json_encode($respuesta);
+            exit;
+        }
+
         // ---------- NUEVA CUENTA ----------
         if (isset($_POST['btn_nuevo'])) {
             $id_proveedor   = trim($_POST['sel_id_proveedor']    ?? '');
@@ -150,6 +186,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (empty($mensaje)) {
             $mensaje = $e->getMessage();
         }
+
+        // Banco rápido con código repetido: se muestra debajo del campo Código
+        if (isset($_POST['btn_nuevo_banco']) &&
+            (stripos($mensaje, 'ya existe') !== false ||
+             stripos($mensaje, 'duplicate key') !== false ||
+             stripos($mensaje, 'llave duplicada') !== false)) {
+            $respuesta['errors'] = ['err-banco-id' => 'Ya existe un banco registrado con ese código.'];
+            echo json_encode($respuesta);
+            exit;
+        }
+
+        // Cuenta repetida para el mismo proveedor: se muestra debajo del número
+        if (isset($_POST['btn_nuevo']) && stripos($mensaje, 'ya está registrada') !== false) {
+            $respuesta['errors'] = ['err-new-cta' => $mensaje];
+            echo json_encode($respuesta);
+            exit;
+        }
+
         $respuesta['message'] = $mensaje;
         echo json_encode($respuesta);
         exit;
@@ -352,13 +406,23 @@ ob_start();
                     <span class="field-error" id="err-new-proveedor"></span>
                 </div>
                 <div class="form-field">
-                    <label class="form-label">Banco <span class="required">*</span></label>
+                    <div class="label-row">
+                        <label class="form-label" for="new-id-banco">Banco <span class="required">*</span></label>
+                        <button type="button" class="btn-link-inline" id="btn-open-banco-rapido">
+                            <i class="fas fa-plus"></i> Nuevo banco
+                        </button>
+                    </div>
                     <select id="new-id-banco" name="sel_id_banco" class="form-select">
-                        <option value="">Seleccione...</option>
+                        <option value=""><?= empty($bancos) ? 'No hay bancos registrados' : 'Seleccione...' ?></option>
                         <?php foreach ($bancos as $b): ?>
                             <option value="<?= htmlspecialchars($b['id_banco']) ?>"><?= htmlspecialchars($b['nom_banco']) ?></option>
                         <?php endforeach; ?>
                     </select>
+                    <div id="new-banco-empty" class="empty-hint <?= empty($bancos) ? '' : 'hidden' ?>">
+                        <i class="fas fa-info-circle"></i>
+                        <span>Aún no hay bancos registrados.</span>
+                        <button type="button" class="btn-link-inline" id="btn-empty-crear-banco">Crear banco aquí</button>
+                    </div>
                     <span class="field-error" id="err-new-banco"></span>
                 </div>
                 <div class="form-field">
@@ -378,6 +442,39 @@ ob_start();
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-new-modal">Cancelar</button>
             <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Cuenta</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL ANIDADO: CREAR BANCO SIN SALIR DE "NUEVA CUENTA" -->
+<div id="modal-banco-rapido" class="modal-overlay modal-nested hidden">
+    <div class="modal-box modal-box-sm">
+        <div class="modal-header green">
+            <div>
+                <h2>Nuevo Banco</h2>
+                <p>Se agregará a la lista sin salir de la cuenta</p>
+            </div>
+            <button type="button" class="modal-close btn-close-banco-modal"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+            <form id="banco-rapido-form" novalidate>
+                <input type="hidden" name="btn_nuevo_banco" value="1">
+                <div class="form-field">
+                    <label class="form-label" for="banco-rapido-id">Código del Banco <span class="required">*</span></label>
+                    <input type="text" id="banco-rapido-id" name="txt_banco_id" class="form-input" placeholder="Ej: 0001234" minlength="6" maxlength="10">
+                    <span class="field-error" id="err-banco-id"></span>
+                </div>
+                <div class="form-field">
+                    <label class="form-label" for="banco-rapido-nombre">Nombre del Banco <span class="required">*</span></label>
+                    <input type="text" id="banco-rapido-nombre" name="txt_banco_nombre" class="form-input" placeholder="Ej: Bancolombia" minlength="4" maxlength="50">
+                    <span class="field-error" id="err-banco-nombre"></span>
+                    <p class="field-hint">El banco se crea en estado Activo y queda seleccionado en la cuenta.</p>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary btn-cancel-banco-modal">Cancelar</button>
+            <button type="button" id="banco-rapido-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Banco</button>
         </div>
     </div>
 </div>

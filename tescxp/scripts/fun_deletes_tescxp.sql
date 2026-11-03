@@ -36,20 +36,16 @@ $BODY$
 LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
--- FUNCIÓN DE CIERRE DE ENCABEZADO DE CAJA MENOR 
---------------------------------------------------------------------------------------------------------------------------------------
---------------------------------------------------------------------------------------------------------------------------------------
--- FUNCIÓN DE CIERRE (DELETE LÓGICO) DE ENCABEZADO DE CAJA MENOR
--- NOTA: No se elimina físicamente el registro. Se marca la caja como cerrada
---       (fecha_cierre = CURRENT_DATE, ind_estado_caja_m = FALSE). Solo se
---       permite cerrar una caja que no tenga movimientos sin resolver, es
---       decir, movimientos en estado Pendiente (1) o Aprobado (2) que aún
---       no hayan sido Reembolsados (3) a la caja.
+-- FUNCIÓN DE CIERRE DE CAJA MENOR
+-- CORRECCIÓN: se bloquea la fila (FOR UPDATE) para que no entre un movimiento
+-- nuevo entre la validación de pendientes y el cierre.
 --------------------------------------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fun_delete_enc_caja_menor (wid_caja_menor      tab_enc_caja_menor.id_caja_menor%TYPE) RETURNS BOOLEAN AS
 $BODY$
 
-DECLARE wmovs_sin_resolver  INTEGER;
+DECLARE
+    wmovs_sin_resolver  INTEGER;
+    wcaja_activa        tab_enc_caja_menor.ind_estado_caja_m%TYPE;
 
 BEGIN
 
@@ -58,9 +54,14 @@ BEGIN
         RAISE EXCEPTION 'El ID de la caja menor no puede ser nulo.';
     END IF;
 
--- VALIDAR QUE LA CAJA MENOR EXISTA, ESTÉ ACTIVA Y NO ESTÉ CERRADA
-    IF NOT EXISTS (SELECT 1 FROM tab_enc_caja_menor WHERE id_caja_menor = wid_caja_menor AND ind_estado_caja_m = TRUE) THEN
-        RAISE EXCEPTION 'La caja menor % no existe, está inactiva o ya fue cerrada.', wid_caja_menor;
+-- VALIDAR QUE LA CAJA MENOR EXISTA Y ESTÉ ACTIVA (SE BLOQUEA LA FILA)
+    SELECT ind_estado_caja_m INTO wcaja_activa
+    FROM   tab_enc_caja_menor
+    WHERE  id_caja_menor = wid_caja_menor
+    FOR UPDATE;
+
+    IF NOT FOUND OR wcaja_activa IS NOT TRUE THEN
+        RAISE EXCEPTION 'La caja menor % no existe o ya fue cerrada.', wid_caja_menor;
     END IF;
 
 -- VALIDAR QUE NO EXISTAN MOVIMIENTOS SIN RESOLVER (PENDIENTES O APROBADOS, AÚN NO REEMBOLSADOS)

@@ -361,32 +361,14 @@ DROP FUNCTION IF EXISTS fun_val_a_pagar_archivo_plano();
 -- 9. CADENA DE PAGO: cronograma pagado -> cuotas pagadas -> saldo factura
 -- =========================================================================
 
--- 9.1 Cuando el cronograma pasa a Pagado (ind_estado: FALSE -> TRUE),
---     marcar como pagadas todas las cuotas que estaban en su detalle.
-CREATE OR REPLACE FUNCTION fun_marcar_cuotas_pagadas() RETURNS TRIGGER AS
-$BODY$
-BEGIN
-    IF OLD.ind_estado = FALSE AND NEW.ind_estado = TRUE THEN
-        UPDATE tab_cuotasxfactura cf
-        SET ind_pagada = TRUE
-        WHERE ind_pagada = FALSE
-          AND EXISTS (
-              SELECT 1
-              FROM tab_det_cronopagos dc
-              WHERE dc.id_cronograma = NEW.id_cronograma
-                AND dc.id_factura     = cf.id_factura
-                AND dc.id_cuota        = cf.id_cuota
-          );
-    END IF;
-    RETURN NEW;
-END;
-$BODY$
-LANGUAGE PLPGSQL;
-
+-- 9.1 SE ELIMINA trg_marcar_cuotas_pagadas.
+--     Antes, al cerrar el cronograma se marcaban como pagadas TODAS sus cuotas.
+--     Ahora el cronograma se cierra cuando el banco ya respondió todas sus
+--     cuotas, aunque algunas vengan RECHAZADAS; si el trigger siguiera, esas
+--     cuotas rechazadas quedarían pagadas sin haberse pagado. Cada cuota se
+--     marca pagada solo con su pago APROBADO (fun_aplicar_pago_aprobado).
 DROP TRIGGER IF EXISTS trg_marcar_cuotas_pagadas ON tab_enc_cronopagos;
-CREATE TRIGGER trg_marcar_cuotas_pagadas AFTER UPDATE ON tab_enc_cronopagos
-FOR EACH ROW WHEN (OLD.ind_estado IS DISTINCT FROM NEW.ind_estado)
-EXECUTE FUNCTION fun_marcar_cuotas_pagadas();
+DROP FUNCTION IF EXISTS fun_marcar_cuotas_pagadas();
 
 
 -- 9.2 Cuando una cuota pasa a pagada (ind_pagada: FALSE -> TRUE), descontar
@@ -411,15 +393,10 @@ CREATE TRIGGER trg_actualizar_saldo_factura AFTER UPDATE ON tab_cuotasxfactura
 FOR EACH ROW WHEN (OLD.ind_pagada IS DISTINCT FROM NEW.ind_pagada)
 EXECUTE FUNCTION fun_actualizar_saldo_factura();
 
--- NOTA: con el flujo de archivo plano, las cuotas se marcan pagadas una por
--- una desde fun_insert_pagos_cxp / fun_update_pagos_cxp al aprobar el pago
--- (fun_aplicar_pago_aprobado), y el cronograma se cierra cuando ya no le
--- quedan cuotas sin pagar; 9.1 entonces no encuentra nada más que marcar.
--- Esta cadena también cubre el flujo "pagar TODO el cronograma de una vez".
--- Si en algún momento necesitas marcar una sola cuota como pagada de forma
--- manual e independiente (sin pasar por un cronograma), el trigger 9.2 ya
--- lo soporta automáticamente, porque escucha cambios directos sobre
--- tab_cuotasxfactura.ind_pagada, sin importar quién los origine.
+-- NOTA: las cuotas se marcan pagadas una por una desde fun_insert_pagos_cxp /
+-- fun_update_pagos_cxp al aprobar el pago (fun_aplicar_pago_aprobado). El
+-- cierre del cronograma (fun_cerrar_cronograma_procesado) ya no toca las
+-- cuotas. Si se marca una cuota pagada a mano, 9.2 igual descuenta el saldo.
 
 -- =========================================================================
 -- 10. ACTUALIZAR SALDO PROVEEDOR: Saldo proveedor = saldo proveedor - valor del saldo de la factura

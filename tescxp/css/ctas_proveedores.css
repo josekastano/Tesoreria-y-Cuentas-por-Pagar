@@ -599,6 +599,61 @@
     gap: 12px; background: #ffffff; flex-shrink: 0;
 }
 
+/* Botón deshabilitado mientras se guarda (evita doble clic) */
+.modal-footer .btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+/* ============================================
+   MODAL ANIDADO: CREAR BANCO DESDE "NUEVA CUENTA"
+   ============================================ */
+.modal-overlay.modal-nested {
+    z-index: 1050;                       /* encima del modal de la cuenta (1000) */
+    background: rgba(15, 23, 42, 0.35);
+}
+
+.modal-box.modal-box-sm { max-width: 460px; }
+
+.label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+.label-row .form-label { margin-bottom: 0; }
+
+.btn-link-inline {
+    background: none;
+    border: none;
+    padding: 2px 4px;
+    font-family: 'DM Sans', system-ui, sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--color-primary, #2d8653);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-radius: 6px;
+}
+.btn-link-inline:hover { text-decoration: underline; }
+
+.empty-hint {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: #fffbeb;
+    color: #b45309;
+    font-size: 12px;
+    font-family: 'DM Sans', system-ui, sans-serif;
+}
+.empty-hint.hidden { display: none; }
+
 /* ============================================
    MODAL: CONFIRMAR ELIMINACIÓN (estilo módulo Compras)
    ============================================ */

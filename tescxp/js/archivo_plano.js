@@ -364,6 +364,11 @@ function initSelectorFecha() {
 // la cuenta.
 let proveedoresCronograma = [];
 
+// Cuentas a dejar elegidas la próxima vez que se pinte la lista
+// ({"id_proveedor": "cta"}): se usa al recargar el cronograma después de
+// crear una cuenta, para no perder lo que el usuario ya había escogido.
+let seleccionPendiente = null;
+
 function setHint(texto) {
     const hint = document.getElementById('prov-cuentas-hint');
     if (!hint) return;
@@ -426,7 +431,7 @@ function renderProveedorCuentas(proveedores) {
 
     const avisos = [];
     if (sinCuenta.length > 0) {
-        avisos.push(`${sinCuenta.length} proveedor(es) sin cuenta bancaria activa: regístrela en Bancos por Proveedor para poder crear el archivo.`);
+        avisos.push(`${sinCuenta.length} proveedor(es) sin cuenta bancaria activa: use "+ Cuenta" en su fila para registrarla sin salir del archivo.`);
     }
     if (reintentos > 0) {
         avisos.push(`${reintentos} cuota(s) son reintento de un pago rechazado: revise que la cuenta del proveedor sea la correcta.`);
@@ -453,6 +458,15 @@ function renderProveedorCuentas(proveedores) {
                 </select>`;
         }
 
+        // Crear una cuenta para este proveedor sin salir del archivo
+        cuentaHtml += `
+            <button type="button" class="btn-link-inline picker-add-cta" data-action="add-cta"
+                    data-id-prov="${escapeHtml(p.id_proveedor)}"
+                    data-nom-prov="${escapeHtml(p.nom_tercero)}"
+                    title="Registrar una cuenta bancaria para ${escapeHtml(p.nom_tercero)}">
+                <i class="fas fa-plus"></i> Cuenta
+            </button>`;
+
         return `
             <div class="cuota-picker-row${cuentas.length === 0 ? ' sin-cuenta' : ''}">
                 <div class="cuota-picker-info">
@@ -473,8 +487,12 @@ function renderProveedorCuentas(proveedores) {
     }
 
     list.querySelectorAll('.prov-cta-select').forEach(sel => {
+        // Recupera la cuenta que estaba elegida (o la recién creada)
+        const preferida = seleccionPendiente?.[sel.dataset.idProv];
+        if (preferida && Array.from(sel.options).some(o => o.value === preferida)) sel.value = preferida;
         sel.addEventListener('change', buildCtasProveedorPayload);
     });
+    seleccionPendiente = null;
 
     buildCtasProveedorPayload();
 }
@@ -529,7 +547,259 @@ function mostrarEmpresaCuenta() {
 
 function closeNewModal() {
     cerrarSelectorFecha();
+    closeBancoRapidoModal();
+    closeCtaEmpRapida();
+    closeCtaProvRapida();
     hide('modal-new-archivo');
+}
+
+// ============================================================
+// 3.1 MODALES RÁPIDOS: NUEVA CUENTA (EMPRESA / PROVEEDOR) Y NUEVO BANCO
+// ------------------------------------------------------------
+// Se abren encima de "Nuevo Archivo Plano" para no perder lo que ya se
+// llevaba diligenciado. El de banco lo comparten los dos modales de cuenta:
+// el banco creado queda en todos los selects de banco y seleccionado en el
+// modal que lo pidió (bancoDestino).
+// ============================================================
+let bancoDestino = null;
+
+function limpiarErrorCampo(spanId) {
+    const el = document.getElementById(spanId);
+    if (el) { clearTimeout(el._hideTimer); el.classList.remove('visible'); el.textContent = ''; }
+}
+
+// Respuesta del servidor con errores por campo o mensaje general
+function mostrarResultadoError(result, porDefecto) {
+    if (result.errors && Object.keys(result.errors).length > 0) {
+        Object.entries(result.errors).forEach(([spanId, mensaje]) => showFieldError(spanId, mensaje));
+    } else {
+        showToast(result.message || porDefecto, 'error');
+    }
+}
+
+// ¿El select de banco tiene al menos un banco para escoger?
+function selectTieneBancos(sel) {
+    return !!sel && Array.from(sel.options).some(o => o.value !== '');
+}
+
+function actualizarPlaceholdersBanco() {
+    document.querySelectorAll('.select-banco').forEach(sel => {
+        const ph = sel.querySelector('option[value=""]');
+        if (ph) ph.textContent = selectTieneBancos(sel) ? 'Seleccione...' : 'No hay bancos registrados';
+    });
+}
+
+// ---------- NUEVO BANCO ----------
+function openBancoRapidoModal(destino) {
+    bancoDestino = destino || null;
+    clearAllFieldErrors('banco');
+    setVal('banco-rapido-id', '');
+    setVal('banco-rapido-nombre', '');
+    show('modal-banco-rapido');
+    setTimeout(() => document.getElementById('banco-rapido-id')?.focus(), 50);
+}
+
+function closeBancoRapidoModal() {
+    hide('modal-banco-rapido');
+}
+
+// Agrega el banco a todos los selects de banco, en orden alfabético
+function agregarBancoASelects(banco) {
+    document.querySelectorAll('.select-banco').forEach(sel => {
+        if (Array.from(sel.options).some(o => o.value === banco.id_banco)) return;
+        const opt = document.createElement('option');
+        opt.value = banco.id_banco;
+        opt.textContent = banco.nom_banco;
+        const siguiente = Array.from(sel.options).find(o =>
+            o.value !== '' && o.textContent.localeCompare(banco.nom_banco, 'es', { sensitivity: 'base' }) > 0
+        );
+        sel.insertBefore(opt, siguiente || null);
+    });
+    actualizarPlaceholdersBanco();
+}
+
+async function guardarBancoRapido() {
+    const btn = document.getElementById('banco-rapido-save');
+    if (btn?.disabled) return;
+    clearAllFieldErrors('banco');
+    if (btn) btn.disabled = true;
+
+    try {
+        const result = await enviarPost(new FormData(document.getElementById('banco-rapido-form')), 'btn_nuevo_banco');
+        if (result.success && result.banco) {
+            agregarBancoASelects(result.banco);
+            if (bancoDestino) {
+                setVal(bancoDestino, result.banco.id_banco);
+                limpiarErrorCampo(`err-${bancoDestino}`);
+            }
+            closeBancoRapidoModal();
+            showToast(result.message, 'success');
+        } else {
+            mostrarResultadoError(result, 'Error al guardar el banco');
+        }
+    } catch (err) {
+        showToast('Error de conexión', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+// ---------- NUEVA CUENTA DE ORIGEN (EMPRESA) ----------
+function openCtaEmpRapida() {
+    cerrarSelectorFecha();
+    clearAllFieldErrors('ctaemp');
+    setVal('ctaemp-banco', '');
+    setVal('ctaemp-cta', '');
+    setVal('ctaemp-tipocuenta', 'false');
+    show('modal-ctaemp-rapida');
+}
+
+function closeCtaEmpRapida() {
+    hide('modal-ctaemp-rapida');
+}
+
+// Agrega la cuenta al select de cuenta de origen y la deja elegida
+function agregarCuentaOrigen(c) {
+    const sel = document.getElementById('new-cta-empresa');
+    if (!sel) return;
+    const valor = `${c.id_empresa}:${c.cta_empresa}`;
+    let opt = Array.from(sel.options).find(o => o.value === valor);
+    if (!opt) {
+        opt = document.createElement('option');
+        opt.value = valor;
+        opt.dataset.empresa = c.nom_empresa ? `${c.nom_empresa} · ${c.id_empresa}` : c.id_empresa;
+        opt.textContent = `${c.nom_banco} — ${c.cta_empresa} (${c.tipo_cuenta})`;
+        sel.appendChild(opt);
+    }
+    const ph = sel.querySelector('option[value=""]');
+    if (ph) ph.textContent = 'Seleccione...';
+    sel.value = valor;
+    mostrarEmpresaCuenta();
+    limpiarErrorCampo('err-new-cuenta-empresa');
+}
+
+async function guardarCtaEmpRapida() {
+    const btn = document.getElementById('ctaemp-rapida-save');
+    if (btn?.disabled) return;
+    clearAllFieldErrors('ctaemp');
+    if (btn) btn.disabled = true;
+
+    try {
+        const result = await enviarPost(new FormData(document.getElementById('ctaemp-rapida-form')), 'btn_nueva_cta_empresa');
+        if (result.success && result.cuenta) {
+            agregarCuentaOrigen(result.cuenta);
+            closeCtaEmpRapida();
+            showToast(result.message, 'success');
+        } else {
+            mostrarResultadoError(result, 'Error al guardar la cuenta');
+        }
+    } catch (err) {
+        showToast('Error de conexión', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+// ---------- NUEVA CUENTA DE PROVEEDOR ----------
+function openCtaProvRapida(idProveedor, nomProveedor) {
+    clearAllFieldErrors('ctaprov');
+    setVal('ctaprov-proveedor-hid', idProveedor);
+    setVal('ctaprov-proveedor-display', `${nomProveedor} — ${idProveedor}`);
+    setVal('ctaprov-banco', '');
+    setVal('ctaprov-cta', '');
+    setVal('ctaprov-tipocuenta', 'false');
+    show('modal-ctaprov-rapida');
+}
+
+function closeCtaProvRapida() {
+    hide('modal-ctaprov-rapida');
+}
+
+async function guardarCtaProvRapida() {
+    const btn = document.getElementById('ctaprov-rapida-save');
+    if (btn?.disabled) return;
+    clearAllFieldErrors('ctaprov');
+    if (btn) btn.disabled = true;
+
+    try {
+        const result = await enviarPost(new FormData(document.getElementById('ctaprov-rapida-form')), 'btn_nueva_cta_proveedor');
+        if (result.success && result.cuenta) {
+            // Se recarga el cronograma conservando las cuentas ya elegidas
+            // y dejando elegida la nueva para este proveedor.
+            buildCtasProveedorPayload();
+            let actuales = {};
+            try {
+                const payload = JSON.parse(val('hid-ctas-proveedor') || '{}');
+                Object.entries(payload).forEach(([id, v]) => { actuales[id] = v.cta; });
+            } catch (e) { actuales = {}; }
+            actuales[String(result.cuenta.id_proveedor)] = String(result.cuenta.cta_proveedor);
+            seleccionPendiente = actuales;
+
+            closeCtaProvRapida();
+            showToast(result.message, 'success');
+            limpiarErrorCampo('err-new-cronograma');
+            await onCronogramaChange();
+        } else {
+            mostrarResultadoError(result, 'Error al guardar la cuenta');
+        }
+    } catch (err) {
+        showToast('Error de conexión', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+function initModalesRapidos() {
+    // Abrir
+    document.getElementById('btn-open-ctaemp-rapida')?.addEventListener('click', openCtaEmpRapida);
+    document.querySelectorAll('.btn-open-banco-rapido').forEach(btn =>
+        btn.addEventListener('click', () => openBancoRapidoModal(btn.dataset.destino)));
+
+    // Si un select de banco está vacío, al intentar abrirlo se abre "Nuevo banco"
+    document.querySelectorAll('.select-banco').forEach(sel => {
+        sel.addEventListener('mousedown', e => {
+            if (!selectTieneBancos(sel)) { e.preventDefault(); openBancoRapidoModal(sel.id); }
+        });
+        sel.addEventListener('keydown', e => {
+            if (!selectTieneBancos(sel) && ['Enter', ' ', 'ArrowDown', 'ArrowUp'].includes(e.key)) {
+                e.preventDefault();
+                openBancoRapidoModal(sel.id);
+            }
+        });
+    });
+
+    // Si no hay cuentas de origen, el select abre "Nueva cuenta"
+    const selOrigen = document.getElementById('new-cta-empresa');
+    const sinCuentas = () => !Array.from(selOrigen?.options || []).some(o => o.value !== '');
+    selOrigen?.addEventListener('mousedown', e => {
+        if (sinCuentas()) { e.preventDefault(); openCtaEmpRapida(); }
+    });
+
+    // "+ Cuenta" en las filas de proveedores (la lista se repinta: delegación)
+    document.getElementById('prov-cuentas-list')?.addEventListener('click', e => {
+        const btn = e.target.closest('button[data-action="add-cta"]');
+        if (btn) openCtaProvRapida(btn.dataset.idProv, btn.dataset.nomProv);
+    });
+
+    // Cerrar
+    document.querySelectorAll('.btn-close-banco-modal, .btn-cancel-banco-modal')
+        .forEach(btn => btn.addEventListener('click', closeBancoRapidoModal));
+    document.querySelectorAll('.btn-close-ctaemp-modal, .btn-cancel-ctaemp-modal')
+        .forEach(btn => btn.addEventListener('click', closeCtaEmpRapida));
+    document.querySelectorAll('.btn-close-ctaprov-modal, .btn-cancel-ctaprov-modal')
+        .forEach(btn => btn.addEventListener('click', closeCtaProvRapida));
+
+    // Guardar (botón o Enter dentro del formulario)
+    [
+        ['banco-rapido-save', 'banco-rapido-form', guardarBancoRapido],
+        ['ctaemp-rapida-save', 'ctaemp-rapida-form', guardarCtaEmpRapida],
+        ['ctaprov-rapida-save', 'ctaprov-rapida-form', guardarCtaProvRapida],
+    ].forEach(([btnId, formId, accion]) => {
+        document.getElementById(btnId)?.addEventListener('click', accion);
+        document.getElementById(formId)?.addEventListener('submit', e => { e.preventDefault(); accion(); });
+    });
+
+    actualizarPlaceholdersBanco();
 }
 
 // ============================================================
@@ -876,8 +1146,11 @@ function initArchivoModule() {
     document.getElementById('new-id-cronograma')?.addEventListener('change', onCronogramaChange);
     document.getElementById('new-cta-empresa')?.addEventListener('change', mostrarEmpresaCuenta);
 
+    // ---------- MODALES RÁPIDOS: CUENTAS Y BANCO ----------
+    initModalesRapidos();
+
     // Al corregir un campo se borra su mensaje de error
-    ['new-archivo-form', 'edit-archivo-form'].forEach(formId => {
+    ['new-archivo-form', 'edit-archivo-form', 'ctaemp-rapida-form', 'ctaprov-rapida-form', 'banco-rapido-form'].forEach(formId => {
         const form = document.getElementById(formId);
         const limpiar = e => {
             const err = e.target.closest('.form-field')?.querySelector('.field-error');

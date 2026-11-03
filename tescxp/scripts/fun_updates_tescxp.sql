@@ -127,19 +127,17 @@ $BODY$
 LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
--- FUNCIÓN DE UPDATE DE DETALLE DE CAJA MENOR
--- NOTA: Al marcar un movimiento como Reembolsado (3), se devuelve (suma) val_movimiento
---       al monto_disponible de la caja menor correspondiente.
---------------------------------------------------------------------------------------------------------------------------------------
---------------------------------------------------------------------------------------------------------------------------------------
--- FUNCIÓN DE UPDATE DE DETALLE DE CAJA MENOR
+-- FUNCIÓN DE UPDATE (CAMBIO DE ESTADO) DE DETALLE DE CAJA MENOR
+-- CORRECCIÓN: no permite cambiar el estado de movimientos de una caja cerrada.
 --------------------------------------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fun_update_det_caja_menor (wid_caja_menor      tab_det_caja_menor.id_caja_menor%TYPE,
                                                       wid_movimiento      tab_det_caja_menor.id_movimiento%TYPE,
                                                       wind_estado         tab_det_caja_menor.ind_estado%TYPE) RETURNS BOOLEAN AS
 $BODY$
 
-DECLARE wind_estado_actual  tab_det_caja_menor.ind_estado%TYPE;
+DECLARE
+    wind_estado_actual  tab_det_caja_menor.ind_estado%TYPE;
+    wcaja_activa        tab_enc_caja_menor.ind_estado_caja_m%TYPE;
 
 BEGIN
 
@@ -156,6 +154,20 @@ BEGIN
 -- VALIDAR QUE EL INDICADOR DE ESTADO NO SEA NULO
     IF wind_estado IS NULL THEN
         RAISE EXCEPTION 'El indicador de estado no puede ser nulo.';
+    END IF;
+
+-- VALIDAR QUE LA CAJA EXISTA Y ESTÉ ACTIVA
+    SELECT ind_estado_caja_m INTO wcaja_activa
+    FROM   tab_enc_caja_menor
+    WHERE  id_caja_menor = wid_caja_menor
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'La caja menor % no existe.', wid_caja_menor;
+    END IF;
+
+    IF wcaja_activa IS NOT TRUE THEN
+        RAISE EXCEPTION 'La caja menor % está cerrada; sus movimientos no pueden modificarse.', wid_caja_menor;
     END IF;
 
 -- VALIDAR QUE EL MOVIMIENTO EXISTA Y OBTENER SU ESTADO ACTUAL
@@ -183,9 +195,7 @@ BEGIN
     END IF;
 
 -- SE ACTUALIZA EL ESTADO EN tab_det_caja_menor
--- (el ajuste de monto_disponible lo hace automáticamente el trigger
---  trg_actualizar_disponible_caja_menor al detectar el cambio de ind_estado,
---  ya no se hace manualmente aquí)
+-- (el ajuste de monto_disponible lo hace el trigger trg_actualizar_disponible_caja_menor)
     UPDATE tab_det_caja_menor
     SET    ind_estado    = wind_estado
     WHERE  id_caja_menor = wid_caja_menor AND id_movimiento = wid_movimiento;
@@ -401,8 +411,9 @@ LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
 -- FUNCIÓN DE UPDATE DE ENCABEZADO DE CRONOGRAMA DE PAGOS
--- NOTA: ind_estado (pagado/pendiente) NO se actualiza aquí; se controla por trigger
---       al momento en que se pagan todas las cuotas asociadas al cronograma.
+-- NOTA: ind_estado (pagado/pendiente) NO se actualiza aquí; lo cierra
+--       fun_cerrar_cronograma_procesado cuando el banco ya respondió todas sus
+--       cuotas (aprobadas o rechazadas).
 --------------------------------------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fun_update_enc_cronopagos (wid_cronograma      tab_enc_cronopagos.id_cronograma%TYPE,
                                                       wnom_cronograma     tab_enc_cronopagos.nom_cronograma%TYPE,
@@ -789,9 +800,12 @@ BEGIN
            id_codigo   = wid_codigo
     WHERE  id_pago     = wid_pago;
 
--- SI QUEDÓ APROBADO: CUOTA PAGADA Y, SI ES LA ÚLTIMA, CRONOGRAMA CERRADO
+-- APROBADO: cuota pagada y, si ya no queda nada por responder, cronograma cerrado.
+-- RECHAZADO: la cuota sigue sin pagar, pero también puede cerrar el cronograma.
     IF westado_pago = 2 THEN
         PERFORM fun_aplicar_pago_aprobado(wid_factura, wid_cuota, wid_cronograma);
+    ELSIF westado_pago = 3 THEN
+        PERFORM fun_cerrar_cronograma_procesado(wid_cronograma);
     END IF;
 
     RETURN TRUE;

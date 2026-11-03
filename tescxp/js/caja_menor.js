@@ -43,6 +43,12 @@ function showToast(message, type = 'success') {
 
 function formatCurrency(n) { return '$' + Number(n || 0).toLocaleString('es-CO'); }
 
+// Fecha de hoy en 'YYYY-MM-DD' según la hora local (no UTC)
+function fechaHoyLocal() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function formatDate(isoStr) {
     if (!isoStr) return '—';
     const [y, m, d] = isoStr.split('-');
@@ -60,6 +66,12 @@ function escapeHtml(str) {
 }
 
 const ESTADOS_MOVIMIENTO = { 1: 'Pendiente', 2: 'Aprobado', 3: 'Reembolsado' };
+
+// La BD puede devolver el boolean como true/false o 't'/'f'; se aceptan todas las variantes.
+function cajaEstaActiva(caja) {
+    const v = caja?.ind_estado_caja_m;
+    return v === true || v === 't' || v === 'true' || v === 1 || v === '1';
+}
 
 // ============================================================
 // 2. MODAL: NUEVA CAJA
@@ -99,7 +111,7 @@ let cajaActualDetalle = null;
 
 function openDetailModal(caja) {
     cajaActualDetalle = caja;
-    const activa = caja.ind_estado_caja_m === 't' || caja.ind_estado_caja_m === true;
+    const activa = cajaEstaActiva(caja);
 
     setText('detail-title', caja.nom_caja_menor);
     setText('detail-subtitle', `#${caja.id_caja_menor} — ${activa ? 'Activa' : 'Cerrada'}`);
@@ -122,7 +134,17 @@ function openDetailModal(caja) {
     clearAllFieldErrors('mov');
     setVal('mov-concepto', '');
     setVal('mov-valor', '');
-    setVal('mov-fecha', new Date().toISOString().slice(0, 10));
+    setVal('mov-fecha', fechaHoyLocal());
+    document.getElementById('mov-fecha')?.setAttribute('min', fechaHoyLocal());
+
+    // Caja cerrada: se oculta el formulario de nuevo movimiento y se muestra el aviso
+    if (activa) {
+        show('mov-form-section');
+        hide('mov-caja-cerrada-aviso');
+    } else {
+        hide('mov-form-section');
+        show('mov-caja-cerrada-aviso');
+    }
 
     // Botón "Cerrar Caja": solo visible/activo si la caja sigue abierta
     const btnCerrarCaja = document.getElementById('detail-btn-cerrar-caja');
@@ -163,8 +185,12 @@ function loadMovimientos(idCajaMenor) {
             if (!movList) return;
 
             if (result.success && result.movimientos && result.movimientos.length > 0) {
+                const soloLectura = !cajaEstaActiva(cajaActualDetalle);
                 movList.innerHTML = result.movimientos.map(m => {
                     const estado = parseInt(m.ind_estado, 10);
+                    // Bloqueado si la caja está cerrada o el movimiento ya fue reembolsado (estado final).
+                    // Los estados anteriores al actual se deshabilitan: la BD no permite retroceder.
+                    const bloqueado = soloLectura || estado === 3;
                     return `
                         <div class="mov-row">
                             <div class="mov-info">
@@ -172,9 +198,9 @@ function loadMovimientos(idCajaMenor) {
                                 <span class="mov-fecha">${formatDate(m.fecha_movimiento)}</span>
                             </div>
                             <span class="mov-valor">${formatCurrency(m.val_movimiento)}</span>
-                            <select class="form-select mov-estado-select" data-id-caja="${m.id_caja_menor}" data-id-mov="${m.id_movimiento}">
-                                <option value="1" ${estado === 1 ? 'selected' : ''}>Pendiente</option>
-                                <option value="2" ${estado === 2 ? 'selected' : ''}>Aprobado</option>
+                            <select class="form-select mov-estado-select" data-id-caja="${m.id_caja_menor}" data-id-mov="${m.id_movimiento}" ${bloqueado ? 'disabled' : ''}>
+                                <option value="1" ${estado === 1 ? 'selected' : ''} ${estado > 1 ? 'disabled' : ''}>Pendiente</option>
+                                <option value="2" ${estado === 2 ? 'selected' : ''} ${estado > 2 ? 'disabled' : ''}>Aprobado</option>
                                 <option value="3" ${estado === 3 ? 'selected' : ''}>Reembolsado</option>
                             </select>
                         </div>
@@ -225,6 +251,12 @@ function onCambiarEstadoMovimiento(e) {
     const idMov       = sel.dataset.idMov;
     const nuevoEstado = sel.value;
     const estadoTexto = ESTADOS_MOVIMIENTO[nuevoEstado];
+
+    if (!cajaEstaActiva(cajaActualDetalle)) {
+        showToast('La caja está cerrada; sus movimientos no pueden modificarse.', 'error');
+        loadMovimientos(idCaja);
+        return;
+    }
 
     if (nuevoEstado === '3') {
         abrirConfirmAccion(
@@ -559,11 +591,19 @@ function initCajaModule() {
 
     // ---------- SUBMIT: NUEVO MOVIMIENTO ----------
     document.getElementById('mov-btn-save')?.addEventListener('click', async function() {
+        // Defensa en el cliente: la validación definitiva la hace la BD
+        if (!cajaEstaActiva(cajaActualDetalle)) {
+            showToast('La caja está cerrada y no admite nuevos movimientos.', 'error');
+            return;
+        }
+
+        const btn  = this;
         const form = document.getElementById('new-mov-form');
         clearAllFieldErrors('mov');
         const formData = new FormData(form);
         const idCaja = formData.get('hid_mov_id_caja');
 
+        btn.disabled = true; // evita doble registro por doble clic
         try {
             const response = await fetch(window.location.href, { method: 'POST', body: formData });
             const text = await response.text();
@@ -578,7 +618,7 @@ function initCajaModule() {
                 // movimientos, dejando el modal abierto.
                 setVal('mov-concepto', '');
                 setVal('mov-valor', '');
-                setVal('mov-fecha', new Date().toISOString().slice(0, 10));
+                setVal('mov-fecha', fechaHoyLocal());
                 loadMovimientos(idCaja);
             } else if (result.errors && Object.keys(result.errors).length > 0) {
                 Object.entries(result.errors).forEach(([spanId, mensaje]) => showFieldError(spanId, mensaje));
@@ -587,6 +627,8 @@ function initCajaModule() {
             }
         } catch (err) {
             showToast('Error de conexión', 'error');
+        } finally {
+            btn.disabled = false;
         }
     });
 }

@@ -13,7 +13,8 @@ BEGIN
                                 'fun_insert_det_archivo_plano',
                                 'fun_insert_motivos_rechazo',
                                 'fun_insert_pagos_cxp',
-                                'fun_aplicar_pago_aprobado') LOOP
+                                'fun_aplicar_pago_aprobado',
+                                'fun_cerrar_cronograma_procesado') LOOP
         EXECUTE 'DROP FUNCTION ' || r.fn;
     END LOOP;
 END $$;
@@ -206,6 +207,13 @@ LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
 -- FUNCIÓN DE INSERT DE DETALLE DE CAJA MENOR
+-- CORRECCIONES:
+--   * Valida que la caja exista y que esté ACTIVA (antes permitía registrar en cajas cerradas).
+--   * Bloquea la fila de la caja (FOR UPDATE) para que dos movimientos simultáneos
+--     no pasen la validación de saldo con el mismo disponible.
+--   * Si la caja no existía, wdisponible quedaba NULL y la validación de saldo se saltaba.
+--   * La validación de largo del concepto decía "entre 1 y 200" pero exigía mínimo 3.
+--   * La fecha no puede ser anterior al día de hoy (sí se permiten fechas futuras).
 --------------------------------------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fun_insert_det_caja_menor (wid_caja_menor        tab_det_caja_menor.id_caja_menor%TYPE,
                                                       wconcepto             tab_det_caja_menor.concepto%TYPE,
@@ -213,8 +221,10 @@ CREATE OR REPLACE FUNCTION fun_insert_det_caja_menor (wid_caja_menor        tab_
                                                       wfecha_movimiento     tab_det_caja_menor.fecha_movimiento%TYPE) RETURNS BOOLEAN AS
 $BODY$
 
-DECLARE wdisponible     tab_enc_caja_menor.monto_disponible%TYPE;
-DECLARE wid_movimiento  tab_det_caja_menor.id_movimiento%TYPE;
+DECLARE
+    wdisponible       tab_enc_caja_menor.monto_disponible%TYPE;
+    wcaja_activa      tab_enc_caja_menor.ind_estado_caja_m%TYPE;
+    wid_movimiento    tab_det_caja_menor.id_movimiento%TYPE;
 
 BEGIN
 
@@ -236,15 +246,30 @@ BEGIN
 -- VALIDAR QUE LA FECHA DEL MOVIMIENTO NO SEA NULA
     IF wfecha_movimiento IS NULL THEN
         RAISE EXCEPTION 'La fecha del movimiento no puede ser nula.';
-    END IF;    
+    END IF;
+
+-- VALIDAR QUE LA CAJA EXISTA Y ESTÉ ACTIVA (SE BLOQUEA LA FILA HASTA TERMINAR LA TRANSACCIÓN)
+    SELECT monto_disponible, ind_estado_caja_m
+    INTO   wdisponible, wcaja_activa
+    FROM   tab_enc_caja_menor
+    WHERE  id_caja_menor = wid_caja_menor
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'La caja menor % no existe.', wid_caja_menor;
+    END IF;
+
+    IF wcaja_activa IS NOT TRUE THEN
+        RAISE EXCEPTION 'La caja menor % está cerrada y no admite nuevos movimientos.', wid_caja_menor;
+    END IF;
 
 -- VALIDAR QUE EL CONCEPTO NO SEA VACÍO
-    IF wconcepto = '' THEN
+    IF TRIM(wconcepto) = '' THEN
         RAISE EXCEPTION 'El concepto no puede estar vacío.';
     END IF;
 
 -- VALIDAR QUE EL CONCEPTO TENGA ENTRE 1 Y 200 CARACTERES
-    IF LENGTH(wconcepto) < 3 OR LENGTH(wconcepto) > 200 THEN
+    IF LENGTH(wconcepto) < 1 OR LENGTH(wconcepto) > 200 THEN
         RAISE EXCEPTION 'El concepto debe tener entre 1 y 200 caracteres.';
     END IF;
 
@@ -253,10 +278,14 @@ BEGIN
         RAISE EXCEPTION 'El valor del movimiento debe estar entre 1 y 99.999.999.';
     END IF;
 
+-- VALIDAR QUE LA FECHA NO SEA ANTERIOR AL DÍA DE HOY (SE PERMITEN FECHAS FUTURAS)
+    IF wfecha_movimiento < CURRENT_DATE THEN
+        RAISE EXCEPTION 'La fecha del movimiento no puede ser anterior al día de hoy.';
+    END IF;
+
 -- VALIDAR QUE HAY SALDO SUFICIENTE EN LA CAJA MENOR
-    SELECT monto_disponible INTO wdisponible FROM tab_enc_caja_menor WHERE id_caja_menor = wid_caja_menor;
-    IF wval_movimiento > wdisponible THEN
-        RAISE EXCEPTION 'El valor del movimiento (%) supera el monto disponible en la caja menor (%).', wval_movimiento, wdisponible;
+    IF wval_movimiento > COALESCE(wdisponible, 0) THEN
+        RAISE EXCEPTION 'El valor del movimiento (%) supera el monto disponible en la caja menor (%).', wval_movimiento, COALESCE(wdisponible, 0);
     END IF;
 
 -- SI TODO VA BIEN, SE INSERTA EN tab_det_caja_menor
@@ -902,6 +931,7 @@ DECLARE wbanco_cuenta       tab_bancoxprov.id_banco%TYPE;
         wtipocuenta_cuenta  tab_bancoxprov.ind_tipocuenta%TYPE;
         wproveedor_factura  tab_cuentasxpagar.id_proveedor%TYPE;
         wval_a_pagar        tab_det_archivo_plano.val_a_pagar%TYPE;
+        wcrono_cerrado      tab_enc_cronopagos.ind_estado%TYPE;
         wtabla_err          TEXT;
         wcolumna_err        TEXT;
 
@@ -980,12 +1010,24 @@ BEGIN
         RAISE EXCEPTION 'El archivo plano % no existe o ya fue generado.', wid_archivo_plano;
     END IF;
 
--- VALIDAR QUE EL CRONOGRAMA EXISTA, ESTÉ ACTIVO Y PENDIENTE
-    IF NOT EXISTS (SELECT 1 FROM tab_enc_cronopagos
-                    WHERE id_cronograma = wid_cronograma
-                      AND ind_borrado   = FALSE
-                      AND ind_estado    = FALSE) THEN
-        RAISE EXCEPTION 'El cronograma % no existe, está inactivo o ya fue pagado.', wid_cronograma;
+-- VALIDAR QUE EL CRONOGRAMA EXISTA Y ESTÉ ACTIVO
+    SELECT ind_estado INTO wcrono_cerrado
+      FROM tab_enc_cronopagos
+     WHERE id_cronograma = wid_cronograma
+       AND ind_borrado   = FALSE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El cronograma % no existe o está inactivo.', wid_cronograma;
+    END IF;
+
+-- UN CRONOGRAMA CERRADO (ya procesado por el banco) SOLO ADMITE REINTENTOS:
+-- cuotas suyas que el banco rechazó y que se vuelven a enviar.
+    IF wcrono_cerrado = TRUE AND NOT EXISTS (SELECT 1 FROM tab_pagos_cxp
+                                               WHERE id_cronograma = wid_cronograma
+                                                 AND id_factura    = wid_factura
+                                                 AND id_cuota      = wid_cuota
+                                                 AND estado_pago   = 3) THEN
+        RAISE EXCEPTION 'El cronograma % ya fue pagado; solo admite el reintento de cuotas rechazadas por el banco.', wid_cronograma;
     END IF;
 
 -- VALIDAR QUE LA CUOTA ESTÉ PROGRAMADA EN ESE CRONOGRAMA (FK a tab_det_cronopagos)
@@ -1215,12 +1257,51 @@ $BODY$
 LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN AUXILIAR: CERRAR EL CRONOGRAMA CUANDO EL BANCO YA LO PROCESÓ
+-- El cronograma pasa a "pagado" (ind_estado = TRUE) cuando TODAS sus cuotas
+-- tienen respuesta definitiva del banco: pagada (pago APROBADO) o con un pago
+-- RECHAZADO. No importa que algunas hayan sido rechazadas: el cronograma ya se
+-- pagó y queda cerrado (no se edita ni se borra). Las cuotas rechazadas siguen
+-- sin pagar y se pueden reintentar en un archivo plano nuevo.
+-- Una cuota sin enviar, en un archivo sin respuesta o con pago PENDIENTE (1)
+-- deja el cronograma abierto.
+-- La usan fun_insert_pagos_cxp y fun_update_pagos_cxp. No se llama desde PHP.
+-- Devuelve TRUE si cerró el cronograma en esta llamada.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_cerrar_cronograma_procesado (wid_cronograma  tab_enc_cronopagos.id_cronograma%TYPE) RETURNS BOOLEAN AS
+$BODY$
+BEGIN
+
+    UPDATE tab_enc_cronopagos e
+    SET    ind_estado = TRUE
+    WHERE  e.id_cronograma = wid_cronograma
+      AND  e.ind_estado    = FALSE
+      AND  EXISTS (SELECT 1 FROM tab_det_cronopagos d WHERE d.id_cronograma = e.id_cronograma)
+      AND  NOT EXISTS (SELECT 1
+                         FROM tab_det_cronopagos d
+                         JOIN tab_cuotasxfactura c ON c.id_factura = d.id_factura
+                                                  AND c.id_cuota   = d.id_cuota
+                        WHERE d.id_cronograma = e.id_cronograma
+                          AND c.ind_pagada    = FALSE
+                          AND NOT EXISTS (SELECT 1
+                                            FROM tab_pagos_cxp p
+                                           WHERE p.id_cronograma = d.id_cronograma
+                                             AND p.id_factura    = d.id_factura
+                                             AND p.id_cuota      = d.id_cuota
+                                             AND p.estado_pago   = 3));
+
+    RETURN FOUND;
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
 -- FUNCIÓN AUXILIAR: EFECTOS DE UN PAGO APROBADO
 -- La usan fun_insert_pagos_cxp y fun_update_pagos_cxp cuando el pago queda
 -- en 2 (APROBADO). No se llama desde PHP.
 --   1) Marca la cuota como pagada (trg_actualizar_saldo_factura descuenta el
 --      saldo de la factura y trg_actualizar_saldo_proveedor la deuda).
---   2) Cierra el cronograma si ya no le quedan cuotas sin pagar.
+--   2) Cierra el cronograma si ya todas sus cuotas tienen respuesta definitiva.
 --------------------------------------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fun_aplicar_pago_aprobado (wid_factura      tab_pagos_cxp.id_factura%TYPE,
                                                       wid_cuota        tab_pagos_cxp.id_cuota%TYPE,
@@ -1234,16 +1315,7 @@ BEGIN
       AND  id_cuota   = wid_cuota
       AND  ind_pagada = FALSE;
 
-    UPDATE tab_enc_cronopagos e
-    SET    ind_estado = TRUE
-    WHERE  e.id_cronograma = wid_cronograma
-      AND  e.ind_estado    = FALSE
-      AND  NOT EXISTS (SELECT 1
-                         FROM tab_det_cronopagos d
-                         JOIN tab_cuotasxfactura c ON c.id_factura = d.id_factura
-                                                  AND c.id_cuota   = d.id_cuota
-                        WHERE d.id_cronograma = e.id_cronograma
-                          AND c.ind_pagada    = FALSE);
+    PERFORM fun_cerrar_cronograma_procesado(wid_cronograma);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -1370,9 +1442,12 @@ BEGIN
     VALUES                    (wid_pago, wid_factura, wid_cuota, wid_archivo_plano, wid_cronograma,
                                wfec_pago, wval_pago, westado_pago, wid_codigo, wid_banco);
 
--- SI QUEDÓ APROBADO: CUOTA PAGADA Y, SI ES LA ÚLTIMA, CRONOGRAMA CERRADO
+-- APROBADO: cuota pagada y, si ya no queda nada por responder, cronograma cerrado.
+-- RECHAZADO: la cuota sigue sin pagar, pero también puede cerrar el cronograma.
     IF westado_pago = 2 THEN
         PERFORM fun_aplicar_pago_aprobado(wid_factura, wid_cuota, wid_cronograma);
+    ELSIF westado_pago = 3 THEN
+        PERFORM fun_cerrar_cronograma_procesado(wid_cronograma);
     END IF;
 
     RETURN TRUE;

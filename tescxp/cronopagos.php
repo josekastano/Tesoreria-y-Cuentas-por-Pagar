@@ -89,7 +89,9 @@ function validar_fecha_pago(string $fecha, array $dias_pago, array $festivos_map
 }
 
 /**
- * Devuelve true si el cronograma ya fue pagado.
+ * Devuelve true si el cronograma ya fue pagado (cerrado).
+ * Se cierra cuando el banco ya respondió todas sus cuotas, aunque algunas
+ * hayan sido rechazadas (ver fun_cerrar_cronograma_procesado).
  * Un cronograma pagado no se puede editar ni eliminar.
  */
 function cronograma_pagado(PDO $pdo, int $id_cronograma): bool {
@@ -443,9 +445,18 @@ ob_start();
             <?php else: ?>
                 <?php foreach ($cronogramas as $c):
                     $pagado      = ($c['ind_estado'] === 't' || $c['ind_estado'] === true);
+                    $cant_cuotas = (int)($c['cant_cuotas'] ?? 0);
+                    $cant_pag    = (int)($c['cant_pagadas'] ?? 0);
+                    $cant_rech   = (int)($c['cant_rechazadas'] ?? 0);
                     $badge       = $pagado
                         ? '<span class="badge badge-active">Pagado</span>'
                         : '<span class="badge badge-inactive" style="background:#fffbeb;color:#f59e0b">Pendiente</span>';
+                    // Resumen bajo el badge: cuántas cuotas pagó el banco y cuántas rechazó
+                    if ($cant_pag > 0 || $cant_rech > 0) {
+                        $badge .= '<span class="crono-resumen-pago">' . $cant_pag . '/' . $cant_cuotas . ' pagada' . ($cant_pag !== 1 ? 's' : '')
+                                . ($cant_rech > 0 ? ' · <b>' . $cant_rech . ' rechazada' . ($cant_rech !== 1 ? 's' : '') . '</b>' : '')
+                                . '</span>';
+                    }
                     $filtro      = $pagado ? 'pagado' : 'pendiente';
                     $id_esc      = htmlspecialchars($c['id_cronograma']);
                 ?>
@@ -467,7 +478,7 @@ ob_start();
                                 <i class="fas fa-trash"></i>
                             </button>
                         <?php else: ?>
-                            <span class="accion-bloqueada" title="Cronograma pagado: no se puede editar ni eliminar">
+                            <span class="accion-bloqueada" title="Cronograma pagado (el banco ya respondió): no se puede editar ni eliminar">
                                 <i class="fas fa-lock"></i>
                             </span>
                         <?php endif; ?>
@@ -536,7 +547,7 @@ ob_start();
 
                 <div class="cal-legend">
                     <span class="cal-legend-item"><i class="cal-dot pendiente"></i> Con pendientes</span>
-                    <span class="cal-legend-item"><i class="cal-dot pagado"></i> Todos pagados</span>
+                    <span class="cal-legend-item"><i class="cal-dot pagado"></i> Pagados</span>
                     <span class="cal-legend-item"><i class="cal-dot festivo"></i> Festivo</span>
                 </div>
             </div>

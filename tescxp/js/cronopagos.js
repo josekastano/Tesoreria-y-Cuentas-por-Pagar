@@ -430,7 +430,7 @@ function renderSidePanel() {
                 <i></i>
                 <span>
                     <span class="cal-side-item-desc">${escapeHtml(c.nom_cronograma)}</span>
-                    <span class="cal-side-item-meta">${formatCurrency(c.total_a_pagar)} · ${pagado ? 'Pagado' : 'Pendiente'}</span>
+                    <span class="cal-side-item-meta">${formatCurrency(c.total_a_pagar)} · ${pagado ? 'Pagado' : 'Pendiente'}${Number(c.cant_rechazadas || 0) > 0 ? ` · ${c.cant_rechazadas} rechazada${Number(c.cant_rechazadas) !== 1 ? 's' : ''}` : ''}</span>
                 </span>
             </li>`;
     }).join('') + (resto > 0
@@ -588,7 +588,8 @@ function openDayModal(fechaStr) {
         list.innerHTML = '<p style="font-size:12px;color:#94a3b8;text-align:center;padding:12px">No hay cronogramas programados este día.</p>';
     } else {
         list.innerHTML = cronosDia.map(c => {
-            const pagado = c.ind_estado === 't' || c.ind_estado === true;
+            const pagado = estaPagado(c);
+            const rech   = Number(c.cant_rechazadas || 0);
             const badge = pagado
                 ? '<span class="badge badge-active">Pagado</span>'
                 : '<span class="badge badge-inactive" style="background:#fffbeb;color:#f59e0b">Pendiente</span>';
@@ -596,7 +597,7 @@ function openDayModal(fechaStr) {
                 <div class="day-crono-row" data-id="${c.id_cronograma}">
                     <div class="day-crono-info">
                         <span class="day-crono-nombre">${escapeHtml(c.nom_cronograma)}</span>
-                        <span class="day-crono-total">${formatCurrency(c.total_a_pagar)}</span>
+                        <span class="day-crono-total">${formatCurrency(c.total_a_pagar)}${rech > 0 ? ` · <b style="color:#b91c1c">${rech} rechazada${rech !== 1 ? 's' : ''}</b>` : ''}</span>
                     </div>
                     ${badge}
                     <i class="fas fa-chevron-right" style="color:#94a3b8;font-size:12px"></i>
@@ -778,16 +779,102 @@ window.openEditModal = openEditModal;
 
 // ============================================================
 // 5. MODAL: DETALLE DE CRONOGRAMA
+// ------------------------------------------------------------
+// Cada cuota trae estado_cuota (lo calcula $list_det_cronopagos):
+//   PAGADA · RECHAZADA · PENDIENTE · EN_ARCHIVO · SIN_ENVIAR
+// Un cronograma "Pagado" puede tener cuotas rechazadas: se cerró porque el
+// banco ya respondió todo. Las rechazadas se reintentan en un archivo plano
+// nuevo, pero el cronograma ya no se edita.
 // ============================================================
+const ESTADOS_CUOTA = {
+    PAGADA:     { texto: 'Pagada',            clase: 'pagada',     icono: 'fa-circle-check' },
+    RECHAZADA:  { texto: 'Rechazada',         clase: 'rechazada',  icono: 'fa-circle-xmark' },
+    PENDIENTE:  { texto: 'Pendiente banco',   clase: 'pendiente',  icono: 'fa-clock' },
+    EN_ARCHIVO: { texto: 'Enviada al banco',  clase: 'en-archivo', icono: 'fa-paper-plane' },
+    SIN_ENVIAR: { texto: 'Sin enviar',        clase: 'sin-enviar', icono: 'fa-circle' },
+};
+
+function estadoCuota(d) {
+    return ESTADOS_CUOTA[d.estado_cuota] || ESTADOS_CUOTA.SIN_ENVIAR;
+}
+
+function renderResumenCuotas(detalle) {
+    const cuenta = {};
+    detalle.forEach(d => { cuenta[d.estado_cuota] = (cuenta[d.estado_cuota] || 0) + 1; });
+
+    const chips = ['PAGADA', 'RECHAZADA', 'PENDIENTE', 'EN_ARCHIVO', 'SIN_ENVIAR']
+        .filter(k => cuenta[k])
+        .map(k => {
+            const e = ESTADOS_CUOTA[k];
+            return `<span class="cuota-estado ${e.clase}"><i class="fas ${e.icono}"></i> ${cuenta[k]} ${e.texto.toLowerCase()}</span>`;
+        }).join('');
+
+    return `<div class="cuotas-resumen">${chips}</div>`;
+}
+
+function renderCuotaDetalle(d, crono, pagado) {
+    const e = estadoCuota(d);
+
+    // Datos de la respuesta del banco bajo el nombre del proveedor
+    let respuesta = '';
+    if (d.estado_cuota === 'RECHAZADA') {
+        respuesta = `<span class="cuota-motivo rechazo">
+                <i class="fas fa-circle-exclamation"></i>
+                ${escapeHtml(d.des_motivo || 'Sin motivo registrado')}${d.id_codigo ? ' (' + escapeHtml(d.id_codigo) + ')' : ''}
+                · Archivo #${escapeHtml(d.id_archivo_plano)}${d.fec_pago ? ' · ' + formatDate(d.fec_pago) : ''}
+            </span>`;
+    } else if (d.estado_cuota === 'PAGADA' && d.id_pago) {
+        respuesta = `<span class="cuota-motivo">Archivo #${escapeHtml(d.id_archivo_plano)}${d.fec_pago ? ' · pagada el ' + formatDate(d.fec_pago) : ''}</span>`;
+    } else if (d.estado_cuota === 'EN_ARCHIVO' && Number(d.cant_rechazos) > 0) {
+        respuesta = `<span class="cuota-motivo">Reintento después de ${d.cant_rechazos} rechazo${Number(d.cant_rechazos) !== 1 ? 's' : ''}</span>`;
+    }
+
+    // Solo se puede quitar una cuota que todavía no ha ido al banco
+    const puedeEliminar = !pagado && d.estado_cuota === 'SIN_ENVIAR';
+    const accion = puedeEliminar
+        ? `<button class="btn-icon-sm reject btn-del-detalle"
+                data-cronograma="${crono.id_cronograma}"
+                data-factura="${d.id_factura}"
+                data-cuota="${d.id_cuota}"
+                title="Eliminar cuota del cronograma">
+                <i class="fas fa-trash"></i>
+           </button>`
+        : '<span></span>';
+
+    return `
+        <div class="cuota-row estado-${e.clase}">
+            <span class="cuota-num">
+                ${escapeHtml(d.nom_tercero)}<br>
+                <small style="color:#94a3b8;font-weight:400">Factura #${d.id_factura}, Cuota ${d.id_cuota} · Vence ${formatDate(d.fec_vencimiento)}</small>
+                ${respuesta}
+            </span>
+            <span class="cuota-estado ${e.clase}"><i class="fas ${e.icono}"></i> ${e.texto}</span>
+            <span class="cuota-valor">${formatCurrency(d.val_a_pagar)}</span>
+            ${accion}
+        </div>`;
+}
+
 function openDetailModal(crono) {
     window._cronoDetalleActual = crono;
-    const pagado = crono.ind_estado === 't' || crono.ind_estado === true;
+    const pagado = estaPagado(crono);
+    const rechazadas = Number(crono.cant_rechazadas || 0);
 
     setText('detail-title', crono.nom_cronograma);
-    setText('detail-subtitle', `#${crono.id_cronograma} — ${pagado ? 'Pagado' : 'Pendiente'}`);
+    setText('detail-subtitle', `#${crono.id_cronograma} — ${pagado
+        ? (rechazadas > 0 ? `Pagado (con ${rechazadas} rechazada${rechazadas !== 1 ? 's' : ''})` : 'Pagado')
+        : 'Pendiente'}`);
+
+    const avisoCerrado = pagado ? `
+        <div class="crono-cerrado-aviso">
+            <i class="fas fa-lock"></i>
+            <span>El banco ya respondió este cronograma, así que quedó cerrado y no se puede editar.${rechazadas > 0
+                ? ' Las cuotas rechazadas siguen sin pagar: puede reenviarlas en un archivo plano nuevo.'
+                : ''}</span>
+        </div>` : '';
 
     const content = document.getElementById('detail-content');
     content.innerHTML = `
+        ${avisoCerrado}
         <div class="detail-grid">
             <div class="detail-item"><span class="detail-label">Fecha Programada</span><span class="detail-value">${formatDate(crono.fec_programacion)}</span></div>
             <div class="detail-item"><span class="detail-label">Total a Pagar</span><span class="detail-value">${formatCurrency(crono.total_a_pagar)}</span></div>
@@ -811,20 +898,8 @@ function openDetailModal(crono) {
             if (!detalleList) return;
 
             if (result.success && result.detalle && result.detalle.length > 0) {
-                detalleList.innerHTML = result.detalle.map(d => `
-                    <div class="cuota-row">
-                        <span class="cuota-num">${escapeHtml(d.nom_tercero)}<br><small style="color:#94a3b8;font-weight:400">Factura #${d.id_factura}, Cuota ${d.id_cuota}</small></span>
-                        <span class="cuota-fecha">${formatDate(d.fec_vencimiento)}</span>
-                        <span class="cuota-valor">${formatCurrency(d.val_a_pagar)}</span>
-                        ${!pagado ? `<button class="btn-icon-sm reject btn-del-detalle"
-                            data-cronograma="${crono.id_cronograma}"
-                            data-factura="${d.id_factura}"
-                            data-cuota="${d.id_cuota}"
-                            title="Eliminar cuota del cronograma">
-                            <i class="fas fa-trash"></i>
-                        </button>` : '<span></span>'}
-                    </div>
-                `).join('');
+                detalleList.innerHTML = renderResumenCuotas(result.detalle)
+                    + result.detalle.map(d => renderCuotaDetalle(d, crono, pagado)).join('');
 
                 // Conectar los botones de eliminar recién creados
                 detalleList.querySelectorAll('.btn-del-detalle').forEach(btn => {

@@ -708,15 +708,39 @@ try {
     // =========================================================================
 
     // ---- LISTADO DE CRONOGRAMAS ----
+    // >>> CAMBIA: trae cuántas cuotas tiene, cuántas quedaron pagadas y cuántas
+    //     rechazó el banco (sin pagar todavía). Un cronograma "pagado" puede
+    //     tener rechazadas: se cerró porque el banco ya respondió todo.
     $list_enc_cronopagos = $pdo->prepare(
-        "SELECT  id_cronograma,
-                 nom_cronograma,
-                 fec_programacion,
-                 total_a_pagar,
-                 ind_estado
-           FROM  tab_enc_cronopagos
-          WHERE  ind_borrado = FALSE
-          ORDER BY fec_programacion DESC, id_cronograma DESC"
+        "SELECT  e.id_cronograma,
+                 e.nom_cronograma,
+                 e.fec_programacion,
+                 e.total_a_pagar,
+                 e.ind_estado,
+                 (SELECT COUNT(*)
+                    FROM tab_det_cronopagos d
+                   WHERE d.id_cronograma = e.id_cronograma)        AS cant_cuotas,
+                 (SELECT COUNT(*)
+                    FROM tab_det_cronopagos d
+                    JOIN tab_cuotasxfactura c ON c.id_factura = d.id_factura
+                                             AND c.id_cuota   = d.id_cuota
+                   WHERE d.id_cronograma = e.id_cronograma
+                     AND c.ind_pagada    = TRUE)                   AS cant_pagadas,
+                 (SELECT COUNT(*)
+                    FROM tab_det_cronopagos d
+                    JOIN tab_cuotasxfactura c ON c.id_factura = d.id_factura
+                                             AND c.id_cuota   = d.id_cuota
+                   WHERE d.id_cronograma = e.id_cronograma
+                     AND c.ind_pagada    = FALSE
+                     AND EXISTS (SELECT 1
+                                   FROM tab_pagos_cxp p
+                                  WHERE p.id_cronograma = d.id_cronograma
+                                    AND p.id_factura    = d.id_factura
+                                    AND p.id_cuota      = d.id_cuota
+                                    AND p.estado_pago   = 3))      AS cant_rechazadas
+           FROM  tab_enc_cronopagos e
+          WHERE  e.ind_borrado = FALSE
+          ORDER BY e.fec_programacion DESC, e.id_cronograma DESC"
     );
 
     // ---- UN CRONOGRAMA ----
@@ -732,6 +756,14 @@ try {
     );
 
     // ---- DETALLE DE UN CRONOGRAMA ----
+    // >>> CAMBIA: trae el estado de pago de cada cuota (estado_cuota) y los
+    //     datos de la última respuesta del banco:
+    //       PAGADA      la cuota tiene pago APROBADO
+    //       EN_ARCHIVO  está en un archivo plano sin respuesta del banco
+    //                   (también un reintento después de un rechazo)
+    //       PENDIENTE   el banco respondió PENDIENTE (1)
+    //       RECHAZADA   el último intento fue RECHAZADO (3)
+    //       SIN_ENVIAR  todavía no ha ido en ningún archivo plano
     $list_det_cronopagos = $pdo->prepare(
         "SELECT  d.id_cronograma,
                  d.id_factura,
@@ -740,11 +772,56 @@ try {
                  c.fec_vencimiento,
                  c.ind_pagada,
                  f.id_proveedor,
-                 t.nom_tercero
+                 t.nom_tercero,
+                 ult.id_pago,
+                 ult.estado_pago,
+                 ult.fec_pago,
+                 ult.id_archivo_plano,
+                 ult.id_codigo,
+                 ult.des_motivo,
+                 (SELECT COUNT(*)
+                    FROM tab_pagos_cxp p2
+                   WHERE p2.id_cronograma = d.id_cronograma
+                     AND p2.id_factura    = d.id_factura
+                     AND p2.id_cuota      = d.id_cuota
+                     AND p2.estado_pago   = 3)  AS cant_rechazos,
+                 CASE
+                     WHEN c.ind_pagada THEN 'PAGADA'
+                     WHEN EXISTS (SELECT 1
+                                    FROM tab_det_archivo_plano ap
+                                   WHERE ap.id_cronograma = d.id_cronograma
+                                     AND ap.id_factura    = d.id_factura
+                                     AND ap.id_cuota      = d.id_cuota
+                                     AND NOT EXISTS (SELECT 1
+                                                       FROM tab_pagos_cxp p3
+                                                      WHERE p3.id_archivo_plano = ap.id_archivo_plano
+                                                        AND p3.id_factura       = ap.id_factura
+                                                        AND p3.id_cuota         = ap.id_cuota))
+                          THEN 'EN_ARCHIVO'
+                     WHEN ult.estado_pago = 1 THEN 'PENDIENTE'
+                     WHEN ult.estado_pago = 3 THEN 'RECHAZADA'
+                     ELSE 'SIN_ENVIAR'
+                 END AS estado_cuota
            FROM  tab_det_cronopagos  d
            JOIN  tab_cuotasxfactura  c ON c.id_factura = d.id_factura AND c.id_cuota = d.id_cuota
            JOIN  tab_cuentasxpagar   f ON f.id_factura = d.id_factura
            JOIN  tab_terceros        t ON t.id_tercero = f.id_proveedor
+           LEFT JOIN LATERAL (
+                 SELECT  p.id_pago,
+                         p.estado_pago,
+                         p.fec_pago,
+                         p.id_archivo_plano,
+                         p.id_codigo,
+                         cr.des_motivo
+                   FROM  tab_pagos_cxp p
+                   LEFT JOIN tab_codigos_respuesta_banco cr ON cr.id_codigo = p.id_codigo
+                                                           AND cr.id_banco  = p.id_banco
+                  WHERE  p.id_cronograma = d.id_cronograma
+                    AND  p.id_factura    = d.id_factura
+                    AND  p.id_cuota      = d.id_cuota
+                  ORDER BY p.id_pago DESC
+                  LIMIT 1
+           ) ult ON TRUE
           WHERE  d.id_cronograma = :wid_cronograma
           ORDER BY t.nom_tercero, d.id_factura, d.id_cuota"
     );
@@ -844,16 +921,49 @@ try {
         )"
     );
 
-    // ---- CRONOGRAMAS PENDIENTES (para generar archivo plano) ----
+    // ---- CRONOGRAMAS PARA GENERAR ARCHIVO PLANO ----
+    // >>> CAMBIA: además de los pendientes, trae los ya pagados (cerrados) que
+    //     tienen cuotas rechazadas listas para reintentar. solo_reintentos =
+    //     TRUE marca estos últimos: de ellos solo se pueden enviar las
+    //     cuotas rechazadas (lo valida fun_insert_det_archivo_plano y
+    //     $list_cuotas_de_cronograma ya las filtra así).
     $list_cronogramas_pendientes = $pdo->prepare(
-        "SELECT  id_cronograma,
-                 nom_cronograma,
-                 fec_programacion,
-                 total_a_pagar
-           FROM  tab_enc_cronopagos
-          WHERE  ind_borrado = FALSE
-            AND  ind_estado  = FALSE
-          ORDER BY fec_programacion"
+        "SELECT  e.id_cronograma,
+                 e.nom_cronograma,
+                 e.fec_programacion,
+                 e.total_a_pagar,
+                 e.ind_estado AS solo_reintentos
+           FROM  tab_enc_cronopagos e
+          WHERE  e.ind_borrado = FALSE
+            AND  (   e.ind_estado = FALSE
+                  OR EXISTS (
+                        SELECT 1
+                          FROM tab_det_cronopagos d
+                          JOIN tab_cuotasxfactura c ON c.id_factura = d.id_factura
+                                                   AND c.id_cuota   = d.id_cuota
+                         WHERE d.id_cronograma = e.id_cronograma
+                           AND c.ind_pagada    = FALSE
+                           AND EXISTS (SELECT 1
+                                         FROM tab_pagos_cxp p
+                                        WHERE p.id_cronograma = d.id_cronograma
+                                          AND p.id_factura    = d.id_factura
+                                          AND p.id_cuota      = d.id_cuota
+                                          AND p.estado_pago   = 3)
+                           AND NOT EXISTS (
+                                 SELECT 1
+                                   FROM tab_det_archivo_plano ap
+                                  WHERE ap.id_factura = d.id_factura
+                                    AND ap.id_cuota   = d.id_cuota
+                                    AND NOT EXISTS (SELECT 1
+                                                      FROM tab_pagos_cxp p2
+                                                     WHERE p2.id_archivo_plano = ap.id_archivo_plano
+                                                       AND p2.id_cronograma    = ap.id_cronograma
+                                                       AND p2.id_factura       = ap.id_factura
+                                                       AND p2.id_cuota         = ap.id_cuota
+                                                       AND p2.estado_pago      = 3))
+                     )
+                 )
+          ORDER BY e.fec_programacion"
     );
 
     // ---- ¿EL CRONOGRAMA YA TIENE LÍNEAS EN ARCHIVOS PLANOS? ----

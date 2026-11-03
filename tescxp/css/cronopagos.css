@@ -1690,6 +1690,79 @@
     line-height: 1.3;
 }
 
+/* ============================================
+   ESTADO DE PAGO DE CADA CUOTA (modal detalle)
+   ============================================ */
+/* Cuota del detalle: nombre · estado · valor · acción */
+#detalle-cuotas-list .cuota-row {
+    grid-template-columns: minmax(0, 1fr) auto auto 34px;
+}
+
+.cuota-estado {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: 40px;
+    font-size: 10.5px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.3px;
+    white-space: nowrap;
+    font-family: var(--dash-font);
+}
+
+.cuota-estado i { font-size: 10px; }
+
+.cuota-estado.pagada     { background: #ecfdf5; color: #059669; }
+.cuota-estado.rechazada  { background: #fef2f2; color: #b91c1c; }
+.cuota-estado.pendiente  { background: #fffbeb; color: #b45309; }
+.cuota-estado.en-archivo { background: var(--dash-blue-light); color: var(--dash-blue-dark); }
+.cuota-estado.sin-enviar { background: #f1f5f9; color: #64748b; }
+
+/* Borde izquierdo de color según el estado */
+.cuota-row.estado-pagada    { border-left: 3px solid #10b981; }
+.cuota-row.estado-rechazada { border-left: 3px solid #ef4444; background: #fffafa; }
+.cuota-row.estado-pendiente { border-left: 3px solid #f59e0b; }
+.cuota-row.estado-en-archivo { border-left: 3px solid var(--dash-blue); }
+
+/* Respuesta del banco bajo el nombre del proveedor */
+.cuota-motivo {
+    display: block;
+    margin-top: 4px;
+    font-size: 11px; font-weight: 500;
+    color: #64748b; line-height: 1.4;
+}
+
+.cuota-motivo.rechazo { color: #b91c1c; font-weight: 600; }
+.cuota-motivo i { margin-right: 3px; }
+
+/* Resumen arriba de la lista: "3 pagadas · 1 rechazada" */
+.cuotas-resumen {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-bottom: 12px;
+}
+
+/* Aviso de cronograma cerrado */
+.crono-cerrado-aviso {
+    display: flex; align-items: flex-start; gap: 10px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 16px;
+    font-size: 12.5px; line-height: 1.5;
+    color: #475569;
+}
+
+.crono-cerrado-aviso i { color: #94a3b8; margin-top: 3px; flex-shrink: 0; }
+
+/* Resumen bajo el badge de estado en la tabla */
+#mod-cronograma .crono-resumen-pago {
+    display: block;
+    margin-top: 5px;
+    font-size: 10.5px; font-weight: 600;
+    color: var(--dash-text-muted);
+    white-space: nowrap;
+}
+
+#mod-cronograma .crono-resumen-pago b { color: #b91c1c; font-weight: 700; }
+
 /* ---- RESPONSIVE ---- */
 @media (max-width: 900px) {
     #mod-cronograma { padding: 20px; }
@@ -1707,6 +1780,7 @@
     #mod-cronograma .stats-grid { grid-template-columns: 1fr; }
     .modal-box { width: 95vw; max-width: 95vw; }
     .cuota-row { grid-template-columns: 1fr auto; row-gap: 8px; }
+    #detalle-cuotas-list .cuota-row { grid-template-columns: minmax(0, 1fr) auto; }
     #mod-cronograma .cal-shell { grid-template-columns: minmax(0, 1fr); }
     #mod-cronograma .cal-side { padding: 20px; gap: 16px; }
     #mod-cronograma .cal-side-day { font-size: 48px; }
