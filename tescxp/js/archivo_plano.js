@@ -1102,6 +1102,14 @@ function initArchivoModule() {
     if (window.__archivoPlanoInit) return;
     window.__archivoPlanoInit = true;
 
+    // Mover modales, calendario y toast al <body> para que el overlay cubra
+    // también la barra superior (escapan del contexto de apilamiento del layout).
+    ['modal-new-archivo', 'modal-ctaemp-rapida', 'modal-ctaprov-rapida', 'modal-banco-rapido',
+     'modal-edit-archivo', 'modal-detail', 'dp-pop', 'toast'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.parentElement !== document.body) document.body.appendChild(el);
+    });
+
     cargarCalendarioPagos();
     initSelectorFecha();
 

@@ -636,7 +636,7 @@ const festivosMap        = <?= json_encode((object)$festivos_map, JSON_HEX_TAG |
                                    data-valor="<?= htmlspecialchars($cu['val_cuota']) ?>"
                                    data-vence="<?= htmlspecialchars($cu['fec_vencimiento']) ?>">
                             <div class="cuota-picker-info">
-                                <span class="cuota-picker-prov"><?= htmlspecialchars($cu['nom_tercero']) ?> — Factura #<?= htmlspecialchars($cu['id_factura']) ?>, Cuota <?= htmlspecialchars($cu['id_cuota']) ?></span>
+                                <span class="cuota-picker-prov"><?= htmlspecialchars($cu['nom_tercero']) ?> — Factura #<?= htmlspecialchars($cu['id_factura']) ?>, Cuota <?= htmlspecialchars($cu['id_cuota']) ?><?php if ($cu['fue_rechazada'] === 't' || $cu['fue_rechazada'] === true): ?> <span class="tag-reintento" title="El banco rechazó esta cuota en un cronograma anterior">Rechazada antes</span><?php endif; ?></span>
                                 <span class="cuota-picker-fecha">Vence: <?= htmlspecialchars(date('d/m/Y', strtotime($cu['fec_vencimiento']))) ?></span>
                                 <span class="cuota-picker-motivo">Vence antes de la fecha programada</span>
                             </div>

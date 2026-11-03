@@ -322,6 +322,13 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initCodigosModule() {
+    // Mover modales y toast al <body> para que el overlay cubra también
+    // la barra superior (escapan del contexto de apilamiento del layout)
+    ['modal-new-codigo', 'modal-edit-codigo', 'modal-confirm-eliminar', 'toast'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.parentElement !== document.body) document.body.appendChild(el);
+    });
+
     document.getElementById('btn-add-codigo')?.addEventListener('click', openNewModal);
 
     document.getElementById('codigo-search')?.addEventListener('input', applyFilters);

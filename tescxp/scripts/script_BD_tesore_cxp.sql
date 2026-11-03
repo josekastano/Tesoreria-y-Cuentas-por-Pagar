@@ -210,10 +210,13 @@ CREATE TABLE tab_det_cronopagos
 
     PRIMARY KEY(id_cronograma,id_factura,id_cuota),
     FOREIGN KEY(id_cronograma)              REFERENCES tab_enc_cronopagos(id_cronograma),
-    FOREIGN KEY(id_factura,id_cuota)        REFERENCES tab_cuotasxfactura(id_factura,id_cuota),
-
-    CONSTRAINT uq_cuota_programada          UNIQUE (id_factura,id_cuota)                                                        -- Una cuota solo puede estar programada en UN cronograma a la vez (impide el doble pago)
+    FOREIGN KEY(id_factura,id_cuota)        REFERENCES tab_cuotasxfactura(id_factura,id_cuota)
+    -- Sin UNIQUE (id_factura, id_cuota): una cuota que el banco RECHAZÓ se
+    -- programa en un cronograma nuevo. fun_insert_det_cronopagos valida que no
+    -- esté en otro cronograma salvo que allí haya sido rechazada.
 );
+-- Consultas tipo: "¿en qué cronogramas ha estado esta cuota?"
+CREATE INDEX idx_det_cronopagos_cuota ON tab_det_cronopagos(id_factura, id_cuota);
 
 ---------------------------------------------
 -- TABLA DE TIPOS DE PAGO                  --

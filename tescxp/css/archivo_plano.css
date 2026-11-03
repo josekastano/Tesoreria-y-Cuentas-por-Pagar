@@ -561,7 +561,7 @@
     background: rgba(0,0,0,0.5);
     backdrop-filter: blur(3px);
     display: flex; align-items: center; justify-content: center;
-    z-index: 1000; padding: 1rem;
+    z-index: 10000; padding: 1rem;
 }
 
 .modal-overlay.hidden { display: none; }
@@ -581,15 +581,15 @@
 
 /* ============================================
    MODALES RÁPIDOS: NUEVA CUENTA (EMPRESA / PROVEEDOR) Y NUEVO BANCO
-   Se abren encima de "Nuevo Archivo Plano" (1000) y del calendario (1050).
+   Se abren encima de "Nuevo Archivo Plano" (10000) y del calendario (10050).
    El de banco va un nivel más arriba porque lo abren los de cuenta.
    ============================================ */
 .modal-overlay.modal-nested {
-    z-index: 1060;
+    z-index: 10060;
     background: rgba(15, 23, 42, 0.35);
 }
 
-.modal-overlay.modal-nested-2 { z-index: 1070; }
+.modal-overlay.modal-nested-2 { z-index: 10070; }
 
 .modal-box.modal-box-sm { max-width: 460px; }
 
@@ -1139,7 +1139,7 @@
    ============================================ */
 .dp-pop {
     position: fixed;
-    z-index: 1050;               /* por encima de .modal-overlay (1000) */
+    z-index: 10050;              /* por encima de .modal-overlay (10000) */
     width: 300px;
     padding: 14px;
     background: var(--dash-card);
@@ -1335,7 +1335,7 @@
     padding: 12px 20px; border-radius: 40px;
     display: flex; align-items: center; gap: 10px;
     font-size: 13px; font-weight: 500;
-    z-index: 1100; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    z-index: 10100; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     font-family: 'DM Sans', system-ui, sans-serif;
     animation: slideIn 0.3s ease;
 }

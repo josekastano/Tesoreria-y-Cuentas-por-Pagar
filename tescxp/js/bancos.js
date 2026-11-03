@@ -282,6 +282,13 @@ function ajustarAlturaTabla() {
 function initBancosModule() {
     if (!document.getElementById('mod-bancos')) return;
 
+    // Mover modales y toast al <body> para que el overlay cubra también
+    // la barra superior (escapan del contexto de apilamiento del layout)
+    ['modal-new-banco', 'modal-edit-banco', 'modal-confirm-eliminar', 'toast'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.parentElement !== document.body) document.body.appendChild(el);
+    });
+
     document.getElementById('btn-add-banco')?.addEventListener('click', openNewModal);
 
     // Filtros

@@ -410,6 +410,13 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initCuentaModule() {
+    // Mover modales y toast al <body> para que el overlay cubra también
+    // la barra superior (escapan del contexto de apilamiento del layout)
+    ['modal-new-cuenta', 'modal-banco-rapido', 'modal-edit-cuenta', 'modal-confirm-eliminar', 'toast'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.parentElement !== document.body) document.body.appendChild(el);
+    });
+
     document.getElementById('btn-add-cuenta')?.addEventListener('click', openNewModal);
 
     document.getElementById('cuenta-search')?.addEventListener('input', applyFilters);

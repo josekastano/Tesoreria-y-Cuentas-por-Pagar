@@ -16,7 +16,7 @@ if (!defined('INCLUDE_MENU_PRINCIPAL')) {
 }
 
 require_once('prepare_tescxp.php');
-require_once('prepare_compro.php');
+require_once __DIR__ . '/../compro/src/prepare_compro.php';
 // ============================================================
 // LIMPIAR MENSAJE DE ERROR DE POSTGRESQL
 // ============================================================
@@ -36,10 +36,38 @@ function limpiar_error_pgsql(string $msg): string {
 $list_proveedores_dias_pago->execute();
 $proveedores_dp = $list_proveedores_dias_pago->fetchAll(PDO::FETCH_ASSOC);
 
+// PDO_PGSQL puede devolver los BOOLEAN como true/false o como 't'/'f'
+function es_verdadero($v): bool {
+    return $v === true || $v === 't' || $v === 'true' || $v === '1' || $v === 1;
+}
+
 // Indexado por id_proveedor para resolver los días de pago en PHP al validar
-$proveedores_dp_idx = [];
+$proveedores_dp_idx   = [];
+// Condiciones de crédito pactadas con cada proveedor (módulo Proveedores):
+//   credito    → si el proveedor acepta pagos a crédito
+//   max_cuotas → máximo de cuotas acordado (1 si no acepta crédito)
+$proveedores_cond_idx = [];
 foreach ($proveedores_dp as $p) {
     $proveedores_dp_idx[$p['id_proveedor']] = (int)$p['ind_dias_pago'];
+    $credito = es_verdadero($p['ind_credito'] ?? false);
+    $proveedores_cond_idx[$p['id_proveedor']] = [
+        'credito'    => $credito,
+        'max_cuotas' => $credito ? max(1, (int)($p['ind_num_cuotas'] ?? 1)) : 1,
+    ];
+}
+
+// Condiciones de pago efectivas de una factura:
+//   - Con orden de compra: manda el método de pago de la orden (met_pago).
+//     Si la orden es de contado → 1 cuota. Si es a crédito → hasta el
+//     máximo de cuotas pactado con el proveedor.
+//   - Compra directa (sin orden): manda lo pactado con el proveedor.
+// Devuelve ['credito' => bool, 'max_cuotas' => int].
+function condiciones_pago(array $cond_prov, ?bool $oc_credito): array {
+    $credito = $oc_credito ?? $cond_prov['credito'];
+    return [
+        'credito'    => $credito,
+        'max_cuotas' => $credito ? max(1, $cond_prov['max_cuotas']) : 1,
+    ];
 }
 
 // ============================================================
@@ -91,9 +119,15 @@ foreach ($ordenes_todas as $o) {
 }
 
 // Índice id_ordencompra => id_proveedor, para validar la pareja en el POST
-$ordenes_idx = [];
+// e índice id_ordencompra => ¿es a crédito? (met_pago de la orden)
+// e índice id_ordencompra => saldo por facturar (el valor que debe llevar la factura)
+$ordenes_idx         = [];
+$ordenes_credito_idx = [];
+$ordenes_saldo_idx   = [];
 foreach ($ordenes as $o) {
-    $ordenes_idx[(string)$o['id_ordencompra']] = $o['id_proveedor'];
+    $ordenes_idx[(string)$o['id_ordencompra']]         = $o['id_proveedor'];
+    $ordenes_credito_idx[(string)$o['id_ordencompra']] = es_verdadero($o['met_pago'] ?? false);
+    $ordenes_saldo_idx[(string)$o['id_ordencompra']]   = (float)$o['val_saldo_disponible'];
 }
 
 // ============================================================
@@ -111,7 +145,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception('Factura no válida.');
             }
 
-            $list_cuotasxfactura->execute([':id_factura' => $id_factura]);
+            // El placeholder de $list_cuotasxfactura (prepare_tescxp.php) es :wid_factura
+            $list_cuotasxfactura->execute([':wid_factura' => $id_factura]);
             $cuotas = $list_cuotasxfactura->fetchAll(PDO::FETCH_ASSOC);
 
             $respuesta['success'] = true;
@@ -157,6 +192,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $errores['err-new-oc'] = 'La orden de compra no está disponible.';
                 } elseif ($ordenes_idx[$id_ordencompra] !== $id_proveedor) {
                     $errores['err-new-oc'] = 'La orden de compra pertenece a otro proveedor.';
+                } else {
+                    // Con orden de compra el valor no se digita: es el saldo
+                    // por facturar de la orden. Se toma del servidor, no del
+                    // formulario, para que no se pueda alterar.
+                    $val_factura = $ordenes_saldo_idx[$id_ordencompra];
+                }
+            }
+
+            // Número de cuotas según la modalidad de pago (contado / crédito).
+            // Solo se valida si el proveedor y la orden ya son válidos, porque
+            // la modalidad depende de ellos.
+            if (!isset($errores['err-new-proveedor']) && !isset($errores['err-new-oc'])
+                && !isset($errores['err-new-cuotas'])) {
+                $oc_credito = $tiene_oc ? $ordenes_credito_idx[$id_ordencompra] : null;
+                $cond       = condiciones_pago($proveedores_cond_idx[$id_proveedor], $oc_credito);
+
+                if (!$cond['credito'] && $num_cuotas !== 1) {
+                    $errores['err-new-cuotas'] = $tiene_oc
+                        ? 'La orden de compra es de contado: la factura debe registrarse en 1 sola cuota.'
+                        : 'El proveedor no acepta crédito: la factura debe registrarse en 1 sola cuota.';
+                } elseif ($num_cuotas > $cond['max_cuotas']) {
+                    $errores['err-new-cuotas'] = "El máximo de cuotas pactado con el proveedor es {$cond['max_cuotas']}.";
                 }
             }
 
@@ -398,7 +455,7 @@ ob_start();
 
 <!-- MODAL: NUEVA FACTURA -->
 <div id="modal-new-factura" class="modal-overlay hidden">
-    <div class="modal-box">
+    <div class="modal-box modal-box-factura">
         <div class="modal-header green">
             <div>
                 <h2>Nueva Factura</h2>
@@ -409,6 +466,8 @@ ob_start();
         <div class="modal-body">
             <form id="new-factura-form" novalidate>
                 <input type="hidden" name="btn_nuevo" value="1">
+                <!-- Número y proveedor comparten fila (el modal es más ancho) -->
+                <div class="form-grid form-grid-factura">
                 <div class="form-field">
                     <label class="form-label">Número de Factura <span class="required">*</span></label>
                     <input type="number" id="new-id-factura" name="txt_id_factura" class="form-input" placeholder="Ej: 1024" min="1" max="99999999">
@@ -418,13 +477,19 @@ ob_start();
                     <label class="form-label">Proveedor <span class="required">*</span></label>
                     <select id="new-id-proveedor" name="sel_id_proveedor" class="form-select">
                         <option value="">Seleccione...</option>
-                        <?php foreach ($proveedores_dp as $p): ?>
-                            <option value="<?= htmlspecialchars($p['id_proveedor']) ?>" data-dias="<?= (int)$p['ind_dias_pago'] ?>">
+                        <?php foreach ($proveedores_dp as $p):
+                            $cond_p = $proveedores_cond_idx[$p['id_proveedor']];
+                        ?>
+                            <option value="<?= htmlspecialchars($p['id_proveedor']) ?>"
+                                    data-dias="<?= (int)$p['ind_dias_pago'] ?>"
+                                    data-credito="<?= $cond_p['credito'] ? '1' : '0' ?>"
+                                    data-max-cuotas="<?= (int)$cond_p['max_cuotas'] ?>">
                                 <?= htmlspecialchars($p['nom_tercero']) ?> — <?= (int)$p['ind_dias_pago'] ?> días de pago
                             </option>
                         <?php endforeach; ?>
                     </select>
                     <span class="field-error" id="err-new-proveedor"></span>
+                </div>
                 </div>
                 <div class="form-grid">
                     <div class="form-field">
@@ -442,20 +507,8 @@ ob_start();
                         <p class="field-hint">Calculada automáticamente: emisión + días de pago del proveedor.</p>
                     </div>
                 </div>
-                <div class="form-grid">
-                    <div class="form-field">
-                        <label class="form-label">Valor de la Factura <span class="required">*</span></label>
-                        <input type="number" id="new-val-factura" name="txt_val_factura" class="form-input" placeholder="Ej: 1500000" min="0" max="9999999999" step="1">
-                        <span class="field-error" id="err-new-valor"></span>
-                    </div>
-                    <div class="form-field">
-                        <label class="form-label">Número de Cuotas <span class="required">*</span></label>
-                        <input type="number" id="new-num-cuotas" name="txt_num_cuotas" class="form-input" placeholder="Ej: 1" min="1" max="99" value="1">
-                        <span class="field-error" id="err-new-cuotas"></span>
-                    </div>
-                </div>
-                <p class="config-hint" id="new-cuota-preview" style="display:none"></p>
-
+                <!-- Pregunta de orden de compra y selector de la orden en la misma fila -->
+                <div class="form-grid form-grid-oc">
                 <div class="form-field">
                     <label class="form-label">¿La factura tiene orden de compra? <span class="required">*</span></label>
                     <div class="oc-choice">
@@ -486,6 +539,46 @@ ob_start();
                     </div>
                     <span class="field-error" id="err-new-oc"></span>
                 </div>
+                </div>
+
+                <!-- CONDICIONES DE PAGO
+                     La modalidad (contado / crédito) la define la orden de compra;
+                     en compra directa, lo pactado con el proveedor. La arma
+                     actualizarModalidadPago() en cuentasxpagar.js. -->
+                <div class="pago-modalidad" id="pago-modalidad" data-estado="pendiente">
+                    <span class="pago-modalidad-icono"><i class="fas fa-hand-holding-dollar" id="pago-modalidad-icono"></i></span>
+                    <div class="pago-modalidad-info">
+                        <span class="pago-modalidad-titulo" id="pago-modalidad-titulo">Modalidad de pago</span>
+                        <span class="pago-modalidad-detalle" id="pago-modalidad-detalle">Seleccione un proveedor para conocer la modalidad de pago.</span>
+                    </div>
+                    <span class="pago-modalidad-badge" id="pago-modalidad-badge" style="display:none"></span>
+                </div>
+
+                <div class="form-grid">
+                    <div class="form-field">
+                        <label class="form-label">Valor de la Factura <span class="required">*</span></label>
+                        <!-- Con orden de compra queda bloqueado (readonly) con el saldo por facturar de la orden -->
+                        <div class="valor-wrap">
+                            <input type="number" id="new-val-factura" name="txt_val_factura" class="form-input" placeholder="Ej: 1500000" min="0" max="9999999999" step="1">
+                            <i class="fas fa-lock valor-lock" id="valor-lock" style="display:none"></i>
+                        </div>
+                        <p class="field-hint" id="valor-hint"></p>
+                        <span class="field-error" id="err-new-valor"></span>
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label">Número de Cuotas <span class="required">*</span></label>
+                        <!-- A crédito: se elige entre 1 y el máximo pactado -->
+                        <input type="number" id="new-num-cuotas" name="txt_num_cuotas" class="form-input" placeholder="Ej: 1" min="1" max="1" value="1" style="display:none">
+                        <!-- De contado o sin datos todavía: valor fijo, no editable -->
+                        <div class="cuotas-fijas" id="cuotas-fijas">
+                            <span id="cuotas-fijas-texto">1 cuota</span>
+                            <i class="fas fa-lock"></i>
+                        </div>
+                        <p class="field-hint" id="cuotas-hint"></p>
+                        <span class="field-error" id="err-new-cuotas"></span>
+                    </div>
+                </div>
+                <p class="config-hint" id="new-cuota-preview" style="display:none"></p>
             </form>
         </div>
         <div class="modal-footer">

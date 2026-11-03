@@ -359,13 +359,182 @@ function updateCuotaPreview() {
     const preview      = document.getElementById('new-cuota-preview');
     if (!preview) return;
 
-    if (valorFactura > 0 && numCuotas > 0) {
+    // Sin modalidad definida (falta proveedor u orden) no se adelanta nada
+    const cond = obtenerCondicionesPago();
+    if (!cond || cond.estado !== 'ok') {
+        preview.style.display = 'none';
+        return;
+    }
+
+    if (valorFactura > 0 && numCuotas > 0 && numCuotas <= cond.max) {
         const valorCuota = valorFactura / numCuotas;
         preview.style.display = '';
         preview.innerHTML = `<i class="fas fa-info-circle"></i> Se generarán <strong>${numCuotas}</strong> cuota${numCuotas !== 1 ? 's' : ''} de aproximadamente <strong>${formatCurrency(valorCuota)}</strong> cada una.`;
     } else {
         preview.style.display = 'none';
     }
+}
+
+// ============================================================
+// 2.0 MODALIDAD DE PAGO (CONTADO / CRÉDITO) Y NÚMERO DE CUOTAS
+// ------------------------------------------------------------
+// Reglas (las mismas que valida cuentasxpagar.php en el servidor):
+//   - Con orden de compra: manda el método de pago de la orden.
+//       Contado → 1 cuota fija, no editable.
+//       Crédito → el usuario elige de 1 al máximo de cuotas pactado con
+//                 el proveedor (tab_proveedores.ind_num_cuotas).
+//   - Compra directa: manda lo pactado con el proveedor (ind_credito).
+// ============================================================
+
+// Devuelve:
+//   null                                → falta el proveedor
+//   { estado: 'sin-oc' }                → dijo que hay orden pero no la eligió
+//   { estado: 'ok', credito, max, origen, orden }
+function obtenerCondicionesPago() {
+    const selProv = document.getElementById('new-id-proveedor');
+    const opt     = selProv?.selectedOptions?.[0];
+    if (!selProv || !selProv.value || !opt) return null;
+
+    const creditoProv = opt.dataset.credito === '1';
+    const maxProv     = Math.max(1, parseInt(opt.dataset.maxCuotas || '1', 10) || 1);
+
+    if (tieneOrdenCompra()) {
+        const orden = buscarOrden(val('new-id-ordencompra'));
+        if (!orden) return { estado: 'sin-oc' };
+        const credito = esCredito(orden);
+        return { estado: 'ok', credito, max: credito ? maxProv : 1, origen: 'oc', orden };
+    }
+
+    return { estado: 'ok', credito: creditoProv, max: creditoProv ? maxProv : 1, origen: 'proveedor' };
+}
+
+// Saldo que le queda por facturar a una orden (si ya tiene facturas
+// parciales, es menos que su total). Es el valor que lleva la factura.
+function saldoOrden(orden) {
+    if (!orden) return 0;
+    return orden.val_saldo_disponible != null
+        ? Number(orden.val_saldo_disponible)
+        : Number(orden.val_total);
+}
+
+// Con orden de compra elegida, el valor de la factura se toma de la orden
+// y no se puede editar. Sin orden (compra directa) se digita libremente.
+let valorBloqueadoPorOC = false;
+
+function actualizarBloqueoValor() {
+    const input = document.getElementById('new-val-factura');
+    const lock  = document.getElementById('valor-lock');
+    if (!input) return;
+
+    const orden = tieneOrdenCompra() ? buscarOrden(val('new-id-ordencompra')) : null;
+
+    if (orden) {
+        input.value    = saldoOrden(orden);
+        input.readOnly = true;
+        input.classList.add('bloqueado');
+        if (lock) lock.style.display = '';
+        const facturado = Number(orden.val_facturado ?? 0);
+        setText('valor-hint', facturado > 0
+            ? `Saldo por facturar de la OC #${orden.id_ordencompra} (ya tiene ${formatCurrency(facturado)} facturado).`
+            : `Tomado de la OC #${orden.id_ordencompra}. No se puede modificar.`);
+        valorBloqueadoPorOC = true;
+    } else {
+        // Al quitar la orden se libera el campo y se borra el valor que
+        // venía de ella, para que no quede un valor "heredado" sin querer.
+        if (valorBloqueadoPorOC) input.value = '';
+        input.readOnly = false;
+        input.classList.remove('bloqueado');
+        if (lock) lock.style.display = 'none';
+        setText('valor-hint', '');
+        valorBloqueadoPorOC = false;
+    }
+}
+
+// Pinta el aviso de modalidad y muestra/bloquea el campo de cuotas
+function actualizarModalidadPago() {
+    actualizarBloqueoValor();
+    const cond    = obtenerCondicionesPago();
+    const caja    = document.getElementById('pago-modalidad');
+    const icono   = document.getElementById('pago-modalidad-icono');
+    const badge   = document.getElementById('pago-modalidad-badge');
+    const input   = document.getElementById('new-num-cuotas');
+    const fijas   = document.getElementById('cuotas-fijas');
+    if (!caja || !input || !fijas) return;
+
+    const ponerFijo = (texto, hint) => {
+        input.style.display = 'none';
+        input.min = 1;
+        input.max = 1;
+        input.value = 1;           // el input oculto se envía igual con el formulario
+        fijas.style.display = '';
+        setText('cuotas-fijas-texto', texto);
+        setText('cuotas-hint', hint);
+    };
+
+    if (!cond) {
+        caja.dataset.estado = 'pendiente';
+        if (icono) icono.className = 'fas fa-hand-holding-dollar';
+        setText('pago-modalidad-titulo', 'Modalidad de pago');
+        setText('pago-modalidad-detalle', 'Seleccione un proveedor para conocer la modalidad de pago.');
+        if (badge) badge.style.display = 'none';
+        ponerFijo('—', '');
+    } else if (cond.estado === 'sin-oc') {
+        caja.dataset.estado = 'pendiente';
+        if (icono) icono.className = 'fas fa-hand-holding-dollar';
+        setText('pago-modalidad-titulo', 'Modalidad de pago');
+        setText('pago-modalidad-detalle', 'Seleccione la orden de compra: ella define si la factura es de contado o a crédito.');
+        if (badge) badge.style.display = 'none';
+        ponerFijo('—', '');
+    } else if (!cond.credito) {
+        caja.dataset.estado = 'contado';
+        if (icono) icono.className = 'fas fa-money-bill-wave';
+        setText('pago-modalidad-titulo', 'Pago de contado');
+        setText('pago-modalidad-detalle', cond.origen === 'oc'
+            ? `La orden de compra OC #${cond.orden.id_ordencompra} se pactó de contado. La factura se registra en una sola cuota.`
+            : 'Este proveedor no acepta crédito. La factura se registra en una sola cuota.');
+        if (badge) { badge.textContent = 'Contado'; badge.style.display = ''; }
+        ponerFijo('1 cuota (contado)', 'No se puede modificar: es un pago de contado.');
+    } else {
+        caja.dataset.estado = 'credito';
+        if (icono) icono.className = 'fas fa-credit-card';
+        setText('pago-modalidad-titulo', 'Pago a crédito');
+        setText('pago-modalidad-detalle', cond.origen === 'oc'
+            ? `La orden de compra OC #${cond.orden.id_ordencompra} se pactó a crédito. Puede dividir la factura hasta en ${cond.max} cuota${cond.max !== 1 ? 's' : ''}.`
+            : `Este proveedor acepta crédito. Puede dividir la factura hasta en ${cond.max} cuota${cond.max !== 1 ? 's' : ''}.`);
+        if (badge) { badge.textContent = `Hasta ${cond.max} cuota${cond.max !== 1 ? 's' : ''}`; badge.style.display = ''; }
+
+        if (cond.max <= 1) {
+            // Crédito, pero el proveedor solo pactó 1 cuota
+            ponerFijo('1 cuota', 'El máximo pactado con el proveedor es 1 cuota.');
+        } else {
+            fijas.style.display = 'none';
+            input.style.display = '';
+            input.min = 1;
+            input.max = cond.max;
+            input.placeholder = `1 a ${cond.max}`;
+            const actual = parseInt(input.value, 10);
+            if (!actual || actual < 1) input.value = 1;
+            else if (actual > cond.max) input.value = cond.max;
+            setText('cuotas-hint', `Entre 1 y ${cond.max} cuotas (máximo pactado con el proveedor).`);
+        }
+    }
+
+    updateCuotaPreview();
+}
+
+// Valida el número de cuotas contra la modalidad. Devuelve el mensaje de
+// error o '' si está bien.
+function errorCuotas() {
+    const cond = obtenerCondicionesPago();
+    if (!cond || cond.estado !== 'ok') return '';   // ya lo marca proveedor / orden
+    const n = parseInt(val('new-num-cuotas'), 10);
+    if (!Number.isInteger(n) || n < 1) return 'Ingrese un número de cuotas válido.';
+    if (n > cond.max) {
+        return cond.credito
+            ? `El máximo de cuotas pactado con el proveedor es ${cond.max}.`
+            : 'Es un pago de contado: la factura va en 1 sola cuota.';
+    }
+    return '';
 }
 
 // ============================================================
@@ -431,6 +600,7 @@ function limpiarSeleccionOC() {
     setVal('new-id-ordencompra', '');
     ocPendiente = '';
     renderOCSelected();
+    actualizarModalidadPago();
 }
 
 // ---- Lista dentro del modal ----
@@ -568,15 +738,16 @@ function confirmOC() {
     const orden = buscarOrden(ocPendiente);
     setVal('new-id-ordencompra', ocPendiente);
 
-    // La orden manda: su proveedor y su total pasan a la factura
+    // La orden manda: su proveedor, su saldo por facturar (valor bloqueado)
+    // y su modalidad de pago (contado / crédito) pasan a la factura.
+    // El valor lo pone actualizarModalidadPago() → actualizarBloqueoValor().
     if (orden) {
         setVal('new-id-proveedor', orden.id_proveedor);
-        setVal('new-val-factura', Number(orden.val_total));
         updateVencimientoPreview();
-        updateCuotaPreview();
     }
 
     renderOCSelected();
+    actualizarModalidadPago();
     closeOCModal();
 }
 
@@ -587,6 +758,7 @@ function toggleOCPicker() {
     if (tieneOrdenCompra()) {
         picker.style.display = '';
         renderOCSelected();
+        actualizarModalidadPago();
         // Decir "sí" lleva directo a buscar la orden
         if (!val('new-id-ordencompra')) openOCModal();
     } else {
@@ -610,7 +782,7 @@ function openNewModal() {
     setVal('new-val-factura', '');
     setVal('new-num-cuotas', '1');
     updateVencimientoPreview();
-    updateCuotaPreview();
+    actualizarModalidadPago();
     show('modal-new-factura');
 }
 
@@ -661,16 +833,22 @@ function openDetailModal(idFactura) {
         .then(res => res.text())
         .then(text => {
             let result;
-            try { result = JSON.parse(text); } catch (e) { result = { success: false }; }
+            try { result = JSON.parse(text); } catch (e) { result = { success: false, message: 'Respuesta inválida del servidor' }; }
             const cuotasList = document.getElementById('cuotas-list');
             if (!cuotasList) return;
 
-            if (result.success && result.cuotas && result.cuotas.length > 0) {
+            // Error del servidor: se muestra el mensaje real en vez de "no hay cuotas"
+            if (!result.success) {
+                cuotasList.innerHTML = `<p style="font-size:12px;color:#ef4444;text-align:center;padding:12px">${escapeHtml(result.message || 'Error al cargar las cuotas.')}</p>`;
+                return;
+            }
+
+            if (result.cuotas && result.cuotas.length > 0) {
                 cuotasList.innerHTML = result.cuotas.map(c => {
                     const pagadaCuota = c.ind_pagada === 't' || c.ind_pagada === true;
                     return `
                         <div class="cuota-row">
-                            <span class="cuota-num">Cuota ${c.id_cuota}</span>
+                            <span class="cuota-num">Cuota ${escapeHtml(c.id_cuota)}</span>
                             <span class="cuota-fecha">${formatDate(c.fec_vencimiento)}</span>
                             <span class="cuota-valor">${formatCurrency(c.val_cuota)}</span>
                             <span class="badge ${pagadaCuota ? 'badge-active' : 'badge-inactive'}">${pagadaCuota ? 'Pagada' : 'Pendiente'}</span>
@@ -859,6 +1037,14 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initFacturaModule() {
+    // Mover modales, calendario y toast al <body> para que el overlay cubra
+    // también la barra superior (escapan del contexto de apilamiento del layout).
+    // El orden importa: el selector de OC va después de Nueva Factura para quedar encima.
+    ['modal-new-factura', 'modal-oc', 'modal-detail', 'dp-pop', 'toast'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.parentElement !== document.body) document.body.appendChild(el);
+    });
+
     document.getElementById('btn-add-factura')?.addEventListener('click', openNewModal);
 
     // ---------- CALENDARIO DE FECHAS ----------
@@ -920,10 +1106,25 @@ function initFacturaModule() {
         // Una orden de otro proveedor ya no aplica a esta factura
         const orden = buscarOrden(val('new-id-ordencompra'));
         if (orden && orden.id_proveedor !== this.value) limpiarSeleccionOC();
+        // Cada proveedor tiene sus propias condiciones de crédito
+        actualizarModalidadPago();
     });
     document.getElementById('new-fec-emision')?.addEventListener('change', updateVencimientoPreview);
     document.getElementById('new-val-factura')?.addEventListener('input', updateCuotaPreview);
-    document.getElementById('new-num-cuotas')?.addEventListener('input', updateCuotaPreview);
+    document.getElementById('new-num-cuotas')?.addEventListener('input', function() {
+        const msg = errorCuotas();
+        if (msg) showFieldError('err-new-cuotas', msg);
+        updateCuotaPreview();
+    });
+    // Al salir del campo, se ajusta al rango permitido
+    document.getElementById('new-num-cuotas')?.addEventListener('blur', function() {
+        const cond = obtenerCondicionesPago();
+        if (!cond || cond.estado !== 'ok') return;
+        const n = parseInt(this.value, 10);
+        if (!n || n < 1) this.value = 1;
+        else if (n > cond.max) this.value = cond.max;
+        updateCuotaPreview();
+    });
 
     // ---------- SUBMIT: NUEVA FACTURA ----------
     document.getElementById('new-btn-save')?.addEventListener('click', async function() {
@@ -931,6 +1132,11 @@ function initFacturaModule() {
         clearAllFieldErrors('new');
         if (tieneOrdenCompra() && !val('new-id-ordencompra')) {
             showFieldError('err-new-oc', 'Seleccione la orden de compra de la factura.');
+            return;
+        }
+        const msgCuotas = errorCuotas();
+        if (msgCuotas) {
+            showFieldError('err-new-cuotas', msgCuotas);
             return;
         }
 

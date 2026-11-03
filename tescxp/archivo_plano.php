@@ -28,8 +28,9 @@ require_once('prepare_tescxp.php');
 // - DETALLE (tab_det_archivo_plano): una línea por cuota, con su
 //   id_cronograma y una COPIA de los datos del beneficiario (tipo y número de
 //   documento, nombre, banco, tipo de cuenta y cuenta).
-// - Una cuota rechazada por el banco vuelve a quedar disponible para un
-//   archivo nuevo (reintento). Lo valida fun_insert_det_archivo_plano.
+// - Solo se usan cronogramas PENDIENTES. Cuando el banco responde todas las
+//   cuotas de un cronograma, este queda cerrado aunque haya rechazos; las
+//   cuotas rechazadas se reprograman en un cronograma nuevo.
 
 // ============================================================
 // LIMPIAR MENSAJE DE ERROR DE POSTGRESQL
@@ -186,6 +187,21 @@ function cargar_proveedores_cronograma(int $id_cronograma, $stmt_cuotas, $stmt_c
     }
 
     return array_values($proveedores);
+}
+
+// ¿El cronograma existe y sigue pendiente? Un cronograma cerrado (el banco ya
+// respondió todas sus cuotas) no puede ir en un archivo plano nuevo.
+function validar_cronograma_pendiente(int $id_cronograma, $stmt_crono): ?string {
+    $stmt_crono = requerir_stmt($stmt_crono, 'get_enc_cronopagos');
+    $stmt_crono->execute([':wid_cronograma' => $id_cronograma]);
+    $crono = $stmt_crono->fetch(PDO::FETCH_ASSOC);
+    if (!$crono) {
+        return 'El cronograma seleccionado no existe.';
+    }
+    if (es_verdadero($crono['ind_estado'])) {
+        return 'El cronograma ya fue pagado. Si el banco rechazó cuotas, inclúyalas en un cronograma nuevo.';
+    }
+    return null;
 }
 
 // ============================================================
@@ -392,6 +408,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($id_cronograma <= 0) {
                 throw new Exception('Cronograma no válido.');
             }
+            if (($motivo_crono = validar_cronograma_pendiente($id_cronograma, $get_enc_cronopagos ?? null)) !== null) {
+                throw new Exception($motivo_crono);
+            }
 
             $respuesta['success']     = true;
             $respuesta['proveedores'] = cargar_proveedores_cronograma(
@@ -536,6 +555,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($id_cronograma <= 0) {
                 $errores['err-new-cronograma'] = 'Seleccione un cronograma.';
+            } elseif (($motivo_crono = validar_cronograma_pendiente($id_cronograma, $get_enc_cronopagos ?? null)) !== null) {
+                $errores['err-new-cronograma'] = $motivo_crono;
             }
             if (strlen($nom_archivo) < 3 || strlen($nom_archivo) > 30) {
                 $errores['err-new-nombre'] = 'El nombre debe tener entre 3 y 30 caracteres.';
@@ -583,7 +604,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $filas      = [];
             $sin_cuenta = [];
 
-            if ($id_cronograma > 0) {
+            if ($id_cronograma > 0 && !isset($errores['err-new-cronograma'])) {
                 $proveedores = cargar_proveedores_cronograma(
                     $id_cronograma,
                     $list_cuotas_de_cronograma    ?? null,
@@ -636,7 +657,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $errores['err-new-cronograma'] = 'Sin cuenta bancaria activa: ' . implode(', ', $sin_cuenta)
                         . '. Regístrela en Bancos por Proveedor antes de generar el archivo.';
                 } elseif (empty($filas)) {
-                    $errores['err-new-cronograma'] = 'El cronograma no tiene cuotas disponibles: ya están pagadas o en otro archivo plano sin rechazar.';
+                    $errores['err-new-cronograma'] = 'El cronograma no tiene cuotas disponibles: ya se enviaron al banco en otro archivo plano.';
                 }
             }
 

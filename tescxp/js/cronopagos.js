@@ -783,8 +783,8 @@ window.openEditModal = openEditModal;
 // Cada cuota trae estado_cuota (lo calcula $list_det_cronopagos):
 //   PAGADA · RECHAZADA · PENDIENTE · EN_ARCHIVO · SIN_ENVIAR
 // Un cronograma "Pagado" puede tener cuotas rechazadas: se cerró porque el
-// banco ya respondió todo. Las rechazadas se reintentan en un archivo plano
-// nuevo, pero el cronograma ya no se edita.
+// banco ya respondió todo. Las rechazadas vuelven a la lista de cuotas
+// pendientes para incluirlas en un cronograma nuevo.
 // ============================================================
 const ESTADOS_CUOTA = {
     PAGADA:     { texto: 'Pagada',            clase: 'pagada',     icono: 'fa-circle-check' },
@@ -825,8 +825,6 @@ function renderCuotaDetalle(d, crono, pagado) {
             </span>`;
     } else if (d.estado_cuota === 'PAGADA' && d.id_pago) {
         respuesta = `<span class="cuota-motivo">Archivo #${escapeHtml(d.id_archivo_plano)}${d.fec_pago ? ' · pagada el ' + formatDate(d.fec_pago) : ''}</span>`;
-    } else if (d.estado_cuota === 'EN_ARCHIVO' && Number(d.cant_rechazos) > 0) {
-        respuesta = `<span class="cuota-motivo">Reintento después de ${d.cant_rechazos} rechazo${Number(d.cant_rechazos) !== 1 ? 's' : ''}</span>`;
     }
 
     // Solo se puede quitar una cuota que todavía no ha ido al banco
@@ -868,7 +866,7 @@ function openDetailModal(crono) {
         <div class="crono-cerrado-aviso">
             <i class="fas fa-lock"></i>
             <span>El banco ya respondió este cronograma, así que quedó cerrado y no se puede editar.${rechazadas > 0
-                ? ' Las cuotas rechazadas siguen sin pagar: puede reenviarlas en un archivo plano nuevo.'
+                ? ' Las cuotas rechazadas siguen sin pagar: ya están disponibles para incluirlas en un cronograma nuevo.'
                 : ''}</span>
         </div>` : '';
 
@@ -1185,6 +1183,16 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initCronoModule() {
+    // Mover modales, calendario y toast al <body> para que el overlay cubra
+    // también la barra superior (escapan del contexto de apilamiento del layout).
+    // El orden importa: las confirmaciones van al final para quedar encima del
+    // modal que las abre (detalle → eliminar cuota, nuevo → cuotas vencidas).
+    ['modal-day', 'modal-new-crono', 'modal-edit-crono', 'modal-detail',
+     'modal-confirm-eliminar', 'modal-confirm-vencidas', 'dp-pop', 'toast'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.parentElement !== document.body) document.body.appendChild(el);
+    });
+
     document.getElementById('btn-add-crono')?.addEventListener('click', openNewModal);
 
     document.getElementById('crono-search')?.addEventListener('input', applyFilters);

@@ -547,7 +547,7 @@
     background: rgba(0,0,0,0.5);
     backdrop-filter: blur(3px);
     display: flex; align-items: center; justify-content: center;
-    z-index: 1000; padding: 1rem;
+    z-index: 10000; padding: 1rem;
 }
 
 .modal-overlay.hidden { display: none; }
@@ -1122,7 +1122,7 @@
    ============================================ */
 .dp-pop {
     position: fixed;
-    z-index: 1050;               /* por encima de .modal-overlay (1000) */
+    z-index: 10050;              /* por encima de .modal-overlay (10000) */
     width: 300px;
     padding: 14px;
     background: var(--dash-card);
@@ -1253,7 +1253,7 @@
     padding: 12px 20px; border-radius: 40px;
     display: flex; align-items: center; gap: 10px;
     font-size: 13px; font-weight: 500;
-    z-index: 1100; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    z-index: 10100; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     font-family: 'DM Sans', system-ui, sans-serif;
     animation: slideIn 0.3s ease;
 }
@@ -1293,4 +1293,164 @@
     #mod-cuentasxpagar .stats-grid { grid-template-columns: 1fr; }
     .modal-box { width: 95vw; max-width: 95vw; }
     .cuota-row { grid-template-columns: 1fr auto; row-gap: 8px; }
+}
+
+/* ============================================
+   MODALIDAD DE PAGO (CONTADO / CRÉDITO)
+   La define la orden de compra (o el proveedor en compra directa).
+   data-estado: pendiente | contado | credito
+   ============================================ */
+.pago-modalidad {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 14px;
+    margin: 4px 0 12px;
+    border: 1px solid var(--dash-border);
+    border-radius: 12px;
+    background: #f9fafb;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+.pago-modalidad-icono {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    background: #eef1f5;
+    color: var(--dash-text-muted);
+    font-size: 15px;
+}
+
+.pago-modalidad-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+
+.pago-modalidad-titulo {
+    font-size: 13px; font-weight: 700;
+    color: var(--dash-text-body);
+}
+
+.pago-modalidad-detalle {
+    font-size: 11.5px; font-weight: 500;
+    color: var(--dash-text-sub);
+    line-height: 1.45;
+    text-wrap: pretty;
+}
+
+.pago-modalidad-badge {
+    flex-shrink: 0;
+    padding: 4px 12px;
+    border-radius: 40px;
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.3px;
+    white-space: nowrap;
+}
+
+/* Contado: tono ámbar, comunica que es un valor fijo */
+.pago-modalidad[data-estado="contado"] {
+    background: var(--dash-amber-light);
+    border-color: color-mix(in srgb, var(--dash-amber) 35%, white);
+}
+.pago-modalidad[data-estado="contado"] .pago-modalidad-icono {
+    background: color-mix(in srgb, var(--dash-amber) 18%, white);
+    color: #b45309;
+}
+.pago-modalidad[data-estado="contado"] .pago-modalidad-badge {
+    background: color-mix(in srgb, var(--dash-amber) 18%, white);
+    color: #b45309;
+}
+
+/* Crédito: color primario del sistema */
+.pago-modalidad[data-estado="credito"] {
+    background: var(--dash-blue-light);
+    border-color: var(--dash-blue-border);
+}
+.pago-modalidad[data-estado="credito"] .pago-modalidad-icono {
+    background: color-mix(in srgb, var(--dash-blue) 18%, white);
+    color: var(--dash-blue-dark);
+}
+.pago-modalidad[data-estado="credito"] .pago-modalidad-badge {
+    background: color-mix(in srgb, var(--dash-blue) 18%, white);
+    color: var(--dash-blue-dark);
+}
+
+/* Número de cuotas fijo (contado o sin modalidad aún): aspecto de campo bloqueado */
+.cuotas-fijas {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px;
+    height: 44px;
+    padding: 0 16px;
+    border: 1.5px solid #e2e8f0;
+    border-radius: 50px;
+    background: #f8fafc;
+    font-size: 13px; font-weight: 600;
+    color: var(--dash-text-sub);
+    cursor: not-allowed;
+    user-select: none;
+}
+
+.cuotas-fijas i { color: var(--dash-text-muted); font-size: 12px; flex-shrink: 0; }
+
+#new-factura-form .cuotas-fijas { height: 40px; }
+#new-factura-form .pago-modalidad { padding: 10px 12px; margin: 2px 0 11px; }
+
+#cuotas-hint:empty { display: none; }
+
+@media (max-width: 768px) {
+    .pago-modalidad { flex-wrap: wrap; }
+    .pago-modalidad-badge { margin-left: 48px; }
+}
+
+/* ============================================
+   MODAL NUEVA FACTURA: MÁS ANCHO Y SIN SCROLL
+   Al ser más ancho, campos que antes iban uno debajo del otro
+   comparten fila (número + proveedor, pregunta de OC + orden).
+   ============================================ */
+.modal-box.modal-box-factura {
+    max-width: 880px;
+    max-height: 94vh;
+}
+
+.modal-box-factura .modal-body { padding: 20px 24px; }
+
+/* Número de factura angosto, proveedor ancho */
+#new-factura-form .form-grid-factura { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+
+/* Pregunta de OC y selector de la orden lado a lado */
+#new-factura-form .form-grid-oc { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+#new-factura-form .form-grid-oc .form-field { margin-bottom: 0; }
+#new-factura-form .form-grid-oc .oc-selected { padding: 9px 12px; gap: 10px; flex-wrap: nowrap; }
+#new-factura-form .form-grid-oc .oc-selected .btn { padding: 8px 14px; font-size: 12px; }
+#new-factura-form .form-grid-oc .oc-selected-num,
+#new-factura-form .form-grid-oc .oc-selected-meta {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ---- Valor de la factura bloqueado (viene de la orden de compra) ---- */
+.valor-wrap { position: relative; }
+
+.valor-wrap .valor-lock {
+    position: absolute;
+    right: 16px; top: 50%;
+    transform: translateY(-50%);
+    color: var(--dash-text-muted);
+    font-size: 12px;
+    pointer-events: none;
+}
+
+.form-input.bloqueado,
+.form-input.bloqueado:hover,
+.form-input.bloqueado:focus {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+    box-shadow: none;
+    color: var(--dash-text-sub);
+    font-weight: 600;
+    cursor: not-allowed;
+    padding-right: 38px;
+}
+
+#valor-hint:empty { display: none; }
+
+@media (max-width: 900px) {
+    #new-factura-form .form-grid-factura,
+    #new-factura-form .form-grid-oc { grid-template-columns: 1fr; }
+    #new-factura-form .form-grid-oc .form-field { margin-bottom: 11px; }
 }

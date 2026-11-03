@@ -314,6 +314,13 @@ function ejecutarCambioEstado(id, accion) {
 document.addEventListener('DOMContentLoaded', initTiposPagoModule);
 
 function initTiposPagoModule() {
+    // Mover modales y toast al <body> para que el overlay cubra también
+    // la barra superior (escapan del contexto de apilamiento del layout)
+    ['modal-new-tipo-pago', 'modal-edit-tipo-pago', 'modal-confirm-estado', 'toast'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.parentElement !== document.body) document.body.appendChild(el);
+    });
+
     document.getElementById('btn-add-tipo-pago')?.addEventListener('click', openNewModal);
 
     initCamposNombre();

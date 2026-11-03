@@ -684,6 +684,23 @@ BEGIN
         RAISE EXCEPTION 'La cuota % de la factura % ya está en el cronograma %.', wid_cuota, wid_factura, wid_cronograma;
     END IF;
 
+-- VALIDAR QUE LA CUOTA NO ESTÉ PROGRAMADA EN OTRO CRONOGRAMA
+-- Solo se permite si el banco la RECHAZÓ (estado_pago = 3) en cada cronograma
+-- anterior donde estuvo: es el reintento de un pago rechazado.
+    IF EXISTS (SELECT 1
+                 FROM tab_det_cronopagos d
+                WHERE d.id_factura    = wid_factura
+                  AND d.id_cuota      = wid_cuota
+                  AND d.id_cronograma <> wid_cronograma
+                  AND NOT EXISTS (SELECT 1
+                                    FROM tab_pagos_cxp p
+                                   WHERE p.id_cronograma = d.id_cronograma
+                                     AND p.id_factura    = d.id_factura
+                                     AND p.id_cuota      = d.id_cuota
+                                     AND p.estado_pago   = 3)) THEN
+        RAISE EXCEPTION 'La cuota % de la factura % ya está programada en otro cronograma que el banco no ha rechazado.', wid_cuota, wid_factura;
+    END IF;
+
 -- SI TODO VA BIEN, SE INSERTA EN tab_det_cronopagos
     INSERT INTO tab_det_cronopagos (id_cronograma, id_factura, id_cuota)
     VALUES (wid_cronograma, wid_factura, wid_cuota);
@@ -903,6 +920,10 @@ EXCEPTION
     WHEN not_null_violation THEN
         GET STACKED DIAGNOSTICS wtabla_err = TABLE_NAME, wcolumna_err = COLUMN_NAME;
         RAISE EXCEPTION 'ERROR: % (%.%)', public.fun_mensaje_error(SQLSTATE, SQLERRM), wtabla_err, wcolumna_err;
+    -- Registro duplicado: se agrega la tabla y la restricción que lo impidió.
+    WHEN unique_violation THEN
+        GET STACKED DIAGNOSTICS wtabla_err = TABLE_NAME, wcolumna_err = CONSTRAINT_NAME;
+        RAISE EXCEPTION 'ERROR: % (tabla %, restricción %)', public.fun_mensaje_error(SQLSTATE, SQLERRM), wtabla_err, wcolumna_err;
     WHEN OTHERS THEN
         RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
@@ -911,8 +932,9 @@ LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
 -- FUNCIÓN DE INSERT DE DETALLE DE ARCHIVO PLANO
--- NOTA: Una cuota puede volver a un archivo plano solo si todas sus líneas
---       anteriores tienen un pago RECHAZADO (3).
+-- NOTA: Solo cronogramas pendientes. Una cuota va una sola vez al banco desde
+--       cada cronograma; si el banco la rechaza, se reprograma en un
+--       cronograma nuevo y desde ahí vuelve a un archivo plano.
 --------------------------------------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fun_insert_det_archivo_plano (wid_archivo_plano   tab_det_archivo_plano.id_archivo_plano%TYPE,
                                                          wid_cronograma      tab_det_archivo_plano.id_cronograma%TYPE,
@@ -1020,14 +1042,18 @@ BEGIN
         RAISE EXCEPTION 'El cronograma % no existe o está inactivo.', wid_cronograma;
     END IF;
 
--- UN CRONOGRAMA CERRADO (ya procesado por el banco) SOLO ADMITE REINTENTOS:
--- cuotas suyas que el banco rechazó y que se vuelven a enviar.
-    IF wcrono_cerrado = TRUE AND NOT EXISTS (SELECT 1 FROM tab_pagos_cxp
-                                               WHERE id_cronograma = wid_cronograma
-                                                 AND id_factura    = wid_factura
-                                                 AND id_cuota      = wid_cuota
-                                                 AND estado_pago   = 3) THEN
-        RAISE EXCEPTION 'El cronograma % ya fue pagado; solo admite el reintento de cuotas rechazadas por el banco.', wid_cronograma;
+-- UN CRONOGRAMA CERRADO (el banco ya respondió todas sus cuotas) NO ADMITE
+-- NADA MÁS. Las cuotas rechazadas se reprograman en un cronograma nuevo.
+    IF wcrono_cerrado = TRUE THEN
+        RAISE EXCEPTION 'El cronograma % ya fue pagado. Si el banco rechazó cuotas, inclúyalas en un cronograma nuevo.', wid_cronograma;
+    END IF;
+
+-- UNA CUOTA SOLO VA UNA VEZ AL BANCO DESDE EL MISMO CRONOGRAMA
+    IF EXISTS (SELECT 1 FROM tab_det_archivo_plano
+                WHERE id_cronograma = wid_cronograma
+                  AND id_factura    = wid_factura
+                  AND id_cuota      = wid_cuota) THEN
+        RAISE EXCEPTION 'La cuota % de la factura % ya se envió al banco desde el cronograma %. Si fue rechazada, inclúyala en un cronograma nuevo.', wid_cuota, wid_factura, wid_cronograma;
     END IF;
 
 -- VALIDAR QUE LA CUOTA ESTÉ PROGRAMADA EN ESE CRONOGRAMA (FK a tab_det_cronopagos)
@@ -1139,6 +1165,10 @@ EXCEPTION
     WHEN not_null_violation THEN
         GET STACKED DIAGNOSTICS wtabla_err = TABLE_NAME, wcolumna_err = COLUMN_NAME;
         RAISE EXCEPTION 'ERROR: % (%.%)', public.fun_mensaje_error(SQLSTATE, SQLERRM), wtabla_err, wcolumna_err;
+    -- Registro duplicado: se agrega la tabla y la restricción que lo impidió.
+    WHEN unique_violation THEN
+        GET STACKED DIAGNOSTICS wtabla_err = TABLE_NAME, wcolumna_err = CONSTRAINT_NAME;
+        RAISE EXCEPTION 'ERROR: % (tabla %, restricción %)', public.fun_mensaje_error(SQLSTATE, SQLERRM), wtabla_err, wcolumna_err;
     WHEN OTHERS THEN
         RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
 END;

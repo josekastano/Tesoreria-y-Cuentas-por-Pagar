@@ -566,6 +566,13 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initHistorialModule() {
+    // Mover modales y toast al <body> para que el overlay cubra también
+    // la barra superior (escapan del contexto de apilamiento del layout)
+    ['modal-import', 'modal-detail', 'toast'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.parentElement !== document.body) document.body.appendChild(el);
+    });
+
     document.getElementById('pago-search')?.addEventListener('input', applyFilters);
     document.getElementById('fec-desde')?.addEventListener('change', applyFilters);
     document.getElementById('fec-hasta')?.addEventListener('change', applyFilters);

@@ -501,6 +501,14 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initCajaModule() {
+    // Mover modales y toast al <body> para que el overlay cubra también
+    // la barra superior (escapan del contexto de apilamiento del layout).
+    // El orden importa: la confirmación va después del detalle para quedar encima.
+    ['modal-new-caja', 'modal-edit-caja', 'modal-detail', 'modal-confirm-accion', 'toast'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.parentElement !== document.body) document.body.appendChild(el);
+    });
+
     document.getElementById('btn-add-caja')?.addEventListener('click', openNewModal);
 
     document.getElementById('caja-search')?.addEventListener('input', applyFilters);

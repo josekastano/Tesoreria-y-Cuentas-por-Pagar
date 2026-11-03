@@ -539,7 +539,7 @@
     background: rgba(0,0,0,0.5);
     backdrop-filter: blur(3px);
     display: flex; align-items: center; justify-content: center;
-    z-index: 1000; padding: 1rem;
+    z-index: 10000; padding: 1rem;
 }
 
 .modal-overlay.hidden { display: none; }
@@ -609,7 +609,7 @@
    MODAL ANIDADO: CREAR BANCO DESDE "NUEVA CUENTA"
    ============================================ */
 .modal-overlay.modal-nested {
-    z-index: 1050;                       /* encima del modal de la cuenta (1000) */
+    z-index: 10050;                      /* encima del modal de la cuenta (10000) */
     background: rgba(15, 23, 42, 0.35);
 }
 
@@ -826,7 +826,7 @@
     padding: 12px 20px; border-radius: 40px;
     display: flex; align-items: center; gap: 10px;
     font-size: 13px; font-weight: 500;
-    z-index: 1100; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    z-index: 10100; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     font-family: 'DM Sans', system-ui, sans-serif;
     animation: slideIn 0.3s ease;
 }
