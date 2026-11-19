@@ -285,6 +285,71 @@
 #mod-historial .data-table col.col-estado      { width: 12%; }
 #mod-historial .data-table col.col-acciones    { width: 10%; }
 
+/* Tablas de nómina e inversiones: pago, beneficiario, periodo (o proyecto/cuota), archivo, fecha, valor, respuesta, estado, acciones */
+#mod-historial #tabla-nomina col.col-pago,
+#mod-historial #tabla-inversiones col.col-pago       { width: 7%; }
+#mod-historial #tabla-nomina col.col-empleado,
+#mod-historial #tabla-inversiones col.col-empleado   { width: 18%; }
+#mod-historial #tabla-nomina col.col-periodo,
+#mod-historial #tabla-inversiones col.col-periodo    { width: 9%; }
+#mod-historial #tabla-nomina col.col-origen,
+#mod-historial #tabla-inversiones col.col-origen     { width: 11%; }
+#mod-historial #tabla-nomina col.col-fecha,
+#mod-historial #tabla-inversiones col.col-fecha      { width: 11%; }
+#mod-historial #tabla-nomina col.col-valor,
+#mod-historial #tabla-inversiones col.col-valor      { width: 10%; }
+#mod-historial #tabla-nomina col.col-referencia,
+#mod-historial #tabla-inversiones col.col-referencia { width: 14%; }
+#mod-historial #tabla-nomina col.col-estado,
+#mod-historial #tabla-inversiones col.col-estado     { width: 11%; }
+#mod-historial #tabla-nomina col.col-acciones,
+#mod-historial #tabla-inversiones col.col-acciones   { width: 9%; }
+
+/* ---- SECCIONES: PROVEEDORES / NÓMINA / INVERSIONES (mismo estilo que Archivo Plano) ---- */
+#mod-historial .ap-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--dash-border);
+    margin-bottom: 22px;
+}
+#mod-historial .ap-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 18px;
+    margin-bottom: -1px;
+    background: none;
+    border: none;
+    border-bottom: 3px solid transparent;
+    font-family: var(--dash-font);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--dash-text-sub);
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s;
+}
+#mod-historial .ap-tab:hover { color: var(--dash-blue); }
+#mod-historial .ap-tab.active { color: var(--dash-blue); border-bottom-color: var(--dash-blue); }
+#mod-historial .ap-tab-count {
+    min-width: 22px;
+    padding: 1px 8px;
+    border-radius: 20px;
+    background: #f1f5f9;
+    color: var(--dash-text-sub);
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+}
+#mod-historial .ap-tab.active .ap-tab-count { background: var(--dash-blue-light); color: var(--dash-blue); }
+#mod-historial .ap-tab-alerta {
+    padding: 1px 8px;
+    border-radius: 20px;
+    background: var(--dash-red-light);
+    color: #b91c1c;
+    font-size: 11px;
+    font-weight: 700;
+}
+
 #mod-historial .data-table th {
     text-align: left; padding: 14px 12px;
     background: #f9fafb; font-weight: 700;

@@ -4,7 +4,36 @@
 -- puede ejecutar varias veces (antes fallaba con "ya existe" y algunos
 -- triggers quedaban sin crear).
 -- =========================================================================
-
+-- =========================================================================
+-- LIMPIEZA DE VERSIONES ANTERIORES
+-- Borra las funciones de trigger de este archivo y las obsoletas.
+-- CASCADE elimina también sus triggers; el resto del archivo los vuelve a crear.
+--   fun_val_a_pagar_archivo_plano: val_a_pagar lo asigna fun_insert_det_archivo_plano.
+--   fun_marcar_cuotas_pagadas: cada cuota se marca pagada con fun_aplicar_pago_aprobado.
+-- =========================================================================
+DO $$
+DECLARE r RECORD;
+BEGIN
+    FOR r IN SELECT oid::regprocedure AS fn
+               FROM pg_proc
+              WHERE proname IN ('fun_val_a_pagar_archivo_plano',
+                                'fun_marcar_cuotas_pagadas',
+                                'fun_monto_disponible_caja_menor',
+                                'fun_fecha_cierre_caja_menor',
+                                'fun_fecha_movimiento_caja_menor',
+                                'fun_actualizar_disponible_caja_menor',
+                                'fun_saldo_factura',
+                                'fun_generar_cuotas_factura',
+                                'fun_calcular_total_cronograma',
+                                'fun_val_a_pagar_cronograma',
+                                'fun_validar_fecha_cronograma',
+                                'fun_fecha_generacion_archivo',
+                                'fun_actualizar_saldo_factura',
+                                'fun_actualizar_saldo_proveedor',
+                                'fun_bloquear_nomina_enviada') LOOP
+        EXECUTE 'DROP FUNCTION ' || r.fn || ' CASCADE';
+    END LOOP;
+END $$;
 -- =========================================================================
 -- 1. tab_enc_caja_menor
 -- =========================================================================
@@ -431,3 +460,56 @@ CREATE TRIGGER trg_actualizar_saldo_proveedor
 AFTER UPDATE OF val_saldo ON tab_cuentasxpagar
 FOR EACH ROW
 EXECUTE FUNCTION fun_actualizar_saldo_proveedor();
+
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- 11. tab_nomina (integración con Nómina): NÓMINA ENVIADA O PAGADA NO SE PUEDE CAMBIAR
+--------------------------------------------------------------------------------------------------------------------------------------
+-- Si Nómina vuelve a liquidar después de enviar, el archivo plano ya tiene
+-- el valor viejo. Mientras esté enviada (1) o pagada (2) no se puede cambiar
+-- el valor ni borrar el registro; si alguna vez fue al banco (1, 2 o 3) no se
+-- puede eliminar (la línea del archivo plano apunta a él). Si hay que
+-- corregir algo, Tesorería devuelve el archivo (Archivo Plano → Devolver a
+-- Nómina) y Nómina vuelve a liquidar.
+-- ind_cerrado e ind_pagado SÍ se pueden cambiar: los maneja Nómina
+-- (fun_marcar_nomina_pagada).
+CREATE OR REPLACE FUNCTION fun_bloquear_nomina_enviada() RETURNS TRIGGER AS
+$BODY$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF OLD.estado_pago IN (1, 2, 3) THEN
+            RAISE EXCEPTION 'La nómina de % (%-%, periodo %) ya fue % y no se puede volver a liquidar.%',
+                OLD.id_empleado, OLD.ano_nomina, OLD.mes_nomina, OLD.val_periodo,
+                CASE OLD.estado_pago WHEN 1 THEN 'enviada a Tesorería'
+                                     WHEN 2 THEN 'pagada'
+                                     ELSE 'enviada al banco (rechazada)' END,
+                CASE OLD.estado_pago WHEN 1 THEN ' Pida a Tesorería que la devuelva.'
+                                     WHEN 3 THEN ' Corrija la cuenta en Empleados y reenvíela a Tesorería.'
+                                     ELSE '' END;
+        END IF;
+        RETURN OLD;
+    END IF;
+
+    IF OLD.estado_pago IN (1, 2) AND (
+           NEW.val_neto        IS DISTINCT FROM OLD.val_neto
+        OR NEW.tot_devengado   IS DISTINCT FROM OLD.tot_devengado
+        OR NEW.tot_deducido    IS DISTINCT FROM OLD.tot_deducido
+        OR NEW.ind_borrado     IS DISTINCT FROM OLD.ind_borrado
+        OR NEW.id_empleado     IS DISTINCT FROM OLD.id_empleado
+        OR NEW.ano_nomina      IS DISTINCT FROM OLD.ano_nomina
+        OR NEW.mes_nomina      IS DISTINCT FROM OLD.mes_nomina
+        OR NEW.val_periodo     IS DISTINCT FROM OLD.val_periodo) THEN
+        RAISE EXCEPTION 'La nómina de % (%-%, periodo %) ya fue % y no se puede modificar.%',
+            OLD.id_empleado, OLD.ano_nomina, OLD.mes_nomina, OLD.val_periodo,
+            CASE OLD.estado_pago WHEN 1 THEN 'enviada a Tesorería' ELSE 'pagada' END,
+            CASE OLD.estado_pago WHEN 1 THEN ' Pida a Tesorería que la devuelva.' ELSE '' END;
+    END IF;
+
+    RETURN NEW;
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+DROP TRIGGER IF EXISTS trg_bloquear_nomina_enviada ON tab_nomina;
+CREATE TRIGGER trg_bloquear_nomina_enviada BEFORE UPDATE OR DELETE ON tab_nomina
+FOR EACH ROW EXECUTE FUNCTION fun_bloquear_nomina_enviada();

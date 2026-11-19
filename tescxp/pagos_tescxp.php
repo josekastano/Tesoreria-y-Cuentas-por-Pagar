@@ -3,8 +3,11 @@
 $pageTitle        = 'ERP ADSO — Tesorería';
 $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Historial de Pagos";
-$page_description = "Consulta de todos los pagos registrados sobre cuotas de facturas";
+$page_description = "Pagos registrados con la respuesta del banco: proveedores, nómina e inversiones";
 $page_icon        = "bi-receipt";
+// Cache-busting (igual que Gestión Humana): el navegador no sigue usando un JS/CSS viejo.
+$v_pg_css         = @filemtime(__DIR__ . '/css/pagos_tescxp.css') ?: time();
+$v_pg_js          = @filemtime(__DIR__ . '/js/pagos_tescxp.js')   ?: time();
 $page_extra_css   = ["../modules/tescxp/css/historial_pagos.css"];
 $page_extra_js    = ["../modules/tescxp/js/historial_pagos.js"];
 $show_welcome     = false;
@@ -56,10 +59,17 @@ if (!function_exists('responder_json')) {
     }
 }
 
+// PostgreSQL devuelve los booleanos vía PDO como 't' / 'f' (o true/false).
+if (!function_exists('es_verdadero')) {
+    function es_verdadero($valor): bool {
+        return in_array($valor, ['t', 'T', 'true', 'TRUE', '1', 1, true], true);
+    }
+}
+
 // ="900123456" (formato texto para Excel) -> 900123456
 function limpiar_celda($valor): string {
     $v = trim((string)$valor);
-    if (preg_match('/^="(.*)"$/s', $v, $m)) {
+    if (preg_match('/^="(.*)"$/s', $v, $m) || preg_match('/^=([0-9A-Za-z]+)$/', $v, $m)) {
         $v = trim($m[1]);
     }
     return $v;
@@ -117,6 +127,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         //
         // El valor del pago NUNCA se toma del archivo del banco: lo pone
         // fun_insert_pagos_cxp desde tab_det_archivo_plano.val_a_pagar.
+        //
+        // El tipo del archivo (PROVEEDORES / NOMINA / INVERSION) no está en el
+        // encabezado: lo calcula $get_enc_archivo_plano según su tabla de detalle.
+        //
+        // ARCHIVOS DE NÓMINA: las líneas salen de $list_det_archivo_nomina
+        // (mismo orden que la descarga), el documento es el del empleado y el
+        // pago se registra con fun_insert_pagos_nomina, que deja la nómina del
+        // empleado PAGADA (2) o RECHAZADA (3) en tab_nomina.
+        //
+        // ARCHIVOS DE INVERSIONES: igual, con $list_det_archivo_inversion; el
+        // documento es el del inversor y fun_insert_pagos_inversion deja la
+        // cuota PAGADA (2) o RECHAZADA (3) en tab_cuotas_inversion (Financiero).
         if (isset($_POST['btn_importar'])) {
             $filas = json_decode($_POST['hid_filas_importar'] ?? '', true);
 
@@ -125,6 +147,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $aplicadas = 0;
+            $aplicadas_tipo = ['proveedores' => 0, 'nomina' => 0, 'inversiones' => 0];   // para abrir la pestaña que corresponde
             $omitidas  = [];
             $detalles  = [];   // id_archivo_plano => líneas en el orden de la descarga
 
@@ -167,12 +190,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     continue;
                 }
 
-                // Detalle del archivo, una sola consulta por archivo
+                // Detalle del archivo, una sola consulta por archivo. Primero se
+                // mira de qué es (proveedores, nómina o inversiones).
                 if (!isset($detalles[$id_archivo])) {
-                    $list_det_archivo_plano->execute([':wid_archivo_plano' => (int)$id_archivo]);
-                    $detalles[$id_archivo] = $list_det_archivo_plano->fetchAll(PDO::FETCH_ASSOC);
+                    $get_enc_archivo_plano->execute([':wid_archivo_plano' => (int)$id_archivo]);
+                    $enc_imp = $get_enc_archivo_plano->fetch(PDO::FETCH_ASSOC);
+                    $tipo    = $enc_imp ? (string)$enc_imp['tipo_archivo'] : '';
+
+                    if ($tipo === 'NOMINA') {
+                        $list_det_archivo_nomina->execute([':wid_archivo_plano' => (int)$id_archivo]);
+                        $lineas = $list_det_archivo_nomina->fetchAll(PDO::FETCH_ASSOC);
+                    } elseif ($tipo === 'INVERSION') {
+                        $list_det_archivo_inversion->execute([':wid_archivo_plano' => (int)$id_archivo]);
+                        $lineas = $list_det_archivo_inversion->fetchAll(PDO::FETCH_ASSOC);
+                    } elseif ($enc_imp) {
+                        $list_det_archivo_plano->execute([':wid_archivo_plano' => (int)$id_archivo]);
+                        $lineas = $list_det_archivo_plano->fetchAll(PDO::FETCH_ASSOC);
+                    } else {
+                        $lineas = [];
+                    }
+                    $detalles[$id_archivo] = ['tipo' => $tipo, 'lineas' => $lineas];
                 }
-                $detalle = $detalles[$id_archivo];
+                $es_nomina    = $detalles[$id_archivo]['tipo'] === 'NOMINA';
+                $es_inversion = $detalles[$id_archivo]['tipo'] === 'INVERSION';
+                $detalle      = $detalles[$id_archivo]['lineas'];
 
                 if (empty($detalle)) {
                     $omitidas[] = "{$etiqueta}: el archivo plano {$id_archivo} no existe o no tiene pagos.";
@@ -185,17 +226,118 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     continue;
                 }
 
+                // Documento y cuenta del beneficiario: proveedor, empleado o inversor
+                if ($es_nomina) {
+                    $doc_linea    = trim((string)$linea['id_empleado']);
+                    $cuenta_linea = trim((string)$linea['num_cuenta']);
+                } elseif ($es_inversion) {
+                    $doc_linea    = trim((string)$linea['id_inversor']);
+                    $cuenta_linea = trim((string)$linea['num_cuenta']);
+                } else {
+                    $doc_linea    = trim((string)$linea['id_proveedor']);
+                    $cuenta_linea = trim((string)$linea['cta_proveedor']);
+                }
+
                 // Control cruzado: la línea N del ERP debe ser el mismo pago que respondió el banco
-                if ($doc !== '' && $doc !== trim((string)$linea['id_proveedor'])) {
-                    $omitidas[] = "{$etiqueta}: el documento {$doc} no coincide con el de esa línea ({$linea['id_proveedor']}).";
+                if ($doc !== '' && $doc !== $doc_linea) {
+                    $omitidas[] = "{$etiqueta}: el documento {$doc} no coincide con el de esa línea ({$doc_linea}).";
                     continue;
                 }
-                if ($cuenta !== '' && $cuenta !== trim((string)$linea['cta_proveedor'])) {
-                    $omitidas[] = "{$etiqueta}: la cuenta {$cuenta} no coincide con la de esa línea ({$linea['cta_proveedor']}).";
+                if ($cuenta !== '' && $cuenta !== $cuenta_linea) {
+                    $omitidas[] = "{$etiqueta}: la cuenta {$cuenta} no coincide con la de esa línea ({$cuenta_linea}).";
                     continue;
                 }
                 if ($valor !== '' && (!is_numeric($valor) || abs((float)$valor - (float)$linea['val_a_pagar']) > 0.5)) {
                     $omitidas[] = "{$etiqueta}: el valor {$valor} no coincide con el de esa línea (" . number_format((float)$linea['val_a_pagar'], 0, '', '') . ").";
+                    continue;
+                }
+
+                // ---------- LÍNEA DE NÓMINA ----------
+                if ($es_nomina) {
+                    $clave_nom = [
+                        ':wid_archivo_plano' => (int)$id_archivo,
+                        ':wano_nomina'       => (int)$linea['ano_nomina'],
+                        ':wmes_nomina'       => (int)$linea['mes_nomina'],
+                        ':wval_periodo'      => (int)$linea['val_periodo'],
+                        ':wid_empleado'      => $linea['id_empleado'],
+                    ];
+                    $check_pago_nomina_de_linea->execute($clave_nom);
+                    $previo = $check_pago_nomina_de_linea->fetch(PDO::FETCH_ASSOC);
+
+                    if ($previo && (int)$previo['estado_pago'] !== 1) {
+                        $ya = (int)$previo['estado_pago'] === 2 ? 'APROBADO' : 'RECHAZADO';
+                        $omitidas[] = "{$etiqueta}: ya tiene respuesta registrada ({$ya}).";
+                        continue;
+                    }
+
+                    $pdo->exec('SAVEPOINT sp_fila');
+                    try {
+                        if ($previo) {
+                            $upd_estado_pago_nomina->execute([
+                                ':wid_pago_nomina' => (int)$previo['id_pago_nomina'],
+                                ':westado_pago'    => $estado_pago,
+                                ':wid_codigo'      => $id_codigo,
+                            ]);
+                        } else {
+                            $ins_pago_nomina->execute($clave_nom + [
+                                ':wfec_pago'    => $fec_pago,
+                                ':westado_pago' => $estado_pago,
+                                ':wid_codigo'   => $id_codigo,
+                            ]);
+                        }
+                        $pdo->exec('RELEASE SAVEPOINT sp_fila');
+                    } catch (Throwable $e) {
+                        $pdo->exec('ROLLBACK TO SAVEPOINT sp_fila');
+                        $omitidas[] = "{$etiqueta} (nómina de {$linea['nom_empleado']}): " . limpiar_error_pgsql($e->getMessage());
+                        continue;
+                    }
+
+                    $aplicadas++;
+                    $aplicadas_tipo['nomina']++;
+                    continue;
+                }
+
+                // ---------- LÍNEA DE INVERSIONES ----------
+                if ($es_inversion) {
+                    $clave_inv = [
+                        ':wid_archivo_plano' => (int)$id_archivo,
+                        ':wid_proyecto'      => $linea['id_proyecto'],
+                        ':wid_inversor'      => $linea['id_inversor'],
+                        ':wid_cuota'         => (int)$linea['id_cuota'],
+                    ];
+                    $check_pago_inversion_de_linea->execute($clave_inv);
+                    $previo = $check_pago_inversion_de_linea->fetch(PDO::FETCH_ASSOC);
+
+                    if ($previo && (int)$previo['estado_pago'] !== 1) {
+                        $ya = (int)$previo['estado_pago'] === 2 ? 'APROBADO' : 'RECHAZADO';
+                        $omitidas[] = "{$etiqueta}: ya tiene respuesta registrada ({$ya}).";
+                        continue;
+                    }
+
+                    $pdo->exec('SAVEPOINT sp_fila');
+                    try {
+                        if ($previo) {
+                            $upd_estado_pago_inversion->execute([
+                                ':wid_pago_inversion' => (int)$previo['id_pago_inversion'],
+                                ':westado_pago'       => $estado_pago,
+                                ':wid_codigo'         => $id_codigo,
+                            ]);
+                        } else {
+                            $ins_pago_inversion->execute($clave_inv + [
+                                ':wfec_pago'    => $fec_pago,
+                                ':westado_pago' => $estado_pago,
+                                ':wid_codigo'   => $id_codigo,
+                            ]);
+                        }
+                        $pdo->exec('RELEASE SAVEPOINT sp_fila');
+                    } catch (Throwable $e) {
+                        $pdo->exec('ROLLBACK TO SAVEPOINT sp_fila');
+                        $omitidas[] = "{$etiqueta} (inversión {$linea['id_proyecto']} cuota {$linea['id_cuota']} de {$linea['nom_inversor']}): " . limpiar_error_pgsql($e->getMessage());
+                        continue;
+                    }
+
+                    $aplicadas++;
+                    $aplicadas_tipo['inversiones']++;
                     continue;
                 }
 
@@ -243,12 +385,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $aplicadas++;
+                $aplicadas_tipo['proveedores']++;
             }
 
             $pdo->commit();
 
             $respuesta['success']   = $aplicadas > 0;
             $respuesta['aplicadas'] = $aplicadas;
+            $respuesta['aplicadas_tipo'] = $aplicadas_tipo;
             $respuesta['omitidas']  = $omitidas;
             $respuesta['message']   = $aplicadas > 0
                 ? "Se registraron {$aplicadas} pago(s) a partir de la respuesta del banco." . (count($omitidas) ? ' ' . count($omitidas) . ' fila(s) omitida(s).' : '')
@@ -277,32 +421,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // ============================================================
 // $list_pagos_cxp trae estado_pago numérico (1, 2, 3) y nom_estado_pago
 // ('PENDIENTE', 'APROBADO', 'RECHAZADO'); la vista usa el nombre.
+// Tres secciones: pagos de proveedores (tab_pagos_cxp), de nómina
+// (tab_pagos_nomina) y de inversiones (tab_pagos_inversion). Los id_pago de
+// las tablas se repiten, así que cada fila lleva una clave única
+// (CXP-12 / NOM-12 / INV-12) para el detalle en el JS.
 $list_pagos_cxp->execute();
-$pagos = $list_pagos_cxp->fetchAll(PDO::FETCH_ASSOC);
-
-// ============================================================
-// TOTALES POR ESTADO
-// ============================================================
-$total      = count($pagos);
-$aprobados  = 0;
-$pendientes = 0;
-$rechazados = 0;
-$val_aprobado = 0.0;
-
-foreach ($pagos as $p) {
-    switch ($p['nom_estado_pago']) {
-        case 'APROBADO':
-            $aprobados++;
-            $val_aprobado += (float)$p['val_pago'];
-            break;
-        case 'PENDIENTE':
-            $pendientes++;
-            break;
-        case 'RECHAZADO':
-            $rechazados++;
-            break;
+$pagos_prov = [];
+foreach ($list_pagos_cxp->fetchAll(PDO::FETCH_ASSOC) as $p) {
+    $p['tipo_pago'] = 'CXP';
+    $p['clave']     = 'CXP-' . (int)$p['id_pago'];
+    $pagos_prov[] = $p;
+}
+$pagos_nom = [];
+if (isset($list_pagos_nomina) && $list_pagos_nomina instanceof PDOStatement) {
+    $list_pagos_nomina->execute();
+    foreach ($list_pagos_nomina->fetchAll(PDO::FETCH_ASSOC) as $p) {
+        $p['clave'] = 'NOM-' . (int)$p['id_pago'];
+        $pagos_nom[] = $p;
     }
 }
+$pagos_inv = [];
+if (isset($list_pagos_inversion) && $list_pagos_inversion instanceof PDOStatement) {
+    $list_pagos_inversion->execute();
+    foreach ($list_pagos_inversion->fetchAll(PDO::FETCH_ASSOC) as $p) {
+        $p['clave'] = 'INV-' . (int)$p['id_pago'];
+        $pagos_inv[] = $p;
+    }
+}
+$pagos = array_merge($pagos_prov, $pagos_nom, $pagos_inv);   // para el detalle en el JS (pagosData)
+
+// ============================================================
+// TOTALES POR ESTADO (por sección)
+// ============================================================
+function totales_pagos(array $lista): array {
+    $t = ['total' => count($lista), 'APROBADO' => 0, 'PENDIENTE' => 0, 'RECHAZADO' => 0, 'valor' => 0.0];
+    foreach ($lista as $p) {
+        $e = (string)$p['nom_estado_pago'];
+        if (isset($t[$e])) $t[$e]++;
+        if ($e === 'APROBADO') $t['valor'] += (float)$p['val_pago'];
+    }
+    return $t;
+}
+$tot_prov = totales_pagos($pagos_prov);
+$tot_nom  = totales_pagos($pagos_nom);
+$tot_inv  = totales_pagos($pagos_inv);
 
 // dd/mm/aaaa para mostrar
 function fecha_larga(?string $iso): string {
@@ -323,14 +485,14 @@ function estado_badge(string $estado): string {
 ob_start();
 ?>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-<link rel="stylesheet" href="modules/tescxp/css/pagos_tescxp.css">
+<link rel="stylesheet" href="modules/tescxp/css/pagos_tescxp.css?v=<?= $v_pg_css ?>">
 <div id="mod-historial" class="app-view active">
 
     <!-- ENCABEZADO -->
     <div class="module-header">
         <div class="module-header-text">
             <h1>Historial de Pagos</h1>
-            <p>Consulta de todos los pagos registrados sobre cuotas de facturas</p>
+            <p>Pagos registrados con la respuesta del banco: cuotas de facturas de proveedores, nómina e inversiones</p>
         </div>
         <button id="btn-import-historial" class="btn btn-primary">
             <i class="fas fa-upload"></i> Importar respuesta del banco
@@ -338,41 +500,141 @@ ob_start();
         <input type="file" id="csv-input" accept=".csv,text/csv" style="display:none">
     </div>
 
-    <!-- STATS -->
-    <div class="stats-grid">
+    <!-- SECCIONES (la importación sirve para las tres: cada línea se aplica según su archivo plano) -->
+    <div class="ap-tabs" role="tablist">
+        <button type="button" class="ap-tab active" role="tab" data-tab="proveedores">
+            <i class="fas fa-truck"></i> Proveedores
+            <span class="ap-tab-count"><?= $tot_prov['total'] ?></span>
+        </button>
+        <button type="button" class="ap-tab" role="tab" data-tab="nomina">
+            <i class="fas fa-users"></i> Nómina
+            <span class="ap-tab-count"><?= $tot_nom['total'] ?></span>
+            <?php if ($tot_nom['RECHAZADO'] > 0): ?>
+                <span class="ap-tab-alerta" title="Pagos de nómina que el banco rechazó: Gestión Humana debe corregir la cuenta y reenviarlos"><?= $tot_nom['RECHAZADO'] ?> rechazado<?= $tot_nom['RECHAZADO'] !== 1 ? 's' : '' ?></span>
+            <?php endif; ?>
+        </button>
+        <button type="button" class="ap-tab" role="tab" data-tab="inversiones">
+            <i class="fas fa-hand-holding-dollar"></i> Inversiones
+            <span class="ap-tab-count"><?= $tot_inv['total'] ?></span>
+            <?php if ($tot_inv['RECHAZADO'] > 0): ?>
+                <span class="ap-tab-alerta" title="Pagos de inversiones que el banco rechazó: Financiero debe corregir la cuenta del inversor y reenviarlos"><?= $tot_inv['RECHAZADO'] ?> rechazado<?= $tot_inv['RECHAZADO'] !== 1 ? 's' : '' ?></span>
+            <?php endif; ?>
+        </button>
+    </div>
+
+    <!-- STATS: PROVEEDORES -->
+    <div class="stats-grid" data-seccion="proveedores">
         <div class="stat-card">
             <div class="stat-icon blue"><i class="fas fa-receipt"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Total pagos</div>
-                <div class="stat-value" id="stat-total"><?= $total ?></div>
+                <div class="stat-value"><?= $tot_prov['total'] ?></div>
             </div>
         </div>
         <div class="stat-card">
             <div class="stat-icon green"><i class="fas fa-circle-check"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Aprobados</div>
-                <div class="stat-value" id="stat-aprobados"><?= $aprobados ?></div>
+                <div class="stat-value"><?= $tot_prov['APROBADO'] ?></div>
             </div>
         </div>
         <div class="stat-card">
             <div class="stat-icon yellow"><i class="fas fa-clock"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Pendientes</div>
-                <div class="stat-value" id="stat-pendientes"><?= $pendientes ?></div>
+                <div class="stat-value"><?= $tot_prov['PENDIENTE'] ?></div>
             </div>
         </div>
         <div class="stat-card">
             <div class="stat-icon red"><i class="fas fa-circle-xmark"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Rechazados</div>
-                <div class="stat-value" id="stat-rechazados"><?= $rechazados ?></div>
+                <div class="stat-value"><?= $tot_prov['RECHAZADO'] ?></div>
             </div>
         </div>
         <div class="stat-card">
             <div class="stat-icon green"><i class="fas fa-coins"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Valor aprobado</div>
-                <div class="stat-value" id="stat-valor" style="font-size:16px">$<?= number_format($val_aprobado, 0, ',', '.') ?></div>
+                <div class="stat-value" id="stat-valor-proveedores" style="font-size:16px">$<?= number_format($tot_prov['valor'], 0, ',', '.') ?></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- STATS: NOMINA -->
+    <div class="stats-grid" data-seccion="nomina" style="display:none">
+        <div class="stat-card">
+            <div class="stat-icon blue"><i class="fas fa-users"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Pagos de nómina</div>
+                <div class="stat-value"><?= $tot_nom['total'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon green"><i class="fas fa-circle-check"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Aprobados</div>
+                <div class="stat-value"><?= $tot_nom['APROBADO'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon yellow"><i class="fas fa-clock"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Pendientes</div>
+                <div class="stat-value"><?= $tot_nom['PENDIENTE'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon red"><i class="fas fa-circle-xmark"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Rechazados</div>
+                <div class="stat-value"><?= $tot_nom['RECHAZADO'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon green"><i class="fas fa-coins"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Valor aprobado</div>
+                <div class="stat-value" id="stat-valor-nomina" style="font-size:16px">$<?= number_format($tot_nom['valor'], 0, ',', '.') ?></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- STATS: INVERSIONES -->
+    <div class="stats-grid" data-seccion="inversiones" style="display:none">
+        <div class="stat-card">
+            <div class="stat-icon blue"><i class="fas fa-hand-holding-dollar"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Pagos de inversiones</div>
+                <div class="stat-value"><?= $tot_inv['total'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon green"><i class="fas fa-circle-check"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Aprobados</div>
+                <div class="stat-value"><?= $tot_inv['APROBADO'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon yellow"><i class="fas fa-clock"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Pendientes</div>
+                <div class="stat-value"><?= $tot_inv['PENDIENTE'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon red"><i class="fas fa-circle-xmark"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Rechazados</div>
+                <div class="stat-value"><?= $tot_inv['RECHAZADO'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon green"><i class="fas fa-coins"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Valor aprobado</div>
+                <div class="stat-value" id="stat-valor-inversiones" style="font-size:16px">$<?= number_format($tot_inv['valor'], 0, ',', '.') ?></div>
             </div>
         </div>
     </div>
@@ -407,13 +669,15 @@ ob_start();
                 <option value="all">Todos</option>
             </select>
         </div>
-        <span class="filter-info" id="pagos-count"><?= $total ?> resultado<?= $total !== 1 ? 's' : '' ?></span>
+        <span class="filter-info" id="pagos-count"><?= $tot_prov['total'] ?> resultado<?= $tot_prov['total'] !== 1 ? 's' : '' ?></span>
     </div>
 
-    <!-- TABLA -->
+    <!-- TABLAS -->
     <div class="table-container">
       <div class="table-scroll" id="pagos-table-scroll">
-        <table class="data-table">
+
+        <!-- ===== PROVEEDORES ===== -->
+        <table class="data-table" id="tabla-proveedores" data-seccion="proveedores">
             <!-- Anchos fijos: las columnas no se mueven al ordenar o cambiar de página -->
             <colgroup>
                 <col class="col-pago">
@@ -437,28 +701,27 @@ ob_start();
                     <th class="text-center">Acciones</th>
                 </tr>
             </thead>
-            <tbody id="pagos-tbody">
-            <?php if (empty($pagos)): ?>
+            <tbody id="tbody-proveedores" class="tbody-pagos">
+            <?php if (empty($pagos_prov)): ?>
                 <tr class="empty-row">
                     <td colspan="8">
                         <div class="empty-state">
                             <i class="fas fa-receipt"></i>
-                            <p>No hay pagos registrados</p>
-                            <span>Los pagos aparecen aquí al importar la respuesta del banco a un archivo plano</span>
+                            <p>No hay pagos de proveedores registrados</p>
+                            <span>Aparecen aquí al importar la respuesta del banco a un archivo plano de proveedores</span>
                         </div>
                     </td>
                 </tr>
-            <?php else: ?>
-                <?php foreach ($pagos as $p):
+            <?php endif; ?>
+                <?php foreach ($pagos_prov as $p):
                     $estado    = (string)$p['nom_estado_pago'];
-                    $rechazado = $estado === 'RECHAZADO';
                     $codigo    = trim((string)($p['id_codigo'] ?? ''));
                     $motivo    = trim((string)($p['des_motivo'] ?? ''));
                 ?>
-                <tr data-id-pago="<?= (int)$p['id_pago'] ?>"
+                <tr data-id-pago="<?= htmlspecialchars($p['clave']) ?>"
                     data-estado="<?= htmlspecialchars($estado) ?>"
                     data-fecha="<?= htmlspecialchars((string)$p['fec_pago']) ?>"
-                    class="<?= $rechazado ? 'rechazado' : '' ?>">
+                    class="<?= $estado === 'RECHAZADO' ? 'rechazado' : '' ?>">
                     <td data-sort="<?= (int)$p['id_pago'] ?>"><strong>#<?= (int)$p['id_pago'] ?></strong></td>
                     <td data-sort="<?= (int)$p['id_factura'] * 1000 + (int)$p['id_cuota'] ?>">
                         Fact. #<?= (int)$p['id_factura'] ?> — Cuota <?= (int)$p['id_cuota'] ?><br>
@@ -480,7 +743,157 @@ ob_start();
                     </td>
                 </tr>
                 <?php endforeach; ?>
+            </tbody>
+        </table>
+
+        <!-- ===== NÓMINA ===== -->
+        <table class="data-table" id="tabla-nomina" data-seccion="nomina" style="display:none">
+            <colgroup>
+                <col class="col-pago">
+                <col class="col-empleado">
+                <col class="col-periodo">
+                <col class="col-origen">
+                <col class="col-fecha">
+                <col class="col-valor">
+                <col class="col-referencia">
+                <col class="col-estado">
+                <col class="col-acciones">
+            </colgroup>
+            <thead>
+                <tr>
+                    <th class="sortable" data-sort-key="0" data-sort-type="number">Pago <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="1" data-sort-type="text">Empleado <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="2" data-sort-type="text">Periodo <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="3" data-sort-type="number">Archivo Plano <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="4" data-sort-type="text">Fecha de Pago <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="text-right sortable" data-sort-key="5" data-sort-type="number">Valor <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="6" data-sort-type="text">Respuesta del Banco <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="text-center">Estado</th>
+                    <th class="text-center">Acciones</th>
+                </tr>
+            </thead>
+            <tbody id="tbody-nomina" class="tbody-pagos">
+            <?php if (empty($pagos_nom)): ?>
+                <tr class="empty-row">
+                    <td colspan="9">
+                        <div class="empty-state">
+                            <i class="fas fa-users"></i>
+                            <p>No hay pagos de nómina registrados</p>
+                            <span>Aparecen aquí al importar la respuesta del banco a un archivo plano de nómina</span>
+                        </div>
+                    </td>
+                </tr>
             <?php endif; ?>
+                <?php foreach ($pagos_nom as $p):
+                    $estado    = (string)$p['nom_estado_pago'];
+                    $codigo    = trim((string)($p['id_codigo'] ?? ''));
+                    $motivo    = trim((string)($p['des_motivo'] ?? ''));
+                    $periodo   = (int)$p['ano_nomina'] . '-' . str_pad((string)(int)$p['mes_nomina'], 2, '0', STR_PAD_LEFT);
+                ?>
+                <tr data-id-pago="<?= htmlspecialchars($p['clave']) ?>"
+                    data-estado="<?= htmlspecialchars($estado) ?>"
+                    data-fecha="<?= htmlspecialchars((string)$p['fec_pago']) ?>"
+                    class="<?= $estado === 'RECHAZADO' ? 'rechazado' : '' ?>">
+                    <td data-sort="<?= (int)$p['id_pago'] ?>"><strong>#<?= (int)$p['id_pago'] ?></strong></td>
+                    <td data-sort="<?= htmlspecialchars($p['nom_tercero'] ?? '') ?>">
+                        <?= htmlspecialchars($p['nom_tercero'] ?? '') ?><br>
+                        <small style="color:#94a3b8;font-size:11px"><?= htmlspecialchars(($p['id_tipo'] ?? '') . ' ' . ($p['id_empleado'] ?? '')) ?></small>
+                    </td>
+                    <td data-sort="<?= htmlspecialchars($periodo . '-' . (int)$p['val_periodo']) ?>">
+                        <?= htmlspecialchars($periodo) ?><br>
+                        <small style="color:#94a3b8;font-size:11px">Periodo <?= (int)$p['val_periodo'] ?></small>
+                    </td>
+                    <td data-sort="<?= (int)$p['id_archivo_plano'] ?>">Archivo #<?= (int)$p['id_archivo_plano'] ?></td>
+                    <td data-sort="<?= htmlspecialchars((string)($p['fec_pago'] ?? '')) ?>"><?= fecha_larga($p['fec_pago']) ?></td>
+                    <td class="text-right" data-sort="<?= (float)$p['val_pago'] ?>">$<?= number_format((float)$p['val_pago'], 0, ',', '.') ?></td>
+                    <td class="ref-bancaria" data-sort="<?= htmlspecialchars($codigo) ?>">
+                        <strong><?= htmlspecialchars($codigo) ?></strong>
+                        <?php if ($motivo !== ''): ?><br><small style="color:#94a3b8;font-size:11px"><?= htmlspecialchars($motivo) ?></small><?php endif; ?>
+                    </td>
+                    <td class="text-center"><?= estado_badge($estado) ?></td>
+                    <td class="text-center">
+                        <button class="btn-icon-sm view" title="Ver detalle"
+                                onclick='openDetailModal(<?= json_encode($p, JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_TAG | JSON_HEX_AMP) ?>)'>
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+
+        <!-- ===== INVERSIONES ===== -->
+        <table class="data-table" id="tabla-inversiones" data-seccion="inversiones" style="display:none">
+            <colgroup>
+                <col class="col-pago">
+                <col class="col-empleado">
+                <col class="col-periodo">
+                <col class="col-origen">
+                <col class="col-fecha">
+                <col class="col-valor">
+                <col class="col-referencia">
+                <col class="col-estado">
+                <col class="col-acciones">
+            </colgroup>
+            <thead>
+                <tr>
+                    <th class="sortable" data-sort-key="0" data-sort-type="number">Pago <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="1" data-sort-type="text">Inversor <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="2" data-sort-type="text">Proyecto / Cuota <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="3" data-sort-type="number">Archivo Plano <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="4" data-sort-type="text">Fecha de Pago <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="text-right sortable" data-sort-key="5" data-sort-type="number">Valor <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="6" data-sort-type="text">Respuesta del Banco <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="text-center">Estado</th>
+                    <th class="text-center">Acciones</th>
+                </tr>
+            </thead>
+            <tbody id="tbody-inversiones" class="tbody-pagos">
+            <?php if (empty($pagos_inv)): ?>
+                <tr class="empty-row">
+                    <td colspan="9">
+                        <div class="empty-state">
+                            <i class="fas fa-hand-holding-dollar"></i>
+                            <p>No hay pagos de inversiones registrados</p>
+                            <span>Aparecen aquí al importar la respuesta del banco a un archivo plano de inversiones</span>
+                        </div>
+                    </td>
+                </tr>
+            <?php endif; ?>
+                <?php foreach ($pagos_inv as $p):
+                    $estado    = (string)$p['nom_estado_pago'];
+                    $codigo    = trim((string)($p['id_codigo'] ?? ''));
+                    $motivo    = trim((string)($p['des_motivo'] ?? ''));
+                ?>
+                <tr data-id-pago="<?= htmlspecialchars($p['clave']) ?>"
+                    data-estado="<?= htmlspecialchars($estado) ?>"
+                    data-fecha="<?= htmlspecialchars((string)$p['fec_pago']) ?>"
+                    class="<?= $estado === 'RECHAZADO' ? 'rechazado' : '' ?>">
+                    <td data-sort="<?= (int)$p['id_pago'] ?>"><strong>#<?= (int)$p['id_pago'] ?></strong></td>
+                    <td data-sort="<?= htmlspecialchars($p['nom_tercero'] ?? '') ?>">
+                        <?= htmlspecialchars($p['nom_tercero'] ?? '') ?><br>
+                        <small style="color:#94a3b8;font-size:11px"><?= htmlspecialchars(($p['id_tipo'] ?? '') . ' ' . ($p['id_inversor'] ?? '')) ?></small>
+                    </td>
+                    <td data-sort="<?= htmlspecialchars($p['id_proyecto'] . '-' . str_pad((string)(int)$p['id_cuota'], 3, '0', STR_PAD_LEFT)) ?>">
+                        <?= htmlspecialchars($p['id_proyecto']) ?><br>
+                        <small style="color:#94a3b8;font-size:11px">Cuota <?= (int)$p['id_cuota'] ?></small>
+                    </td>
+                    <td data-sort="<?= (int)$p['id_archivo_plano'] ?>">Archivo #<?= (int)$p['id_archivo_plano'] ?></td>
+                    <td data-sort="<?= htmlspecialchars((string)($p['fec_pago'] ?? '')) ?>"><?= fecha_larga($p['fec_pago']) ?></td>
+                    <td class="text-right" data-sort="<?= (float)$p['val_pago'] ?>">$<?= number_format((float)$p['val_pago'], 0, ',', '.') ?></td>
+                    <td class="ref-bancaria" data-sort="<?= htmlspecialchars($codigo) ?>">
+                        <strong><?= htmlspecialchars($codigo) ?></strong>
+                        <?php if ($motivo !== ''): ?><br><small style="color:#94a3b8;font-size:11px"><?= htmlspecialchars($motivo) ?></small><?php endif; ?>
+                    </td>
+                    <td class="text-center"><?= estado_badge($estado) ?></td>
+                    <td class="text-center">
+                        <button class="btn-icon-sm view" title="Ver detalle"
+                                onclick='openDetailModal(<?= json_encode($p, JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_TAG | JSON_HEX_AMP) ?>)'>
+                            <i class="fas fa-eye"></i>
+                        </button>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
             </tbody>
         </table>
       </div>
@@ -578,7 +991,7 @@ ob_start();
 const pagosData = <?= json_encode($pagos, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) ?>;
 </script>
 
-<script src="modules/tescxp/js/pagos_tescxp.js"></script>
+<script src="modules/tescxp/js/pagos_tescxp.js?v=<?= $v_pg_js ?>"></script>
 
 
 <?php

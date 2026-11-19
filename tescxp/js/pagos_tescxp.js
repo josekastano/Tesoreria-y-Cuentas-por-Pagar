@@ -54,13 +54,70 @@ function capEstado(estado) {
 let pagosPage     = 1;
 let pagosPageSize = 25; // debe coincidir con el <option selected> de #pagos-page-size
 
+// ---- SECCIONES: Proveedores / Nómina / Inversiones (igual que Archivo Plano) ----
+// Cada sección tiene su tabla (tbody-proveedores / tbody-nomina / tbody-inversiones) y sus
+// tarjetas; lo que lleva data-seccion se muestra solo en su sección.
+// Filtros, paginación, orden y "Valor aprobado" actúan sobre la sección
+// activa, que se recuerda en sessionStorage.
+const SECCIONES_PAGO = ['proveedores', 'nomina', 'inversiones'];
+const CLAVE_SECCION  = 'historial_pagos_seccion';
+let seccion = 'proveedores';
+
+function filasSeccion() {
+    return Array.from(document.querySelectorAll(`#tbody-${seccion} tr:not(.empty-row)`));
+}
+
+function cambiarSeccion(nueva, guardar = true) {
+    if (!SECCIONES_PAGO.includes(nueva)) nueva = 'proveedores';
+    seccion = nueva;
+
+    document.querySelectorAll('#mod-historial .ap-tab').forEach(tab => {
+        const activa = tab.dataset.tab === nueva;
+        tab.classList.toggle('active', activa);
+        tab.setAttribute('aria-selected', activa ? 'true' : 'false');
+    });
+    document.querySelectorAll('#mod-historial [data-seccion]').forEach(el => {
+        el.style.display = el.dataset.seccion === nueva ? '' : 'none';
+    });
+
+    const buscador = document.getElementById('pago-search');
+    if (buscador) {
+        buscador.placeholder = {
+            nomina:      'Buscar por pago, empleado, documento, periodo o código del banco...',
+            inversiones: 'Buscar por pago, inversor, documento, proyecto o código del banco...',
+        }[nueva] || 'Buscar por pago, factura, proveedor o código del banco...';
+    }
+
+    pagosSortKey = null;
+    pagosSortDir = 'asc';
+    document.querySelectorAll('#mod-historial .data-table th.sortable').forEach(th => {
+        th.classList.remove('sort-active');
+        const icon = th.querySelector('.sort-icon');
+        if (icon) icon.className = 'fas fa-caret-down sort-icon';
+    });
+
+    if (guardar) guardarSeccion(nueva);
+    clearFilters();
+    ajustarAlturaTablaPagos();
+}
+
+function guardarSeccion(valor) {
+    try { sessionStorage.setItem(CLAVE_SECCION, valor); } catch (e) { /* sin almacenamiento */ }
+}
+
+function seccionGuardada() {
+    const delHash = location.hash.slice(1);
+    if (SECCIONES_PAGO.includes(delHash)) return delHash;
+    try { return sessionStorage.getItem(CLAVE_SECCION) || 'proveedores'; } catch (e) { return 'proveedores'; }
+}
+
 // Filas que pasan todos los filtros (sin tener en cuenta la página)
 function getFilteredPagoRows() {
     const query  = val('pago-search').toLowerCase().trim();
     const active = document.querySelector('#mod-historial .filter-toggle.active')?.dataset.filter ?? 'all';
     const desde  = val('fec-desde');
     const hasta  = val('fec-hasta');
-    const filas  = Array.from(document.querySelectorAll('#pagos-tbody tr:not(.empty-row)'));
+    const filas  = filasSeccion();
 
     return filas.filter(fila => {
         const fecha  = fila.dataset.fecha ?? '';
@@ -89,7 +146,8 @@ function applyFilters() {
         clearBtn.style.display = (query || active !== 'all' || desde || hasta) ? 'flex' : 'none';
     }
 
-    return coinciden.map(fila => Number(fila.dataset.idPago));
+    // data-id-pago es la clave CXP-n / NOM-n (los id de las dos tablas se repiten)
+    return coinciden.map(fila => fila.dataset.idPago);
 }
 
 function clearFilters() {
@@ -104,7 +162,7 @@ function clearFilters() {
 // Muestra solo las filas que pasan el filtro Y caen en la página actual.
 // Devuelve todas las filas que pasan el filtro.
 function renderPagosPage() {
-    const todas     = Array.from(document.querySelectorAll('#pagos-tbody tr:not(.empty-row)'));
+    const todas     = filasSeccion();
     const coinciden = getFilteredPagoRows();
     todas.forEach(fila => { fila.style.display = 'none'; });
 
@@ -123,12 +181,12 @@ function renderPagosPage() {
     let valorAprobado = 0;
     coinciden.forEach(fila => {
         if (fila.dataset.estado !== 'APROBADO') return;
-        const pago = pagosData.find(p => Number(p.id_pago) === Number(fila.dataset.idPago));
+        const pago = pagosData.find(p => p.clave === fila.dataset.idPago);
         if (pago) valorAprobado += Number(pago.val_pago);
     });
 
     setText('pagos-count', `${total} resultado${total !== 1 ? 's' : ''}`);
-    setText('stat-valor', formatMoney(valorAprobado));
+    setText(`stat-valor-${seccion}`, formatMoney(valorAprobado));
 
     const rangeEl = document.getElementById('pagos-range');
     if (rangeEl) {
@@ -168,7 +226,7 @@ let pagosSortKey = null; // índice de columna, coincide con data-sort-key del <
 let pagosSortDir = 'asc';
 
 function sortPagoRows(key, type) {
-    const tbody = document.getElementById('pagos-tbody');
+    const tbody = document.getElementById(`tbody-${seccion}`);
     if (!tbody) return;
     const filas = Array.from(tbody.querySelectorAll('tr:not(.empty-row)'));
     if (filas.length === 0) return;
@@ -191,7 +249,7 @@ function sortPagoRows(key, type) {
     });
     filas.forEach(fila => tbody.appendChild(fila));
 
-    document.querySelectorAll('#mod-historial .data-table th.sortable').forEach(th => {
+    document.querySelectorAll(`#tabla-${seccion} th.sortable`).forEach(th => {
         const icon   = th.querySelector('.sort-icon');
         const activo = th.dataset.sortKey === key;
         th.classList.toggle('sort-active', activo);
@@ -237,7 +295,8 @@ function ajustarAlturaTablaPagos() {
 function openDetailModal(pago) {
     // estado_pago es numérico (1, 2, 3); nom_estado_pago trae el nombre
     const estado = String(pago.nom_estado_pago || '');
-    setText('detail-title', `Pago #${pago.id_pago}`);
+    const titulos = { NOMINA: 'Pago de nómina', INVERSION: 'Pago de inversión' };
+    setText('detail-title', `${titulos[pago.tipo_pago] || 'Pago'} #${pago.id_pago}`);
     setText('detail-subtitle', `${capEstado(estado)} — ${formatFecha(pago.fec_pago)}`);
 
     const rechazado = estado === 'RECHAZADO';
@@ -251,18 +310,35 @@ function openDetailModal(pago) {
             </div>
         </div>` : '';
 
-    const origen = `Archivo plano #${esc(pago.id_archivo_plano)} — Cronograma #${esc(pago.id_cronograma)}`;
+    // Nómina: el beneficiario es un empleado; inversiones: un inversor. Ninguno
+    // de los dos tiene factura ni cronograma.
+    const esNomina    = pago.tipo_pago === 'NOMINA';
+    const esInversion = pago.tipo_pago === 'INVERSION';
+    const periodo  = esNomina
+        ? `${pago.ano_nomina}-${String(Number(pago.mes_nomina)).padStart(2, '0')}, periodo ${Number(pago.val_periodo)}`
+        : '';
+    const origen = esNomina
+        ? `Archivo plano #${esc(pago.id_archivo_plano)} — Nómina ${esc(periodo)}`
+        : esInversion
+            ? `Archivo plano #${esc(pago.id_archivo_plano)} — Inversiones (módulo Financiero)`
+            : `Archivo plano #${esc(pago.id_archivo_plano)} — Cronograma #${esc(pago.id_cronograma)}`;
+    const etiquetaBenef = esNomina ? 'Empleado' : esInversion ? 'Inversor' : 'Proveedor';
+    const docBenef      = esNomina ? pago.id_empleado : esInversion ? pago.id_inversor : null;
 
     document.getElementById('detail-content').innerHTML = `
         ${bloqueMotivo}
         <div class="detail-grid">
             <div class="detail-item">
-                <span class="detail-label">Proveedor</span>
-                <span class="detail-value">${esc(pago.nom_tercero) || '—'}</span>
+                <span class="detail-label">${etiquetaBenef}</span>
+                <span class="detail-value">${esc(pago.nom_tercero) || '—'}${docBenef ? '<br><small>' + esc(pago.id_tipo) + ' ' + esc(docBenef) + '</small>' : ''}</span>
             </div>
             <div class="detail-item">
-                <span class="detail-label">Factura / Cuota</span>
-                <span class="detail-value">#${esc(pago.id_factura)} — Cuota ${esc(pago.id_cuota)}</span>
+                <span class="detail-label">${esNomina ? 'Nómina' : esInversion ? 'Proyecto / Cuota' : 'Factura / Cuota'}</span>
+                <span class="detail-value">${esNomina
+                    ? esc(periodo)
+                    : esInversion
+                        ? `${esc(pago.id_proyecto)} — Cuota ${esc(pago.id_cuota)}`
+                        : `#${esc(pago.id_factura)} — Cuota ${esc(pago.id_cuota)}`}</span>
             </div>
             <div class="detail-item">
                 <span class="detail-label">Valor del Pago</span>
@@ -317,9 +393,11 @@ function detectarSeparador(linea) {
 }
 
 // ="900123456" (formato texto para Excel) -> 900123456
+// También =900123456 o =00 (cuando las comillas ya se perdieron al leer el CSV
+// o alguien editó la celda a mano en Excel).
 function limpiarCelda(v) {
     v = String(v ?? '').trim();
-    const m = v.match(/^="(.*)"$/);
+    const m = v.match(/^="(.*)"$/) || v.match(/^=([0-9A-Za-z]+)$/);
     return m ? m[1].trim() : v;
 }
 
@@ -377,16 +455,28 @@ function parsearCSV(texto) {
     const iArchivo = indiceColumna(cols, 'id_archivo_plano', 'archivo_plano');
     const iConsec  = indiceColumna(cols, 'consecutivo', 'linea', 'secuencia');
     const iEstado  = indiceColumna(cols, 'estado', 'estado_pago');
-    const iCodigo  = indiceColumna(cols, 'codigo_respuesta', 'id_codigo', 'codigo');
+    // "c_digo_respuesta": la tilde de Código se dañó en un archivo con otra codificación
+    const iCodigo  = indiceColumna(cols, 'codigo_respuesta', 'id_codigo', 'codigo', 'c_digo_respuesta', 'c_digo');
     const iDesc    = indiceColumna(cols, 'descripcion_respuesta', 'descripcion', 'des_motivo');
     const iFecha   = indiceColumna(cols, 'fecha_pago', 'fec_pago', 'fecha');
-    const iDoc     = indiceColumna(cols, 'documento_proveedor');
-    const iNombre  = indiceColumna(cols, 'nombre_proveedor');
+    // La respuesta de un archivo de nómina trae "Documento Empleado" / "Nombre Empleado"
+    // y la de inversiones "Documento Inversor" / "Nombre Inversor"
+    const iDoc     = indiceColumna(cols, 'documento_proveedor', 'documento_empleado', 'documento_inversor', 'documento_beneficiario');
+    const iNombre  = indiceColumna(cols, 'nombre_proveedor', 'nombre_empleado', 'nombre_inversor', 'nombre_beneficiario');
     const iCuenta  = indiceColumna(cols, 'cuenta_destino');
     const iValor   = indiceColumna(cols, 'valor_a_pagar', 'valor');
 
     if (iArchivo === -1 || iConsec === -1 || iEstado === -1 || iCodigo === -1) {
-        return { error: 'El archivo debe tener al menos las columnas ID Archivo Plano, Consecutivo, Estado y Código Respuesta.' };
+        // ¿Cargaron el archivo plano que se ENVÍA al banco en lugar de la respuesta?
+        if (iConsec === -1 && iEstado === -1 && cols.includes('valor_a_pagar') && cols.includes('cuenta_destino')) {
+            return { error: 'Este es el archivo plano que se envía al banco, no la respuesta del banco. Genere la respuesta con el simulador (o la que devuelva el banco) y cargue ese archivo.' };
+        }
+        const faltan = [
+            [iArchivo, 'ID Archivo Plano'], [iConsec, 'Consecutivo'],
+            [iEstado, 'Estado'], [iCodigo, 'Código Respuesta']
+        ].filter(([i]) => i === -1).map(([, n]) => n);
+        return { error: `A la respuesta del banco le falta(n) la(s) columna(s): ${faltan.join(', ')}. `
+                      + `Encabezado leído: ${cols.filter(Boolean).slice(0, 8).join(', ')}${cols.length > 8 ? '…' : ''}.` };
     }
 
     const celda = (c, i) => (i !== -1 ? (c[i] ?? '').trim() : '');
@@ -486,11 +576,23 @@ function renderImportacion() {
         : 'Ninguna fila del archivo se puede aplicar');
 }
 
+// El simulador guarda la respuesta en UTF-8, pero si alguien la abre en
+// Excel y la vuelve a guardar como "CSV (delimitado por comas)" queda en
+// Windows-1252 y las tildes ("Código", "Descripción", nombres) se dañan.
+// Se lee como bytes: si no es UTF-8 válido, se decodifica como Windows-1252.
+function decodificarCSV(buffer) {
+    try {
+        return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    } catch (e) {
+        return new TextDecoder('windows-1252').decode(buffer);
+    }
+}
+
 function leerArchivoCSV(archivo) {
     const lector = new FileReader();
 
     lector.onload = e => {
-        const { filas, error } = parsearCSV(String(e.target.result ?? ''));
+        const { filas, error } = parsearCSV(decodificarCSV(e.target.result));
 
         if (error) {
             showToast(error, 'error');
@@ -505,7 +607,7 @@ function leerArchivoCSV(archivo) {
     };
 
     lector.onerror = () => showToast('No se pudo leer el archivo.', 'error');
-    lector.readAsText(archivo, 'UTF-8');
+    lector.readAsArrayBuffer(archivo);
 }
 
 function closeImportModal() {
@@ -539,6 +641,10 @@ async function aplicarImportacion() {
         }
 
         if (result.success) {
+            // Al recargar se abre la pestaña de lo que se importó (si fue de un solo tipo)
+            const t = result.aplicadas_tipo || {};
+            const conPagos = SECCIONES_PAGO.filter(s => (t[s] || 0) > 0);
+            if (conPagos.length === 1) guardarSeccion(conPagos[0]);
             const extra = Array.isArray(result.omitidas) && result.omitidas.length
                 ? ' Omitidas: ' + result.omitidas.slice(0, 2).join(' | ') + (result.omitidas.length > 2 ? ' (ver consola)' : '')
                 : '';
@@ -610,7 +716,11 @@ function initHistorialModule() {
     document.getElementById('close-detail-modal')?.addEventListener('click', closeDetailModal);
     document.getElementById('close-detail-btn')?.addEventListener('click', closeDetailModal);
 
-    applyFilters();
+    // ---------- SECCIONES (pestañas Proveedores / Nómina / Inversiones) ----------
+    document.querySelectorAll('#mod-historial .ap-tab').forEach(tab => {
+        tab.addEventListener('click', () => cambiarSeccion(tab.dataset.tab));
+    });
+    cambiarSeccion(seccionGuardada(), false);   // también aplica los filtros
     ajustarAlturaTablaPagos();
     window.addEventListener('resize', ajustarAlturaTablaPagos);
 }

@@ -15,11 +15,13 @@
  *   5.  tab_bancoxprov                                          (Tabla 6)
  *   6.  tab_cuentasxpagar / tab_cuotasxfactura                  (Tablas 7 y 8)
  *   7.  tab_enc_cronopagos / tab_det_cronopagos                 (Tablas 9 y 10)
- *   8.  tab_tipos_pago                                          (Tabla 11)
+ *   8.  (tab_tipos_pago: eliminada; el tipo sale del detalle)   (Tabla 11)
  *   9.  tab_enc_archivo_plano / tab_det_archivo_plano           (Tablas 12 y 13)
  *  10.  tab_codigos_respuesta_banco                             (Tabla 14)
  *  11.  tab_pagos_cxp                                           (Tabla 15)
  *  12.  tab_bancos  (catálogo compartido con otros módulos)
+ *  13.  Nómina: tab_det_archivo_nomina / tab_pagos_nomina     (Tablas 14 y 17)
+ *  14.  Inversiones: tab_det_archivo_inversion / tab_pagos_inversion (Tablas 18 y 19)
  *
  * ---------------------------------------------------------------------------
  * CONVENCIÓN DE ESTADOS DE PAGO (tab_pagos_cxp.estado_pago)
@@ -67,6 +69,9 @@
  *  3) fun_inserts_tescxp.sql
  *  4) fun_updates_tescxp.sql
  *  5) fun_deletes_tescxp.sql
+ *  6) migracion_nomina_tescxp.sql  SOLO en una base que ya está en uso, UNA vez
+ *     y ANTES de 2) a 5): agrega las columnas de nómina (tab_nomina y
+ *     tab_enc_archivo_plano) y crea las tablas 16 y 17.
  *  Cada archivo de funciones empieza borrando las versiones viejas que
  *  cambiaron de parámetros (archivo plano, pagos) o que ya no existen
  *  (motivos de rechazo).
@@ -996,90 +1001,17 @@ try {
     // =========================================================================
     // 8. TAB_TIPOS_PAGO                                             (Tabla 11)
     // =========================================================================
-    // >>> NUEVO bloque. Lo usan archivo_plano.php (select del encabezado) y
-    //     tipos_pago.php (administración).
-    //     Funciones: fun_insert_tipos_pago, fun_update_tipos_pago y
-    //     fun_delete_tipos_pago (borrado lógico).
-
-    // ---- ACTIVOS (combo del encabezado de archivo plano) ----
-
-    $list_tipos_pago = $pdo->prepare(
-        "SELECT  id_tipo_pago,
-                 nom_tipo_pago
-           FROM  tab_tipos_pago
-          WHERE  ind_borrado = FALSE
-          ORDER BY id_tipo_pago"
-    );
-
-    $get_tipo_pago = $pdo->prepare(
-        "SELECT  id_tipo_pago,
-                 nom_tipo_pago
-           FROM  tab_tipos_pago
-          WHERE  id_tipo_pago = :wid_tipo_pago
-            AND  ind_borrado  = FALSE"
-    );
-
-    // ---- LISTADO DE ADMINISTRACIÓN (incluye inactivos, para reactivarlos) ----
-    $list_tipos_pago_admin = $pdo->prepare(
-        "SELECT  id_tipo_pago,
-                 nom_tipo_pago,
-                 ind_borrado
-           FROM  tab_tipos_pago
-          ORDER BY id_tipo_pago"
-    );
-
-    // ---- UN TIPO DE PAGO, ACTIVO O NO (para validar y para editar/reactivar) ----
-    $get_tipo_pago_admin = $pdo->prepare(
-        "SELECT  id_tipo_pago,
-                 nom_tipo_pago,
-                 ind_borrado
-           FROM  tab_tipos_pago
-          WHERE  id_tipo_pago = :wid_tipo_pago"
-    );
-
-    // ---- ¿NOMBRE REPETIDO EN OTRO TIPO DE PAGO? (para marcar el campo en el formulario) ----
-    $check_nom_tipo_pago = $pdo->prepare(
-        "SELECT  COUNT(*)
-           FROM  tab_tipos_pago
-          WHERE  UPPER(nom_tipo_pago) = UPPER(:wnom_tipo_pago)
-            AND  id_tipo_pago        <> :wid_tipo_pago"
-    );
-
-    // ---- INSERT — fun_insert_tipos_pago (2 params) ----
-    // (ind_borrado entra en FALSE por DEFAULT; el nombre se guarda en mayúsculas)
-    $ins_tipo_pago = $pdo->prepare(
-        "SELECT fun_insert_tipos_pago(
-            :wid_tipo_pago,
-            :wnom_tipo_pago
-        )"
-    );
-
-    // ---- UPDATE — fun_update_tipos_pago (3 params) ----
-    // id_tipo_pago (no cambia), nom_tipo_pago, ind_borrado
-    // (ind_borrado = FALSE reactiva; para inactivar se usa $del_tipo_pago)
-    $upd_tipo_pago = $pdo->prepare(
-        "SELECT fun_update_tipos_pago(
-            :wid_tipo_pago,
-            :wnom_tipo_pago,
-            :wind_borrado
-        )"
-    );
-
-    // ---- DELETE — fun_delete_tipos_pago (1 param) — borrado lógico ----
-    // No deja inactivar si hay archivos planos sin generar con ese tipo.
-    $del_tipo_pago = $pdo->prepare(
-        "SELECT fun_delete_tipos_pago(
-            :wid_tipo_pago
-        )"
-    );
+    // ELIMINADA: el encabezado del archivo plano es el mismo para todos los
+    // pagos. Si un archivo es de PROVEEDORES, NÓMINA o INVERSIONES se sabe por
+    // su tabla de detalle (ver tipo_archivo en $list_enc_archivo_plano).
 
     // =========================================================================
     // 9. TAB_ENC_ARCHIVO_PLANO / TAB_DET_ARCHIVO_PLANO        (Tablas 12 y 13)
     // =========================================================================
     // >>> CAMBIA todo el bloque. Con el modelo nuevo:
     //     - El ENCABEZADO guarda la cuenta de origen (id_empresa, cta_empresa,
-    //       id_banco, ind_tipocuenta), nom_empresa, fecha_aplicacion e
-    //       id_tipo_pago. Ya no está atado a un cronograma.
+    //       id_banco, ind_tipocuenta), nom_empresa y fecha_aplicacion. Ya no
+    //       está atado a un cronograma. Es el mismo para todos los archivos.
     //     - El DETALLE guarda id_cronograma y una copia de los datos del
     //       beneficiario (id_tipo, nom_tercero, id_banco, ind_tipocuenta,
     //       cta_proveedor), para que el archivo conserve lo que se envió.
@@ -1188,6 +1120,11 @@ try {
     );
 
     // ---- LISTADO DE ARCHIVOS PLANOS (ENCABEZADO) ----
+    // tipo_archivo: PROVEEDORES / NOMINA / INVERSION, según la tabla de detalle.
+    // cant_lineas / total: cuotas (proveedores), empleados (nómina) o cuotas de
+    // inversión. nom_aprobados / nom_rechazados: respuesta del banco en los
+    // archivos de nómina e inversiones (sus secciones en Archivo Plano muestran
+    // "Esperando banco", "Pagado"...).
     $list_enc_archivo_plano = $pdo->prepare(
         "SELECT  a.id_archivo_plano,
                  a.nom_archivo,
@@ -1198,13 +1135,63 @@ try {
                  b.nom_banco,
                  a.ind_tipocuenta,
                  a.fecha_aplicacion,
-                 a.id_tipo_pago,
-                 tp.nom_tipo_pago,
                  a.fec_generacion,
-                 a.ind_generado
+                 a.ind_generado,
+                 -- El encabezado no guarda el tipo: sale de la tabla de detalle
+                 -- que tiene sus líneas (mismo criterio que fun_tipo_archivo_plano).
+                 t.tipo_archivo,
+                 CASE t.tipo_archivo WHEN 'NOMINA'    THEN 'NÓMINA'
+                                     WHEN 'INVERSION' THEN 'INVERSIONES'
+                                     ELSE 'PROVEEDORES' END        AS nom_tipo_pago,
+                 (t.tipo_archivo = 'NOMINA')                       AS ind_nomina,
+                 (t.tipo_archivo = 'INVERSION')                    AS ind_inversion,
+                 -- Periodo de nómina: el de sus líneas (un archivo de nómina es de un solo periodo)
+                 pn.ano_nomina,
+                 pn.mes_nomina,
+                 pn.val_periodo,
+                 -- Inversiones: cuántos inversores / proyectos y hasta qué vencimiento
+                 vi.cant_inversores,
+                 vi.cant_proyectos,
+                 vi.max_vencimiento,
+                 CASE t.tipo_archivo
+                      WHEN 'NOMINA'    THEN (SELECT COUNT(*) FROM tab_det_archivo_nomina    n WHERE n.id_archivo_plano = a.id_archivo_plano)
+                      WHEN 'INVERSION' THEN (SELECT COUNT(*) FROM tab_det_archivo_inversion i WHERE i.id_archivo_plano = a.id_archivo_plano)
+                      ELSE                  (SELECT COUNT(*) FROM tab_det_archivo_plano     d WHERE d.id_archivo_plano = a.id_archivo_plano)
+                 END AS cant_lineas,
+                 CASE t.tipo_archivo
+                      WHEN 'NOMINA'    THEN (SELECT COALESCE(SUM(n.val_a_pagar), 0) FROM tab_det_archivo_nomina    n WHERE n.id_archivo_plano = a.id_archivo_plano)
+                      WHEN 'INVERSION' THEN (SELECT COALESCE(SUM(i.val_a_pagar), 0) FROM tab_det_archivo_inversion i WHERE i.id_archivo_plano = a.id_archivo_plano)
+                      ELSE                  (SELECT COALESCE(SUM(d.val_a_pagar), 0) FROM tab_det_archivo_plano     d WHERE d.id_archivo_plano = a.id_archivo_plano)
+                 END AS total,
+                 -- Respuestas del banco en archivos de nómina o de inversiones
+                 (SELECT COUNT(*) FROM tab_pagos_nomina    p WHERE p.id_archivo_plano = a.id_archivo_plano AND p.estado_pago = 2)
+               + (SELECT COUNT(*) FROM tab_pagos_inversion p WHERE p.id_archivo_plano = a.id_archivo_plano AND p.estado_pago = 2) AS nom_aprobados,
+                 (SELECT COUNT(*) FROM tab_pagos_nomina    p WHERE p.id_archivo_plano = a.id_archivo_plano AND p.estado_pago = 3)
+               + (SELECT COUNT(*) FROM tab_pagos_inversion p WHERE p.id_archivo_plano = a.id_archivo_plano AND p.estado_pago = 3) AS nom_rechazados
            FROM  tab_enc_archivo_plano a
-           JOIN  tab_bancos            b  ON b.id_banco      = a.id_banco
-           JOIN  tab_tipos_pago        tp ON tp.id_tipo_pago = a.id_tipo_pago
+           JOIN  tab_bancos            b  ON b.id_banco = a.id_banco
+           CROSS JOIN LATERAL (
+                 SELECT CASE WHEN EXISTS (SELECT 1 FROM tab_det_archivo_nomina    n WHERE n.id_archivo_plano = a.id_archivo_plano) THEN 'NOMINA'
+                             WHEN EXISTS (SELECT 1 FROM tab_det_archivo_inversion i WHERE i.id_archivo_plano = a.id_archivo_plano) THEN 'INVERSION'
+                             ELSE 'PROVEEDORES' END AS tipo_archivo
+           ) t
+           LEFT JOIN LATERAL (
+                 SELECT n.ano_nomina, n.mes_nomina, n.val_periodo
+                   FROM tab_det_archivo_nomina n
+                  WHERE n.id_archivo_plano = a.id_archivo_plano
+                  LIMIT 1
+           ) pn ON TRUE
+           LEFT JOIN LATERAL (
+                 SELECT COUNT(DISTINCT i.id_inversor) AS cant_inversores,
+                        COUNT(DISTINCT i.id_proyecto) AS cant_proyectos,
+                        MAX(c.fec_vencimiento)        AS max_vencimiento
+                   FROM tab_det_archivo_inversion i
+                   JOIN tab_cuotas_inversion      c ON c.id_proyecto = i.id_proyecto
+                                                   AND c.id_inversor = i.id_inversor
+                                                   AND c.id_cuota    = i.id_cuota
+                  WHERE i.id_archivo_plano = a.id_archivo_plano
+                 HAVING COUNT(*) > 0
+           ) vi ON TRUE
           ORDER BY a.id_archivo_plano DESC"
     );
 
@@ -1219,13 +1206,48 @@ try {
                  b.nom_banco,
                  a.ind_tipocuenta,
                  a.fecha_aplicacion,
-                 a.id_tipo_pago,
-                 tp.nom_tipo_pago,
                  a.fec_generacion,
-                 a.ind_generado
+                 a.ind_generado,
+                 -- El encabezado no guarda el tipo: sale de la tabla de detalle
+                 -- que tiene sus líneas (mismo criterio que fun_tipo_archivo_plano).
+                 t.tipo_archivo,
+                 CASE t.tipo_archivo WHEN 'NOMINA'    THEN 'NÓMINA'
+                                     WHEN 'INVERSION' THEN 'INVERSIONES'
+                                     ELSE 'PROVEEDORES' END        AS nom_tipo_pago,
+                 (t.tipo_archivo = 'NOMINA')                       AS ind_nomina,
+                 (t.tipo_archivo = 'INVERSION')                    AS ind_inversion,
+                 -- Periodo de nómina: el de sus líneas (un archivo de nómina es de un solo periodo)
+                 pn.ano_nomina,
+                 pn.mes_nomina,
+                 pn.val_periodo,
+                 -- Inversiones: cuántos inversores / proyectos y hasta qué vencimiento
+                 vi.cant_inversores,
+                 vi.cant_proyectos,
+                 vi.max_vencimiento
            FROM  tab_enc_archivo_plano a
-           JOIN  tab_bancos            b  ON b.id_banco      = a.id_banco
-           JOIN  tab_tipos_pago        tp ON tp.id_tipo_pago = a.id_tipo_pago
+           JOIN  tab_bancos            b  ON b.id_banco = a.id_banco
+           CROSS JOIN LATERAL (
+                 SELECT CASE WHEN EXISTS (SELECT 1 FROM tab_det_archivo_nomina    n WHERE n.id_archivo_plano = a.id_archivo_plano) THEN 'NOMINA'
+                             WHEN EXISTS (SELECT 1 FROM tab_det_archivo_inversion i WHERE i.id_archivo_plano = a.id_archivo_plano) THEN 'INVERSION'
+                             ELSE 'PROVEEDORES' END AS tipo_archivo
+           ) t
+           LEFT JOIN LATERAL (
+                 SELECT n.ano_nomina, n.mes_nomina, n.val_periodo
+                   FROM tab_det_archivo_nomina n
+                  WHERE n.id_archivo_plano = a.id_archivo_plano
+                  LIMIT 1
+           ) pn ON TRUE
+           LEFT JOIN LATERAL (
+                 SELECT COUNT(DISTINCT i.id_inversor) AS cant_inversores,
+                        COUNT(DISTINCT i.id_proyecto) AS cant_proyectos,
+                        MAX(c.fec_vencimiento)        AS max_vencimiento
+                   FROM tab_det_archivo_inversion i
+                   JOIN tab_cuotas_inversion      c ON c.id_proyecto = i.id_proyecto
+                                                   AND c.id_inversor = i.id_inversor
+                                                   AND c.id_cuota    = i.id_cuota
+                  WHERE i.id_archivo_plano = a.id_archivo_plano
+                 HAVING COUNT(*) > 0
+           ) vi ON TRUE
           WHERE  a.id_archivo_plano = :wid_archivo_plano"
     );
 
@@ -1260,10 +1282,10 @@ try {
           WHERE  id_archivo_plano = :wid_archivo_plano"
     );
 
-    // ---- INSERT — fun_insert_enc_archivo_plano (8 params) ----
+    // ---- INSERT — fun_insert_enc_archivo_plano (7 params) ----
     // Confirmada contra fun_inserts_tescxp.sql.
     // nom_archivo, id_empresa, nom_empresa, id_banco, ind_tipocuenta,
-    // cta_empresa, fecha_aplicacion, id_tipo_pago
+    // cta_empresa, fecha_aplicacion (el tipo de pago ya no existe)
     // (id_archivo_plano se autogenera; fec_generacion queda NULL e
     //  ind_generado en FALSE)
     // id_banco e ind_tipocuenta deben ser los de la cuenta elegida: traerlos
@@ -1277,8 +1299,7 @@ try {
             :wid_banco,
             :wind_tipocuenta,
             :wcta_empresa,
-            :wfecha_aplicacion,
-            :wid_tipo_pago
+            :wfecha_aplicacion
         )"
     );
 
@@ -1690,6 +1711,309 @@ try {
                           WHERE id_banco = :wid_banco3)                         AS en_archivos_planos,
                  EXISTS (SELECT 1 FROM tab_codigos_respuesta_banco
                           WHERE id_banco = :wid_banco4 AND ind_borrado = FALSE) AS en_codigos_respuesta"
+    );
+
+    // =========================================================================
+    // 13. NÓMINA → TESORERÍA   (Tablas 14 y 17)
+    // =========================================================================
+    // Nómina envía su archivo con fun_enviar_nomina_tesoreria (botón "Enviar
+    // nómina a Tesorería"). Aquí van las consultas que usa Tesorería para
+    // verlo, ajustarlo, devolverlo, descargarlo y aplicar la respuesta del banco.
+    // El encabezado es el normal: un archivo es de nómina porque sus líneas
+    // están en tab_det_archivo_nomina (tipo_archivo = 'NOMINA').
+    //
+    // Los alias (nom_tercero, id_proveedor, cta_proveedor) son a propósito:
+    // así el detalle de Archivo Plano usa el mismo código para proveedores y
+    // para empleados.
+
+    // ---- DETALLE DE UN ARCHIVO DE NÓMINA ----
+    // El ORDEN es el de la descarga: la línea N del CSV es la fila N de aquí.
+    // La importación de la respuesta del banco depende de este orden.
+    $list_det_archivo_nomina = $pdo->prepare(
+        "SELECT  d.id_archivo_plano,
+                 d.ano_nomina,
+                 d.mes_nomina,
+                 d.val_periodo,
+                 d.id_empleado,
+                 d.id_tipo,
+                 d.nom_empleado,
+                 d.id_banco,
+                 b.nom_banco,
+                 d.ind_tipocuenta,
+                 d.num_cuenta,
+                 d.val_a_pagar,
+                 d.concepto
+           FROM  tab_det_archivo_nomina d
+           JOIN  tab_bancos             b ON b.id_banco = d.id_banco
+          WHERE  d.id_archivo_plano = :wid_archivo_plano
+          ORDER BY d.nom_empleado, d.id_empleado"
+    );
+
+    // ---- CONCILIACIÓN — LÍNEAS DE UN ARCHIVO DE NÓMINA CON SU RESPUESTA ----
+    $list_conciliacion_nomina = $pdo->prepare(
+        "SELECT  d.id_empleado            AS id_proveedor,
+                 d.id_tipo,
+                 d.nom_empleado           AS nom_tercero,
+                 d.id_banco,
+                 b.nom_banco,
+                 d.ind_tipocuenta,
+                 d.num_cuenta             AS cta_proveedor,
+                 d.val_a_pagar,
+                 d.concepto,
+                 p.id_pago_nomina         AS id_pago,
+                 p.estado_pago,
+                 CASE p.estado_pago WHEN 1 THEN 'PENDIENTE'
+                                    WHEN 2 THEN 'APROBADO'
+                                    WHEN 3 THEN 'RECHAZADO' END AS nom_estado_pago,
+                 p.id_codigo,
+                 c.des_motivo
+           FROM  tab_det_archivo_nomina d
+           JOIN  tab_bancos             b ON b.id_banco = d.id_banco
+           LEFT JOIN tab_pagos_nomina   p ON p.id_archivo_plano = d.id_archivo_plano
+                                         AND p.ano_nomina       = d.ano_nomina
+                                         AND p.mes_nomina       = d.mes_nomina
+                                         AND p.val_periodo      = d.val_periodo
+                                         AND p.id_empleado      = d.id_empleado
+           LEFT JOIN tab_codigos_respuesta_banco c ON c.id_codigo = p.id_codigo
+                                                  AND c.id_banco  = p.id_banco
+          WHERE  d.id_archivo_plano = :wid_archivo_plano
+          ORDER BY d.nom_empleado, d.id_empleado"
+    );
+
+    // ---- EDITAR ARCHIVO DE NÓMINA — fun_update_archivo_nomina (5 params) ----
+    // Nombre, cuenta de origen y fecha de aplicación; solo si no está generado.
+    $upd_archivo_nomina = $pdo->prepare(
+        "SELECT fun_update_archivo_nomina(
+            :wid_archivo_plano,
+            :wnom_archivo,
+            :wid_empresa,
+            :wcta_empresa,
+            :wfecha_aplicacion
+        )"
+    );
+
+    // ---- DEVOLVER A NÓMINA — fun_devolver_nomina_tesoreria (1 param) ----
+    // Borra el archivo (solo si no está generado) y libera a los empleados
+    // para que Nómina corrija y vuelva a enviar.
+    $devolver_nomina = $pdo->prepare(
+        "SELECT fun_devolver_nomina_tesoreria(:wid_archivo_plano)"
+    );
+
+    // ---- ¿ESA LÍNEA DE NÓMINA YA TIENE RESPUESTA? ----
+    $check_pago_nomina_de_linea = $pdo->prepare(
+        "SELECT  id_pago_nomina, estado_pago
+           FROM  tab_pagos_nomina
+          WHERE  id_archivo_plano = :wid_archivo_plano
+            AND  ano_nomina       = :wano_nomina
+            AND  mes_nomina       = :wmes_nomina
+            AND  val_periodo      = :wval_periodo
+            AND  id_empleado      = :wid_empleado"
+    );
+
+    // ---- INSERT — fun_insert_pagos_nomina (8 params) ----
+    // Si queda APROBADO (2), tab_nomina pasa a PAGADA; si RECHAZADO (3), a
+    // RECHAZADA (Nómina la puede reenviar).
+    $ins_pago_nomina = $pdo->prepare(
+        "SELECT fun_insert_pagos_nomina(
+            :wid_archivo_plano,
+            :wano_nomina,
+            :wmes_nomina,
+            :wval_periodo,
+            :wid_empleado,
+            :wfec_pago,
+            :westado_pago,
+            :wid_codigo
+        )"
+    );
+
+    // ---- UPDATE — fun_update_pagos_nomina (3 params) ----
+    $upd_estado_pago_nomina = $pdo->prepare(
+        "SELECT fun_update_pagos_nomina(
+            :wid_pago_nomina,
+            :westado_pago,
+            :wid_codigo
+        )"
+    );
+
+    // ---- HISTORIAL: PAGOS DE NÓMINA ----
+    // Mismas columnas que $list_pagos_cxp, más tipo_pago = 'NOMINA' y el
+    // periodo, para mostrarlos juntos en Historial de Pagos.
+    $list_pagos_nomina = $pdo->prepare(
+        "SELECT  'NOMINA'                AS tipo_pago,
+                 p.id_pago_nomina        AS id_pago,
+                 p.ano_nomina,
+                 p.mes_nomina,
+                 p.val_periodo,
+                 p.id_empleado,
+                 d.id_tipo,
+                 d.nom_empleado          AS nom_tercero,
+                 d.num_cuenta,
+                 p.id_archivo_plano,
+                 p.fec_pago,
+                 p.val_pago,
+                 p.estado_pago,
+                 CASE p.estado_pago WHEN 1 THEN 'PENDIENTE'
+                                    WHEN 2 THEN 'APROBADO'
+                                    WHEN 3 THEN 'RECHAZADO' END AS nom_estado_pago,
+                 p.id_codigo,
+                 p.id_banco,
+                 c.des_motivo
+           FROM  tab_pagos_nomina            p
+           JOIN  tab_det_archivo_nomina      d ON d.id_archivo_plano = p.id_archivo_plano
+                                              AND d.ano_nomina       = p.ano_nomina
+                                              AND d.mes_nomina       = p.mes_nomina
+                                              AND d.val_periodo      = p.val_periodo
+                                              AND d.id_empleado      = p.id_empleado
+           JOIN  tab_codigos_respuesta_banco c ON c.id_codigo        = p.id_codigo
+                                              AND c.id_banco         = p.id_banco
+          ORDER BY p.fec_pago DESC, p.id_pago_nomina DESC"
+    );
+
+    // =========================================================================
+    // 14. INVERSIONES (ÁREA FINANCIERA) → TESORERÍA   (Tablas 18 y 19)
+    // =========================================================================
+    // Financiero envía sus cuotas aprobadas con fun_enviar_inversiones_tesoreria
+    // (botón "Enviar cuotas a Tesorería" de su módulo). Mismo manejo que
+    // nómina: encabezado normal, líneas en tab_det_archivo_inversion, respuesta
+    // del banco en tab_pagos_inversion. Los alias (nom_tercero, id_proveedor,
+    // cta_proveedor) son a propósito, igual que en nómina.
+
+    // ---- DETALLE DE UN ARCHIVO DE INVERSIONES ----
+    // El ORDEN es el de la descarga: la línea N del CSV es la fila N de aquí.
+    // La importación de la respuesta del banco depende de este orden.
+    $list_det_archivo_inversion = $pdo->prepare(
+        "SELECT  d.id_archivo_plano,
+                 d.id_proyecto,
+                 d.id_inversor,
+                 d.id_cuota,
+                 d.id_tipo,
+                 d.nom_inversor,
+                 d.id_banco,
+                 b.nom_banco,
+                 d.ind_tipocuenta,
+                 d.num_cuenta,
+                 d.val_a_pagar,
+                 d.concepto
+           FROM  tab_det_archivo_inversion d
+           JOIN  tab_bancos                b ON b.id_banco = d.id_banco
+          WHERE  d.id_archivo_plano = :wid_archivo_plano
+          ORDER BY d.nom_inversor, d.id_inversor, d.id_proyecto, d.id_cuota"
+    );
+
+    // ---- CONCILIACIÓN — LÍNEAS DE UN ARCHIVO DE INVERSIONES CON SU RESPUESTA ----
+    $list_conciliacion_inversion = $pdo->prepare(
+        "SELECT  d.id_inversor            AS id_proveedor,
+                 d.id_tipo,
+                 d.nom_inversor           AS nom_tercero,
+                 d.id_proyecto,
+                 d.id_cuota,
+                 d.id_banco,
+                 b.nom_banco,
+                 d.ind_tipocuenta,
+                 d.num_cuenta             AS cta_proveedor,
+                 d.val_a_pagar,
+                 d.concepto,
+                 p.id_pago_inversion      AS id_pago,
+                 p.estado_pago,
+                 CASE p.estado_pago WHEN 1 THEN 'PENDIENTE'
+                                    WHEN 2 THEN 'APROBADO'
+                                    WHEN 3 THEN 'RECHAZADO' END AS nom_estado_pago,
+                 p.id_codigo,
+                 c.des_motivo
+           FROM  tab_det_archivo_inversion d
+           JOIN  tab_bancos                b ON b.id_banco = d.id_banco
+           LEFT JOIN tab_pagos_inversion   p ON p.id_archivo_plano = d.id_archivo_plano
+                                            AND p.id_proyecto      = d.id_proyecto
+                                            AND p.id_inversor      = d.id_inversor
+                                            AND p.id_cuota         = d.id_cuota
+           LEFT JOIN tab_codigos_respuesta_banco c ON c.id_codigo = p.id_codigo
+                                                  AND c.id_banco  = p.id_banco
+          WHERE  d.id_archivo_plano = :wid_archivo_plano
+          ORDER BY d.nom_inversor, d.id_inversor, d.id_proyecto, d.id_cuota"
+    );
+
+    // ---- EDITAR ARCHIVO DE INVERSIONES — fun_update_archivo_inversion (5 params) ----
+    // Nombre, cuenta de origen y fecha de aplicación; solo si no está generado.
+    $upd_archivo_inversion = $pdo->prepare(
+        "SELECT fun_update_archivo_inversion(
+            :wid_archivo_plano,
+            :wnom_archivo,
+            :wid_empresa,
+            :wcta_empresa,
+            :wfecha_aplicacion
+        )"
+    );
+
+    // ---- DEVOLVER A FINANCIERO — fun_devolver_inversion_tesoreria (1 param) ----
+    // Borra el archivo (solo si no está generado) y deja las cuotas otra vez
+    // pendientes de envío en el módulo Financiero.
+    $devolver_inversion = $pdo->prepare(
+        "SELECT fun_devolver_inversion_tesoreria(:wid_archivo_plano)"
+    );
+
+    // ---- ¿ESA LÍNEA DE INVERSIONES YA TIENE RESPUESTA? ----
+    $check_pago_inversion_de_linea = $pdo->prepare(
+        "SELECT  id_pago_inversion, estado_pago
+           FROM  tab_pagos_inversion
+          WHERE  id_archivo_plano = :wid_archivo_plano
+            AND  id_proyecto      = :wid_proyecto
+            AND  id_inversor      = :wid_inversor
+            AND  id_cuota         = :wid_cuota"
+    );
+
+    // ---- INSERT — fun_insert_pagos_inversion (7 params) ----
+    // Si queda APROBADO (2), la cuota pasa a PAGADA en tab_cuotas_inversion; si
+    // RECHAZADO (3), a RECHAZADA (Financiero la puede reenviar).
+    $ins_pago_inversion = $pdo->prepare(
+        "SELECT fun_insert_pagos_inversion(
+            :wid_archivo_plano,
+            :wid_proyecto,
+            :wid_inversor,
+            :wid_cuota,
+            :wfec_pago,
+            :westado_pago,
+            :wid_codigo
+        )"
+    );
+
+    // ---- UPDATE — fun_update_pagos_inversion (3 params) ----
+    $upd_estado_pago_inversion = $pdo->prepare(
+        "SELECT fun_update_pagos_inversion(
+            :wid_pago_inversion,
+            :westado_pago,
+            :wid_codigo
+        )"
+    );
+
+    // ---- HISTORIAL: PAGOS DE INVERSIONES ----
+    $list_pagos_inversion = $pdo->prepare(
+        "SELECT  'INVERSION'             AS tipo_pago,
+                 p.id_pago_inversion     AS id_pago,
+                 p.id_proyecto,
+                 p.id_inversor,
+                 p.id_cuota,
+                 d.id_tipo,
+                 d.nom_inversor          AS nom_tercero,
+                 d.num_cuenta,
+                 d.concepto,
+                 p.id_archivo_plano,
+                 p.fec_pago,
+                 p.val_pago,
+                 p.estado_pago,
+                 CASE p.estado_pago WHEN 1 THEN 'PENDIENTE'
+                                    WHEN 2 THEN 'APROBADO'
+                                    WHEN 3 THEN 'RECHAZADO' END AS nom_estado_pago,
+                 p.id_codigo,
+                 p.id_banco,
+                 c.des_motivo
+           FROM  tab_pagos_inversion         p
+           JOIN  tab_det_archivo_inversion   d ON d.id_archivo_plano = p.id_archivo_plano
+                                              AND d.id_proyecto      = p.id_proyecto
+                                              AND d.id_inversor      = p.id_inversor
+                                              AND d.id_cuota         = p.id_cuota
+           JOIN  tab_codigos_respuesta_banco c ON c.id_codigo        = p.id_codigo
+                                              AND c.id_banco         = p.id_banco
+          ORDER BY p.fec_pago DESC, p.id_pago_inversion DESC"
     );
 
 } catch (PDOException $e) {

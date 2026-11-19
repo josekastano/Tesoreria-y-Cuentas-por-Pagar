@@ -1,8 +1,29 @@
 --------------------------------------------------------------------------------------------------------------------------------------
 -- LIMPIEZA DE VERSIONES ANTERIORES
--- fun_delete_motivos_rechazo ya no existe (la tabla pasó a tab_codigos_respuesta_banco).
+-- Borra todas las funciones de este archivo (cualquier firma) y las que ya no existen:
+--   fun_delete_motivos_rechazo: la tabla pasó a tab_codigos_respuesta_banco.
+--   fun_delete_tipos_pago: tab_tipos_pago ya no existe; el tipo del archivo plano sale de su tabla de detalle.
 --------------------------------------------------------------------------------------------------------------------------------------
-DROP FUNCTION IF EXISTS fun_delete_motivos_rechazo(NUMERIC);
+DO $$
+DECLARE r RECORD;
+BEGIN
+    FOR r IN SELECT oid::regprocedure AS fn
+               FROM pg_proc
+              WHERE proname IN ('fun_delete_motivos_rechazo',
+                                'fun_delete_tipos_pago',
+                                'fun_delete_festivos',
+                                'fun_delete_enc_caja_menor',
+                                'fun_delete_ctas_empresa',
+                                'fun_delete_bancoxprov',
+                                'fun_delete_enc_cronopagos',
+                                'fun_delete_det_cronopagos',
+                                'fun_delete_codigos_respuesta_banco',
+                                'fun_delete_bancos',
+                                'fun_devolver_nomina_tesoreria',
+                                'fun_devolver_inversion_tesoreria') LOOP
+        EXECUTE 'DROP FUNCTION ' || r.fn;
+    END LOOP;
+END $$;
 
 --------------------------------------------------------------------------------------------------------------------------------------
 -- FUNCIÓN DE DELETE LÓGICO DE FESTIVOS
@@ -289,46 +310,6 @@ $BODY$
 LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
--- FUNCIÓN DE DELETE LÓGICO DE TIPOS DE PAGO
--- NOTA: Es lógico para no romper los archivos planos que ya lo usan. No se permite si hay
---       archivos planos sin generar (ind_generado = FALSE) con este tipo de pago.
---------------------------------------------------------------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION fun_delete_tipos_pago (wid_tipo_pago     tab_tipos_pago.id_tipo_pago%TYPE) RETURNS BOOLEAN AS
-$BODY$
-BEGIN
-
--- VALIDAR QUE EL ID NO SEA NULO
-    IF wid_tipo_pago IS NULL THEN
-        RAISE EXCEPTION 'El ID del tipo de pago no puede ser nulo.';
-    END IF;
-
--- VALIDAR QUE EL TIPO DE PAGO EXISTA Y NO ESTÉ YA BORRADO
-    IF NOT EXISTS (SELECT 1 FROM tab_tipos_pago
-                    WHERE id_tipo_pago = wid_tipo_pago AND ind_borrado = FALSE) THEN
-        RAISE EXCEPTION 'El tipo de pago % no existe o ya se encuentra inactivo.', wid_tipo_pago;
-    END IF;
-
--- VALIDAR QUE NO LO USE UN ARCHIVO PLANO PENDIENTE DE GENERAR
-    IF EXISTS (SELECT 1 FROM tab_enc_archivo_plano
-                WHERE id_tipo_pago = wid_tipo_pago AND ind_generado = FALSE) THEN
-        RAISE EXCEPTION 'No se puede inactivar: hay archivos planos sin generar con el tipo de pago %.', wid_tipo_pago;
-    END IF;
-
--- SI TODO VA BIEN, SE BORRA LÓGICAMENTE
-    UPDATE tab_tipos_pago
-    SET    ind_borrado  = TRUE
-    WHERE  id_tipo_pago = wid_tipo_pago;
-
-    RETURN TRUE;
-
-EXCEPTION
-    WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
-END;
-$BODY$
-LANGUAGE PLPGSQL;
-
---------------------------------------------------------------------------------------------------------------------------------------
 -- FUNCIÓN DE DELETE LÓGICO DE CÓDIGOS DE RESPUESTA DEL BANCO
 -- NOTA: Es lógico para no romper los pagos que ya usan el código.
 --------------------------------------------------------------------------------------------------------------------------------------
@@ -397,6 +378,128 @@ BEGIN
     UPDATE tab_bancos
     SET    ind_borrado = TRUE
     WHERE  id_banco    = wid_banco;
+
+    RETURN TRUE;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN DE DELETE: DEVOLVER UN ARCHIVO DE NÓMINA A NÓMINA (borrado físico del archivo)
+-- Solo mientras Tesorería no lo haya descargado (ind_generado = FALSE).
+-- Borra el archivo y deja los empleados como estaban: 0 (sin enviar), o 3
+-- si en un envío anterior el banco los había rechazado.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_devolver_nomina_tesoreria (wid_archivo_plano  tab_enc_archivo_plano.id_archivo_plano%TYPE) RETURNS BOOLEAN AS
+$BODY$
+DECLARE wind_generado  tab_enc_archivo_plano.ind_generado%TYPE;
+BEGIN
+
+    IF wid_archivo_plano IS NULL THEN
+        RAISE EXCEPTION 'El ID del archivo plano no puede ser nulo.';
+    END IF;
+
+    SELECT ind_generado INTO wind_generado
+      FROM tab_enc_archivo_plano
+     WHERE id_archivo_plano = wid_archivo_plano
+       FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El archivo plano % no existe.', wid_archivo_plano;
+    END IF;
+
+    IF fun_tipo_archivo_plano(wid_archivo_plano) <> 'NOMINA' THEN
+        RAISE EXCEPTION 'El archivo plano % no es de nómina.', wid_archivo_plano;
+    END IF;
+
+    IF wind_generado THEN
+        RAISE EXCEPTION 'El archivo plano % ya fue descargado para el banco y no se puede devolver. Espere la respuesta del banco.', wid_archivo_plano;
+    END IF;
+
+-- Empleados: vuelven a 0, o a 3 si ya tenían un rechazo del banco
+    UPDATE tab_nomina n
+       SET estado_pago = CASE WHEN EXISTS (SELECT 1 FROM tab_pagos_nomina p
+                                            WHERE p.ano_nomina  = n.ano_nomina
+                                              AND p.mes_nomina  = n.mes_nomina
+                                              AND p.val_periodo = n.val_periodo
+                                              AND p.id_empleado = n.id_empleado
+                                              AND p.estado_pago = 3)
+                              THEN 3 ELSE 0 END,
+           id_archivo_plano = NULL
+      FROM tab_det_archivo_nomina d
+     WHERE d.id_archivo_plano = wid_archivo_plano
+       AND n.ano_nomina       = d.ano_nomina
+       AND n.mes_nomina       = d.mes_nomina
+       AND n.val_periodo      = d.val_periodo
+       AND n.id_empleado      = d.id_empleado
+       AND n.estado_pago      = 1;
+
+    DELETE FROM tab_det_archivo_nomina WHERE id_archivo_plano = wid_archivo_plano;
+    DELETE FROM tab_enc_archivo_plano  WHERE id_archivo_plano = wid_archivo_plano;
+
+    RETURN TRUE;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN DE DELETE: DEVOLVER UN ARCHIVO DE INVERSIONES A FINANCIERO (borrado físico del archivo)
+-- Solo mientras Tesorería no lo haya descargado (ind_generado = FALSE).
+-- Borra el archivo y deja las cuotas como estaban: 0 (sin enviar), o 3 si en
+-- un envío anterior el banco las había rechazado. Siguen aprobadas.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_devolver_inversion_tesoreria (wid_archivo_plano  tab_enc_archivo_plano.id_archivo_plano%TYPE) RETURNS BOOLEAN AS
+$BODY$
+DECLARE wind_generado  tab_enc_archivo_plano.ind_generado%TYPE;
+BEGIN
+
+    IF wid_archivo_plano IS NULL THEN
+        RAISE EXCEPTION 'El ID del archivo plano no puede ser nulo.';
+    END IF;
+
+    SELECT ind_generado INTO wind_generado
+      FROM tab_enc_archivo_plano
+     WHERE id_archivo_plano = wid_archivo_plano
+       FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El archivo plano % no existe.', wid_archivo_plano;
+    END IF;
+
+    IF fun_tipo_archivo_plano(wid_archivo_plano) <> 'INVERSION' THEN
+        RAISE EXCEPTION 'El archivo plano % no es de inversiones.', wid_archivo_plano;
+    END IF;
+
+    IF wind_generado THEN
+        RAISE EXCEPTION 'El archivo plano % ya fue descargado para el banco y no se puede devolver. Espere la respuesta del banco.', wid_archivo_plano;
+    END IF;
+
+-- Cuotas: vuelven a 0, o a 3 si ya tenían un rechazo del banco
+    UPDATE tab_cuotas_inversion c
+       SET estado_pago = CASE WHEN EXISTS (SELECT 1 FROM tab_pagos_inversion p
+                                            WHERE p.id_proyecto = c.id_proyecto
+                                              AND p.id_inversor = c.id_inversor
+                                              AND p.id_cuota    = c.id_cuota
+                                              AND p.estado_pago = 3)
+                              THEN 3 ELSE 0 END,
+           id_archivo_plano = NULL
+      FROM tab_det_archivo_inversion d
+     WHERE d.id_archivo_plano = wid_archivo_plano
+       AND c.id_proyecto      = d.id_proyecto
+       AND c.id_inversor      = d.id_inversor
+       AND c.id_cuota         = d.id_cuota
+       AND c.estado_pago      = 1;
+
+    DELETE FROM tab_det_archivo_inversion WHERE id_archivo_plano = wid_archivo_plano;
+    DELETE FROM tab_enc_archivo_plano     WHERE id_archivo_plano = wid_archivo_plano;
 
     RETURN TRUE;
 

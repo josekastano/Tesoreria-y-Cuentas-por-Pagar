@@ -9,12 +9,30 @@ DECLARE r RECORD;
 BEGIN
     FOR r IN SELECT oid::regprocedure AS fn
                FROM pg_proc
-              WHERE proname IN ('fun_insert_enc_archivo_plano',
+              WHERE proname IN ('fun_insert_pmtros_tescxp',
+                                'fun_insert_festivos',
+                                'fun_insert_enc_caja_menor',
+                                'fun_insert_det_caja_menor',
+                                'fun_insert_ctas_empresa',
+                                'fun_insert_bancoxprov',
+                                'fun_insert_cuentasxpagar',
+                                'fun_insert_enc_cronopagos',
+                                'fun_insert_det_cronopagos',
+                                'fun_insert_enc_archivo_plano',
                                 'fun_insert_det_archivo_plano',
-                                'fun_insert_motivos_rechazo',
-                                'fun_insert_pagos_cxp',
+                                'fun_insert_codigos_respuesta_banco',
+                                'fun_insert_bancos',
+                                'fun_cerrar_cronograma_procesado',
                                 'fun_aplicar_pago_aprobado',
-                                'fun_cerrar_cronograma_procesado') LOOP
+                                'fun_insert_pagos_cxp',
+                                'fun_tipo_archivo_plano',
+                                'fun_proxima_fecha_pago',
+                                'fun_enviar_nomina_tesoreria',
+                                'fun_aplicar_respuesta_nomina',
+                                'fun_insert_pagos_nomina',
+                                'fun_enviar_inversiones_tesoreria',
+                                'fun_aplicar_respuesta_inversion',
+                                'fun_insert_pagos_inversion') LOOP
         EXECUTE 'DROP FUNCTION ' || r.fn;
     END LOOP;
 END $$;
@@ -715,66 +733,12 @@ $BODY$
 LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
--- FUNCIÓN DE INSERT DE TIPOS DE PAGO
--- NOTA: El ID va de 1 a 9 (DECIMAL(1,0)) y lo elige el usuario. El nombre se guarda en
---       mayúsculas y no se puede repetir (sin importar mayúsculas/minúsculas).
---------------------------------------------------------------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION fun_insert_tipos_pago (wid_tipo_pago     tab_tipos_pago.id_tipo_pago%TYPE,
-                                                  wnom_tipo_pago    tab_tipos_pago.nom_tipo_pago%TYPE) RETURNS BOOLEAN AS
-$BODY$
-BEGIN
-
--- VALIDAR QUE LOS CAMPOS NO SEAN NULOS
-    IF wid_tipo_pago IS NULL THEN
-        RAISE EXCEPTION 'El ID del tipo de pago no puede ser nulo.';
-    END IF;
-
-    IF wnom_tipo_pago IS NULL THEN
-        RAISE EXCEPTION 'El nombre del tipo de pago no puede ser nulo.';
-    END IF;
-
--- VALIDAR RANGO DEL ID (mismo CHECK de la tabla)
-    IF wid_tipo_pago < 1 OR wid_tipo_pago > 9 THEN
-        RAISE EXCEPTION 'El ID del tipo de pago debe estar entre 1 y 9.';
-    END IF;
-
--- VALIDAR LONGITUD DEL NOMBRE (mismo CHECK de la tabla)
-    IF LENGTH(TRIM(wnom_tipo_pago)) < 1 OR LENGTH(TRIM(wnom_tipo_pago)) > 15 THEN
-        RAISE EXCEPTION 'El nombre del tipo de pago debe tener entre 1 y 15 caracteres.';
-    END IF;
-
--- VALIDAR QUE EL ID NO EXISTA (si está inactivo, se debe reactivar en vez de crearlo)
-    IF EXISTS (SELECT 1 FROM tab_tipos_pago WHERE id_tipo_pago = wid_tipo_pago AND ind_borrado = TRUE) THEN
-        RAISE EXCEPTION 'El ID % ya existe y está inactivo; actívelo en lugar de crearlo de nuevo.', wid_tipo_pago;
-    END IF;
-
-    IF EXISTS (SELECT 1 FROM tab_tipos_pago WHERE id_tipo_pago = wid_tipo_pago) THEN
-        RAISE EXCEPTION 'El ID % ya está en uso.', wid_tipo_pago;
-    END IF;
-
--- VALIDAR QUE EL NOMBRE NO ESTÉ REPETIDO
-    IF EXISTS (SELECT 1 FROM tab_tipos_pago WHERE UPPER(nom_tipo_pago) = UPPER(TRIM(wnom_tipo_pago))) THEN
-        RAISE EXCEPTION 'Ya existe un tipo de pago con el nombre %.', UPPER(TRIM(wnom_tipo_pago));
-    END IF;
-
--- SI TODO VA BIEN, SE INSERTA (ind_borrado QUEDA EN FALSE POR EL DEFAULT)
-    INSERT INTO tab_tipos_pago (id_tipo_pago, nom_tipo_pago)
-    VALUES                     (wid_tipo_pago, UPPER(TRIM(wnom_tipo_pago)));
-
-    RETURN TRUE;
-
-EXCEPTION
-    WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
-END;
-$BODY$
-LANGUAGE PLPGSQL;
-
---------------------------------------------------------------------------------------------------------------------------------------
 -- FUNCIÓN DE INSERT DE ENCABEZADO DE ARCHIVO PLANO
 --    El encabezado ya no lleva id_cronograma: lleva la cuenta de origen de la
---    empresa, el tipo de pago y la fecha de aplicación. Un archivo puede tener
---    cuotas de varios cronogramas (van en el detalle).
+--    empresa y la fecha de aplicación. Un archivo puede tener cuotas de varios
+--    cronogramas (van en el detalle). El encabezado es el mismo para todos los
+--    archivos planos: si es de proveedores, nómina o inversiones se sabe por su
+--    tabla de detalle (fun_tipo_archivo_plano).
 --------------------------------------------------------------------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fun_insert_enc_archivo_plano (wnom_archivo        tab_enc_archivo_plano.nom_archivo%TYPE,
                                                          wid_empresa         tab_enc_archivo_plano.id_empresa%TYPE,
@@ -782,8 +746,7 @@ CREATE OR REPLACE FUNCTION fun_insert_enc_archivo_plano (wnom_archivo        tab
                                                          wid_banco           tab_enc_archivo_plano.id_banco%TYPE,
                                                          wind_tipocuenta     tab_enc_archivo_plano.ind_tipocuenta%TYPE,
                                                          wcta_empresa        tab_enc_archivo_plano.cta_empresa%TYPE,
-                                                         wfecha_aplicacion   tab_enc_archivo_plano.fecha_aplicacion%TYPE,
-                                                         wid_tipo_pago       tab_enc_archivo_plano.id_tipo_pago%TYPE) RETURNS BOOLEAN AS
+                                                         wfecha_aplicacion   tab_enc_archivo_plano.fecha_aplicacion%TYPE) RETURNS BOOLEAN AS
 $BODY$
 
 DECLARE wid_archivo_plano   tab_enc_archivo_plano.id_archivo_plano%TYPE;
@@ -825,10 +788,6 @@ BEGIN
 
     IF wfecha_aplicacion IS NULL THEN
         RAISE EXCEPTION 'La fecha de aplicación no puede ser nula.';
-    END IF;
-
-    IF wid_tipo_pago IS NULL THEN
-        RAISE EXCEPTION 'El tipo de pago no puede ser nulo.';
     END IF;
 
 -- VALIDAR LONGITUDES (mismos CHECK de la tabla)
@@ -898,19 +857,14 @@ BEGIN
         RAISE EXCEPTION 'El banco % no existe o está inactivo.', wid_banco;
     END IF;
 
--- VALIDAR QUE EL TIPO DE PAGO EXISTA Y ESTÉ ACTIVO
-    IF NOT EXISTS (SELECT 1 FROM tab_tipos_pago WHERE id_tipo_pago = wid_tipo_pago AND ind_borrado = FALSE) THEN
-        RAISE EXCEPTION 'El tipo de pago % no existe o está inactivo.', wid_tipo_pago;
-    END IF;
-
 -- SI TODO VA BIEN, SE INSERTA (fec_generacion queda NULL e ind_generado en FALSE)
     SELECT COALESCE(MAX(id_archivo_plano), 0) + 1 INTO wid_archivo_plano
       FROM tab_enc_archivo_plano;
 
     INSERT INTO tab_enc_archivo_plano (id_archivo_plano, nom_archivo, id_empresa, nom_empresa, id_banco,
-                                       ind_tipocuenta, cta_empresa, fecha_aplicacion, id_tipo_pago)
+                                       ind_tipocuenta, cta_empresa, fecha_aplicacion)
     VALUES                            (wid_archivo_plano, TRIM(wnom_archivo), wid_empresa, TRIM(wnom_empresa), wid_banco,
-                                       wind_tipocuenta, wcta_empresa, wfecha_aplicacion, wid_tipo_pago);
+                                       wind_tipocuenta, wcta_empresa, wfecha_aplicacion);
 
     RETURN TRUE;
 
@@ -1030,6 +984,12 @@ BEGIN
                     WHERE id_archivo_plano = wid_archivo_plano
                       AND ind_generado     = FALSE) THEN
         RAISE EXCEPTION 'El archivo plano % no existe o ya fue generado.', wid_archivo_plano;
+    END IF;
+
+-- LOS ARCHIVOS QUE ENVIARON NÓMINA O FINANCIERO NO ADMITEN CUOTAS DE PROVEEDORES
+    IF fun_tipo_archivo_plano(wid_archivo_plano) <> 'PROVEEDORES' THEN
+        RAISE EXCEPTION 'El archivo plano % es de %: no se le pueden agregar cuotas de proveedores.', wid_archivo_plano,
+            CASE fun_tipo_archivo_plano(wid_archivo_plano) WHEN 'NOMINA' THEN 'nómina' ELSE 'inversiones' END;
     END IF;
 
 -- VALIDAR QUE EL CRONOGRAMA EXISTA Y ESTÉ ACTIVO
@@ -1489,3 +1449,863 @@ END;
 $BODY$
 LANGUAGE PLPGSQL;
 
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN AUXILIAR: ¿DE QUÉ ES UN ARCHIVO PLANO?
+-- El encabezado (tab_enc_archivo_plano) es el mismo para todos los archivos:
+-- no guarda el tipo. Se sabe por la tabla de detalle que tiene sus líneas:
+--     tab_det_archivo_nomina     → 'NOMINA'       (lo envió Gestión Humana)
+--     tab_det_archivo_inversion  → 'INVERSION'    (lo envió el área Financiera)
+--     tab_det_archivo_plano      → 'PROVEEDORES'  (lo armó Tesorería; también
+--                                                   un encabezado aún sin líneas)
+-- NULL si el archivo no existe.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_tipo_archivo_plano (wid_archivo_plano  tab_enc_archivo_plano.id_archivo_plano%TYPE) RETURNS VARCHAR AS
+$BODY$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM tab_enc_archivo_plano WHERE id_archivo_plano = wid_archivo_plano) THEN
+        RETURN NULL;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM tab_det_archivo_nomina WHERE id_archivo_plano = wid_archivo_plano) THEN
+        RETURN 'NOMINA';
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM tab_det_archivo_inversion WHERE id_archivo_plano = wid_archivo_plano) THEN
+        RETURN 'INVERSION';
+    END IF;
+
+    RETURN 'PROVEEDORES';
+END;
+$BODY$
+LANGUAGE PLPGSQL STABLE;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN AUXILIAR: PRÓXIMA FECHA DE APLICACIÓN VÁLIDA DESDE UNA FECHA
+-- Misma regla que fun_insert_enc_archivo_plano: no pasada, día de pago de
+-- Parámetros de Tesorería y no festivo. NULL si no hay días de pago
+-- configurados o no se encuentra una en 120 días.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_proxima_fecha_pago (wid_empresa  tab_pmtros_tescxp.id_empresa%TYPE,
+                                                   wdesde       DATE) RETURNS DATE AS
+$BODY$
+DECLARE wdia1   tab_pmtros_tescxp.fec_diapago1%TYPE;
+        wdia2   tab_pmtros_tescxp.fec_diapago2%TYPE;
+        wdia3   tab_pmtros_tescxp.fec_diapago3%TYPE;
+        wfecha  DATE;
+BEGIN
+    SELECT fec_diapago1, fec_diapago2, fec_diapago3
+      INTO wdia1, wdia2, wdia3
+      FROM tab_pmtros_tescxp
+     WHERE id_empresa  = wid_empresa
+       AND ind_borrado = FALSE;
+
+    IF NOT FOUND THEN
+        RETURN NULL;
+    END IF;
+
+    wfecha := GREATEST(COALESCE(wdesde, CURRENT_DATE), CURRENT_DATE);
+    FOR i IN 0..120 LOOP
+        IF EXTRACT(ISODOW FROM wfecha) IN (wdia1, wdia2, wdia3)
+           AND NOT EXISTS (SELECT 1 FROM tab_festivos WHERE fecha = wfecha AND ind_borrado = FALSE) THEN
+            RETURN wfecha;
+        END IF;
+        wfecha := wfecha + 1;
+    END LOOP;
+
+    RETURN NULL;
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN: ENVIAR NÓMINA A TESORERÍA
+-- La llama el botón "Enviar nómina a Tesorería" del módulo de Nómina.
+--
+--   SELECT fun_enviar_nomina_tesoreria(2026, 11, 1);   -- devuelve el id del archivo plano
+--
+-- - Toma los empleados del periodo con estado_pago 0 (sin enviar) o 3
+--   (rechazados por el banco: se reenvían con la cuenta corregida), que no
+--   estén marcados como pagados (ind_pagado) y con neto mayor a cero.
+-- - Desde el envío, la nómina ya no se puede volver a liquidar
+--   (trg_bloquear_nomina_enviada) hasta que Tesorería la devuelva.
+-- - Valida banco y cuenta de cada empleado; si alguno falla no se envía nada
+--   y el mensaje dice quiénes.
+-- - Encabezado normal (el mismo de todos los archivos planos): la primera
+--   cuenta activa de la empresa y la próxima fecha de pago válida. Tesorería
+--   puede cambiar cuenta, fecha y nombre antes de descargarlo. El periodo no
+--   va en el encabezado: está en cada línea de tab_det_archivo_nomina.
+-- - Deja los empleados enviados en estado_pago = 1.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_enviar_nomina_tesoreria (wano_nomina   tab_nomina.ano_nomina%TYPE,
+                                                        wmes_nomina   tab_nomina.mes_nomina%TYPE,
+                                                        wval_periodo  tab_nomina.val_periodo%TYPE) RETURNS DECIMAL AS
+$BODY$
+
+DECLARE wid_archivo_plano   tab_enc_archivo_plano.id_archivo_plano%TYPE;
+        wid_empresa         tab_pmtros_grales.id_empresa%TYPE;
+        wnom_empresa        tab_pmtros_grales.nom_empresa%TYPE;
+        wcta                RECORD;
+        wfecha_aplicacion   DATE;
+        wnom_archivo        tab_enc_archivo_plano.nom_archivo%TYPE;
+        wconcepto           VARCHAR(80);
+        wenvios_previos     INTEGER;
+        wcantidad           INTEGER;
+        werrores            TEXT;
+        wcant_errores       INTEGER;
+
+BEGIN
+
+-- VALIDAR PARÁMETROS
+    IF wano_nomina IS NULL OR wmes_nomina IS NULL OR wval_periodo IS NULL THEN
+        RAISE EXCEPTION 'Indique año, mes y periodo de la nómina a enviar.';
+    END IF;
+
+    IF wmes_nomina NOT BETWEEN 1 AND 12 THEN
+        RAISE EXCEPTION 'El mes % no es válido.', wmes_nomina;
+    END IF;
+
+    IF wval_periodo NOT IN (1, 2) THEN
+        RAISE EXCEPTION 'El periodo % no es válido: debe ser 1 o 2.', wval_periodo;
+    END IF;
+
+-- VALIDAR QUE LA NÓMINA DEL PERIODO EXISTA
+    IF NOT EXISTS (SELECT 1 FROM tab_nomina
+                    WHERE ano_nomina  = wano_nomina
+                      AND mes_nomina  = wmes_nomina
+                      AND val_periodo = wval_periodo
+                      AND ind_borrado IS NOT TRUE) THEN
+        RAISE EXCEPTION 'No hay nómina liquidada para %-%, periodo %.', wano_nomina, LPAD(wmes_nomina::TEXT, 2, '0'), wval_periodo;
+    END IF;
+
+-- BLOQUEAR LOS REGISTROS DEL PERIODO: si alguien da doble clic, la segunda
+-- llamada espera aquí y después ya no encuentra empleados pendientes.
+    PERFORM 1
+       FROM tab_nomina
+      WHERE ano_nomina  = wano_nomina
+        AND mes_nomina  = wmes_nomina
+        AND val_periodo = wval_periodo
+        AND ind_borrado = FALSE
+      FOR UPDATE;
+
+-- ¿HAY EMPLEADOS PARA ENVIAR? (sin enviar o rechazados, con neto mayor a cero)
+    SELECT COUNT(*) INTO wcantidad
+      FROM tab_nomina
+     WHERE ano_nomina  = wano_nomina
+       AND mes_nomina  = wmes_nomina
+       AND val_periodo = wval_periodo
+       AND ind_borrado = FALSE
+       AND estado_pago IN (0, 3)
+       AND ind_pagado  IS NOT TRUE
+       AND val_neto    > 0;
+
+    IF wcantidad = 0 THEN
+        RAISE EXCEPTION 'No hay empleados pendientes de enviar en %-%, periodo %: ya fueron enviados a Tesorería o pagados.',
+            wano_nomina, LPAD(wmes_nomina::TEXT, 2, '0'), wval_periodo;
+    END IF;
+
+-- VALIDAR DATOS BANCARIOS DE CADA EMPLEADO (se listan todos los que fallan)
+    SELECT COUNT(*),
+           STRING_AGG(x.motivo, '; ' ORDER BY x.motivo)
+      INTO wcant_errores, werrores
+      FROM (SELECT TRIM(e.nom_empleado || ' ' || e.ape_empleado) || ' (' || n.id_empleado || '): ' ||
+                   CASE
+                       WHEN e.id_empleado IS NULL                                 THEN 'no existe en Empleados'
+                       WHEN COALESCE(TRIM(e.id_banco), '') = ''                   THEN 'sin banco'
+                       WHEN b.id_banco IS NULL                                    THEN 'el banco ' || e.id_banco || ' no existe'
+                       WHEN b.ind_borrado OR NOT b.ind_estado                     THEN 'el banco ' || b.nom_banco || ' está inactivo'
+                       WHEN COALESCE(e.num_cuenta, '') !~ '^[0-9]{6,20}$'         THEN 'número de cuenta no válido (solo dígitos, 6 a 20)'
+                       WHEN COALESCE(e.id_tipo, '') !~ '^[A-Z]{2,5}$'             THEN 'tipo de documento no válido'
+                   END AS motivo
+              FROM tab_nomina          n
+              LEFT JOIN tab_empleados  e ON e.id_empleado = n.id_empleado
+              LEFT JOIN tab_bancos     b ON b.id_banco    = e.id_banco
+             WHERE n.ano_nomina  = wano_nomina
+               AND n.mes_nomina  = wmes_nomina
+               AND n.val_periodo = wval_periodo
+               AND n.ind_borrado = FALSE
+               AND n.estado_pago IN (0, 3)
+               AND n.ind_pagado  IS NOT TRUE
+               AND n.val_neto    > 0) x
+     WHERE x.motivo IS NOT NULL;
+
+    IF wcant_errores > 0 THEN
+        RAISE EXCEPTION 'No se envió la nómina: % empleado(s) con datos bancarios incompletos. %', wcant_errores, werrores;
+    END IF;
+
+-- EMPRESA (Parámetros Generales)
+    SELECT id_empresa, nom_empresa
+      INTO wid_empresa, wnom_empresa
+      FROM tab_pmtros_grales
+     WHERE ind_borrado = FALSE
+     ORDER BY id_empresa
+     LIMIT 1;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'No hay empresa configurada en Parámetros Generales.';
+    END IF;
+
+-- CUENTA DE ORIGEN: la primera cuenta activa de la empresa con banco activo
+-- (mismo orden que el select de Archivo Plano). Tesorería la puede cambiar.
+    SELECT c.cta_empresa, c.id_banco, c.ind_tipocuenta
+      INTO wcta
+      FROM tab_ctas_empresa c
+      JOIN tab_bancos       b ON b.id_banco = c.id_banco
+     WHERE c.id_empresa  = wid_empresa
+       AND c.ind_borrado = FALSE
+       AND b.ind_borrado = FALSE
+       AND b.ind_estado  = TRUE
+     ORDER BY b.nom_banco, c.cta_empresa
+     LIMIT 1;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Tesorería no tiene cuentas bancarias activas para pagar la nómina. Avise a Tesorería.';
+    END IF;
+
+-- FECHA DE APLICACIÓN: próximo día de pago que no sea festivo
+    IF NOT EXISTS (SELECT 1 FROM tab_pmtros_tescxp WHERE id_empresa = wid_empresa AND ind_borrado = FALSE) THEN
+        RAISE EXCEPTION 'Tesorería no tiene configurados los días de pago (Parámetros de Tesorería). Avise a Tesorería.';
+    END IF;
+
+    wfecha_aplicacion := fun_proxima_fecha_pago(wid_empresa, CURRENT_DATE);
+    IF wfecha_aplicacion IS NULL THEN
+        RAISE EXCEPTION 'No se encontró una fecha de pago válida en los próximos 120 días. Revise Parámetros de Tesorería y Festivos.';
+    END IF;
+
+-- NOMBRE: NOMINA_2026_11_P1, y _R2, _R3... si el periodo ya se había enviado antes
+-- (archivos con líneas de ese periodo en tab_det_archivo_nomina)
+    SELECT COUNT(DISTINCT id_archivo_plano) INTO wenvios_previos
+      FROM tab_det_archivo_nomina
+     WHERE ano_nomina  = wano_nomina
+       AND mes_nomina  = wmes_nomina
+       AND val_periodo = wval_periodo;
+
+    wnom_archivo := 'NOMINA_' || wano_nomina || '_' || LPAD(wmes_nomina::TEXT, 2, '0') || '_P' || wval_periodo
+                 || CASE WHEN wenvios_previos > 0 THEN '_R' || (wenvios_previos + 1) ELSE '' END;
+
+    wconcepto := 'Nomina ' || wano_nomina || '-' || LPAD(wmes_nomina::TEXT, 2, '0') || ' periodo ' || wval_periodo;
+
+-- ENCABEZADO (el mismo de todos los archivos planos)
+    LOCK TABLE tab_enc_archivo_plano IN SHARE ROW EXCLUSIVE MODE;   -- el MAX + 1 no se cruza con otro envío
+
+    SELECT COALESCE(MAX(id_archivo_plano), 0) + 1 INTO wid_archivo_plano
+      FROM tab_enc_archivo_plano;
+
+    INSERT INTO tab_enc_archivo_plano (id_archivo_plano, nom_archivo, id_empresa, nom_empresa, id_banco,
+                                       ind_tipocuenta, cta_empresa, fecha_aplicacion)
+    VALUES                            (wid_archivo_plano, wnom_archivo, wid_empresa, TRIM(wnom_empresa), wcta.id_banco,
+                                       wcta.ind_tipocuenta, wcta.cta_empresa, wfecha_aplicacion);
+
+-- DETALLE: copia de los datos bancarios del empleado y el neto a pagar
+    INSERT INTO tab_det_archivo_nomina (id_archivo_plano, ano_nomina, mes_nomina, val_periodo, id_empleado,
+                                        id_tipo, nom_empleado, id_banco, ind_tipocuenta, num_cuenta,
+                                        val_a_pagar, concepto)
+    SELECT wid_archivo_plano, n.ano_nomina, n.mes_nomina, n.val_periodo, n.id_empleado,
+           e.id_tipo,
+           LEFT(TRIM(e.nom_empleado || ' ' || e.ape_empleado), 100),
+           e.id_banco,
+           COALESCE(e.ind_tipocuenta, FALSE),
+           e.num_cuenta,
+           n.val_neto,
+           wconcepto
+      FROM tab_nomina    n
+      JOIN tab_empleados e ON e.id_empleado = n.id_empleado
+     WHERE n.ano_nomina  = wano_nomina
+       AND n.mes_nomina  = wmes_nomina
+       AND n.val_periodo = wval_periodo
+       AND n.ind_borrado = FALSE
+       AND n.estado_pago IN (0, 3)
+       AND n.ind_pagado  IS NOT TRUE
+       AND n.val_neto    > 0;
+
+-- MARCAR LOS EMPLEADOS COMO ENVIADOS
+    UPDATE tab_nomina n
+       SET estado_pago      = 1,
+           fec_pago         = NULL,
+           id_archivo_plano = wid_archivo_plano
+      FROM tab_det_archivo_nomina d
+     WHERE d.id_archivo_plano = wid_archivo_plano
+       AND n.ano_nomina       = d.ano_nomina
+       AND n.mes_nomina       = d.mes_nomina
+       AND n.val_periodo      = d.val_periodo
+       AND n.id_empleado      = d.id_empleado;
+
+    RETURN wid_archivo_plano;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN AUXILIAR: REFLEJAR LA RESPUESTA DEL BANCO EN tab_nomina
+-- 2 = APROBADO → empleado PAGADO (con la fecha del banco)
+-- 3 = RECHAZADO → empleado RECHAZADO (Nómina corrige la cuenta y lo reenvía)
+-- 1 = PENDIENTE → sigue enviado
+-- Si con este pago ya no queda ningún empleado del periodo por pagar (neto
+-- mayor a cero), se marca el PERIODO como pagado con fun_marcar_nomina_pagada
+-- (la función de Nómina: ind_pagado y bloqueo de novedades). Si esa función
+-- no existe o falla, se pone ind_pagado = TRUE directamente y se deja un
+-- WARNING en el log: el pago del banco ya ocurrió y no se puede perder.
+-- No se llama desde PHP.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_aplicar_respuesta_nomina (wano_nomina   tab_nomina.ano_nomina%TYPE,
+                                                         wmes_nomina   tab_nomina.mes_nomina%TYPE,
+                                                         wval_periodo  tab_nomina.val_periodo%TYPE,
+                                                         wid_empleado  tab_nomina.id_empleado%TYPE,
+                                                         westado_pago  tab_pagos_nomina.estado_pago%TYPE,
+                                                         wfec_pago     tab_pagos_nomina.fec_pago%TYPE) RETURNS VOID AS
+$BODY$
+BEGIN
+    IF westado_pago = 2 THEN
+        UPDATE tab_nomina
+           SET estado_pago = 2,
+               fec_pago    = wfec_pago
+         WHERE ano_nomina  = wano_nomina
+           AND mes_nomina  = wmes_nomina
+           AND val_periodo = wval_periodo
+           AND id_empleado = wid_empleado;
+
+        -- ¿Quedó todo el periodo pagado?
+        IF NOT EXISTS (SELECT 1 FROM tab_nomina
+                        WHERE ano_nomina  = wano_nomina
+                          AND mes_nomina  = wmes_nomina
+                          AND val_periodo = wval_periodo
+                          AND ind_borrado IS NOT TRUE
+                          AND val_neto    > 0
+                          AND estado_pago <> 2)
+           AND EXISTS (SELECT 1 FROM tab_nomina
+                        WHERE ano_nomina  = wano_nomina
+                          AND mes_nomina  = wmes_nomina
+                          AND val_periodo = wval_periodo
+                          AND ind_borrado IS NOT TRUE
+                          AND ind_pagado  IS NOT TRUE) THEN
+            BEGIN
+                IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'fun_marcar_nomina_pagada') THEN
+                    -- Literales enteros: sirven si la función recibe INTEGER o DECIMAL
+                    EXECUTE format('SELECT fun_marcar_nomina_pagada(%s, %s, %s)',
+                                   wano_nomina::INTEGER, wmes_nomina::INTEGER, wval_periodo::INTEGER);
+                ELSE
+                    RAISE EXCEPTION 'fun_marcar_nomina_pagada no existe';
+                END IF;
+            EXCEPTION WHEN OTHERS THEN
+                RAISE WARNING 'Nómina %-%-% pagada por el banco, pero fun_marcar_nomina_pagada falló (%). Se marca ind_pagado directamente.',
+                    wano_nomina, wmes_nomina, wval_periodo, SQLERRM;
+                UPDATE tab_nomina
+                   SET ind_pagado = TRUE
+                 WHERE ano_nomina  = wano_nomina
+                   AND mes_nomina  = wmes_nomina
+                   AND val_periodo = wval_periodo
+                   AND ind_borrado IS NOT TRUE;
+            END;
+        END IF;
+    ELSIF westado_pago = 3 THEN
+        UPDATE tab_nomina
+           SET estado_pago = 3,
+               fec_pago    = NULL
+         WHERE ano_nomina  = wano_nomina
+           AND mes_nomina  = wmes_nomina
+           AND val_periodo = wval_periodo
+           AND id_empleado = wid_empleado
+           AND estado_pago = 1;
+    END IF;
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN DE INSERT DE PAGOS DE NÓMINA
+-- Registra la respuesta del banco para UNA línea de un archivo de nómina.
+-- El valor sale de la línea del archivo y el banco del encabezado.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_insert_pagos_nomina (wid_archivo_plano  tab_pagos_nomina.id_archivo_plano%TYPE,
+                                                    wano_nomina        tab_pagos_nomina.ano_nomina%TYPE,
+                                                    wmes_nomina        tab_pagos_nomina.mes_nomina%TYPE,
+                                                    wval_periodo       tab_pagos_nomina.val_periodo%TYPE,
+                                                    wid_empleado       tab_pagos_nomina.id_empleado%TYPE,
+                                                    wfec_pago          tab_pagos_nomina.fec_pago%TYPE,
+                                                    westado_pago       tab_pagos_nomina.estado_pago%TYPE,
+                                                    wid_codigo         tab_pagos_nomina.id_codigo%TYPE) RETURNS BOOLEAN AS
+$BODY$
+DECLARE wid_pago        tab_pagos_nomina.id_pago_nomina%TYPE;
+        wval_pago       tab_det_archivo_nomina.val_a_pagar%TYPE;
+        wid_banco       tab_enc_archivo_plano.id_banco%TYPE;
+        wind_generado   tab_enc_archivo_plano.ind_generado%TYPE;
+        wfec_generacion tab_enc_archivo_plano.fec_generacion%TYPE;
+BEGIN
+
+    IF wid_archivo_plano IS NULL OR wano_nomina IS NULL OR wmes_nomina IS NULL
+       OR wval_periodo IS NULL OR wid_empleado IS NULL THEN
+        RAISE EXCEPTION 'Archivo plano, periodo y empleado son obligatorios.';
+    END IF;
+
+    IF wfec_pago IS NULL THEN
+        RAISE EXCEPTION 'La fecha de pago no puede ser nula.';
+    END IF;
+
+    IF westado_pago IS NULL OR westado_pago NOT IN (1, 2, 3) THEN
+        RAISE EXCEPTION 'El estado % no es válido: debe ser 1 (Pendiente), 2 (Aprobado) o 3 (Rechazado).', westado_pago;
+    END IF;
+
+    IF wid_codigo IS NULL THEN
+        RAISE EXCEPTION 'El código de respuesta del banco no puede ser nulo.';
+    END IF;
+
+-- EL ARCHIVO EXISTE, ES DE NÓMINA Y YA SE GENERÓ
+    SELECT id_banco, ind_generado, fec_generacion
+      INTO wid_banco, wind_generado, wfec_generacion
+      FROM tab_enc_archivo_plano
+     WHERE id_archivo_plano = wid_archivo_plano;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El archivo plano % no existe.', wid_archivo_plano;
+    END IF;
+
+    IF fun_tipo_archivo_plano(wid_archivo_plano) <> 'NOMINA' THEN
+        RAISE EXCEPTION 'El archivo plano % no es de nómina.', wid_archivo_plano;
+    END IF;
+
+    IF NOT wind_generado THEN
+        RAISE EXCEPTION 'El archivo plano % todavía no ha sido generado; no puede tener respuesta del banco.', wid_archivo_plano;
+    END IF;
+
+-- EL EMPLEADO ESTÁ EN ESE ARCHIVO
+    SELECT val_a_pagar INTO wval_pago
+      FROM tab_det_archivo_nomina
+     WHERE id_archivo_plano = wid_archivo_plano
+       AND ano_nomina       = wano_nomina
+       AND mes_nomina       = wmes_nomina
+       AND val_periodo      = wval_periodo
+       AND id_empleado      = wid_empleado;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El empleado % no está en el archivo plano %.', wid_empleado, wid_archivo_plano;
+    END IF;
+
+-- ESA LÍNEA NO TIENE YA UNA RESPUESTA
+    IF EXISTS (SELECT 1 FROM tab_pagos_nomina
+                WHERE id_archivo_plano = wid_archivo_plano
+                  AND ano_nomina       = wano_nomina
+                  AND mes_nomina       = wmes_nomina
+                  AND val_periodo      = wval_periodo
+                  AND id_empleado      = wid_empleado) THEN
+        RAISE EXCEPTION 'El empleado % ya tiene una respuesta registrada en el archivo plano %. Si está pendiente, actualícela.', wid_empleado, wid_archivo_plano;
+    END IF;
+
+-- NO ESTÁ YA PAGADO EN ESE PERIODO
+    IF westado_pago = 2 AND EXISTS (SELECT 1 FROM tab_pagos_nomina
+                                     WHERE ano_nomina  = wano_nomina
+                                       AND mes_nomina  = wmes_nomina
+                                       AND val_periodo = wval_periodo
+                                       AND id_empleado = wid_empleado
+                                       AND estado_pago = 2) THEN
+        RAISE EXCEPTION 'La nómina del empleado % de %-%, periodo % ya fue pagada.', wid_empleado, wano_nomina, wmes_nomina, wval_periodo;
+    END IF;
+
+-- CÓDIGO ACTIVO PARA EL BANCO DEL ARCHIVO
+    IF NOT EXISTS (SELECT 1 FROM tab_codigos_respuesta_banco
+                    WHERE id_codigo   = wid_codigo
+                      AND id_banco    = wid_banco
+                      AND ind_borrado = FALSE) THEN
+        RAISE EXCEPTION 'El código % no existe o está inactivo para el banco % del archivo plano.', wid_codigo, wid_banco;
+    END IF;
+
+-- FECHA: NO FUTURA NI ANTERIOR A LA GENERACIÓN
+    IF wfec_pago > CURRENT_DATE THEN
+        RAISE EXCEPTION 'La fecha de pago no puede ser futura.';
+    END IF;
+
+    IF wfec_generacion IS NOT NULL AND wfec_pago < wfec_generacion THEN
+        RAISE EXCEPTION 'La fecha de pago no puede ser anterior a la generación del archivo plano (%).', TO_CHAR(wfec_generacion, 'DD/MM/YYYY');
+    END IF;
+
+    SELECT COALESCE(MAX(id_pago_nomina), 0) + 1 INTO wid_pago FROM tab_pagos_nomina;
+
+    INSERT INTO tab_pagos_nomina (id_pago_nomina, id_archivo_plano, ano_nomina, mes_nomina, val_periodo, id_empleado,
+                                  fec_pago, val_pago, estado_pago, id_codigo, id_banco)
+    VALUES                       (wid_pago, wid_archivo_plano, wano_nomina, wmes_nomina, wval_periodo, wid_empleado,
+                                  wfec_pago, wval_pago, westado_pago, wid_codigo, wid_banco);
+
+    PERFORM fun_aplicar_respuesta_nomina(wano_nomina, wmes_nomina, wval_periodo, wid_empleado, westado_pago, wfec_pago);
+
+    RETURN TRUE;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- INTEGRACIÓN CON EL ÁREA FINANCIERA: PAGO DE INVERSIONES
+-- Mismo modelo que Nómina: Financiero envía sus cuotas aprobadas, Tesorería
+-- las saca en un archivo plano y la respuesta del banco deja cada cuota
+-- PAGADA o RECHAZADA en tab_cuotas_inversion (tabla del módulo Financiero).
+--
+-- El encabezado del archivo es el normal (tab_enc_archivo_plano, sin
+-- columnas extra); las líneas van en tab_det_archivo_inversion y las
+-- respuestas del banco en tab_pagos_inversion.
+--
+-- tab_cuotas_inversion.estado_pago
+--     0 = SIN ENVIAR     1 = ENVIADA A TESORERÍA (pendiente del banco)
+--     2 = PAGADA         3 = RECHAZADA POR EL BANCO (se puede reenviar)
+--------------------------------------------------------------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN: ENVIAR CUOTAS DE INVERSIONES A TESORERÍA
+-- La llama el botón "Enviar cuotas a Tesorería" del módulo Financiero.
+--
+--   SELECT fun_enviar_inversiones_tesoreria(CURRENT_DATE);   -- devuelve el id del archivo plano
+--
+-- - Toma las cuotas APROBADAS, con valor mayor a cero, vencidas hasta la
+--   fecha de corte, con estado_pago 0 (sin enviar) o 3 (rechazadas por el
+--   banco: se reenvían con la cuenta corregida), de inversiones VIGENTES,
+--   RENOVADAS o VENCIDAS.
+-- - Desde el envío, la cuota y su inversión no se pueden modificar (triggers
+--   del módulo Financiero) hasta que Tesorería devuelva el archivo.
+-- - Valida inversor, banco y cuenta de cada cuota; si alguna falla no se
+--   envía nada y el mensaje dice cuáles.
+-- - Encabezado normal: la primera cuenta activa de la empresa y la próxima
+--   fecha de pago válida. Tesorería puede cambiar cuenta, fecha y nombre
+--   antes de descargarlo.
+-- - Nombre: INVERSION_2026_11_14 (fecha de corte), y _R2, _R3... si ese
+--   corte ya se había enviado antes.
+-- - Deja las cuotas enviadas en estado_pago = 1.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_enviar_inversiones_tesoreria (wfec_corte  DATE) RETURNS DECIMAL AS
+$BODY$
+
+DECLARE wid_archivo_plano   tab_enc_archivo_plano.id_archivo_plano%TYPE;
+        wid_empresa         tab_pmtros_grales.id_empresa%TYPE;
+        wnom_empresa        tab_pmtros_grales.nom_empresa%TYPE;
+        wcta                RECORD;
+        wfecha_aplicacion   DATE;
+        wnom_base           VARCHAR(30);
+        wnom_archivo        tab_enc_archivo_plano.nom_archivo%TYPE;
+        wenvios_previos     INTEGER;
+        wcantidad           INTEGER;
+        werrores            TEXT;
+        wcant_errores       INTEGER;
+
+BEGIN
+
+-- VALIDAR PARÁMETROS
+    IF wfec_corte IS NULL THEN
+        RAISE EXCEPTION 'Indique la fecha de corte: se envían las cuotas aprobadas que vencen hasta ese día.';
+    END IF;
+
+-- BLOQUEAR LAS CUOTAS CANDIDATAS: si alguien da doble clic, la segunda
+-- llamada espera aquí y después ya no encuentra cuotas pendientes.
+    PERFORM 1
+       FROM tab_cuotas_inversion
+      WHERE ind_aprobada    = TRUE
+        AND estado_pago     IN (0, 3)
+        AND fec_vencimiento <= wfec_corte
+      FOR UPDATE;
+
+-- ¿HAY CUOTAS PARA ENVIAR?
+    SELECT COUNT(*) INTO wcantidad
+      FROM tab_cuotas_inversion c
+      JOIN tab_inversiones      n ON n.id_proyecto = c.id_proyecto AND n.id_inversor = c.id_inversor
+     WHERE c.ind_aprobada     = TRUE
+       AND c.estado_pago      IN (0, 3)
+       AND c.fec_vencimiento  <= wfec_corte
+       AND c.val_neto         > 0
+       AND n.ind_borrado      = FALSE
+       AND n.estado_inversion IN ('VIGENTE', 'RENOVADA', 'VENCIDA');
+
+    IF wcantidad = 0 THEN
+        RAISE EXCEPTION 'No hay cuotas de inversiones aprobadas y pendientes de enviar con vencimiento hasta el %.', TO_CHAR(wfec_corte, 'DD/MM/YYYY');
+    END IF;
+
+-- VALIDAR LOS DATOS BANCARIOS DE CADA CUOTA (se listan todas las que fallan)
+    SELECT COUNT(*),
+           STRING_AGG(x.motivo, '; ' ORDER BY x.motivo)
+      INTO wcant_errores, werrores
+      FROM (SELECT COALESCE(TRIM(i.nom_inversor), '') || ' (' || c.id_inversor || ', proyecto ' || c.id_proyecto || ', cuota ' || c.id_cuota || '): ' ||
+                   CASE
+                       WHEN i.id_inversor IS NULL                                 THEN 'no existe en Inversores'
+                       WHEN i.ind_borrado OR i.estado_inversor <> 'ACTIVO'        THEN 'el inversor no está activo'
+                       WHEN COALESCE(TRIM(i.id_banco), '') = ''                   THEN 'sin banco'
+                       WHEN b.id_banco IS NULL                                    THEN 'el banco ' || i.id_banco || ' no existe'
+                       WHEN b.ind_borrado OR NOT b.ind_estado                     THEN 'el banco ' || b.nom_banco || ' está inactivo'
+                       WHEN COALESCE(i.num_cuenta, '') !~ '^[0-9]{6,20}$'         THEN 'número de cuenta no válido (solo dígitos, 6 a 20)'
+                       WHEN COALESCE(i.id_tipo, '') !~ '^[A-Z]{2,5}$'             THEN 'tipo de documento no válido'
+                       WHEN LENGTH(TRIM(COALESCE(i.nom_inversor, ''))) < 3        THEN 'nombre del inversor no válido'
+                       WHEN c.val_neto > 9999999999                               THEN 'el valor supera el máximo de un pago por archivo plano (9.999.999.999)'
+                   END AS motivo
+              FROM tab_cuotas_inversion c
+              JOIN tab_inversiones      n ON n.id_proyecto = c.id_proyecto AND n.id_inversor = c.id_inversor
+              LEFT JOIN tab_inversores  i ON i.id_inversor = c.id_inversor
+              LEFT JOIN tab_bancos      b ON b.id_banco    = i.id_banco
+             WHERE c.ind_aprobada     = TRUE
+               AND c.estado_pago      IN (0, 3)
+               AND c.fec_vencimiento  <= wfec_corte
+               AND c.val_neto         > 0
+               AND n.ind_borrado      = FALSE
+               AND n.estado_inversion IN ('VIGENTE', 'RENOVADA', 'VENCIDA')) x
+     WHERE x.motivo IS NOT NULL;
+
+    IF wcant_errores > 0 THEN
+        RAISE EXCEPTION 'No se enviaron las inversiones: % cuota(s) con datos incompletos. %', wcant_errores, werrores;
+    END IF;
+
+-- EMPRESA (Parámetros Generales)
+    SELECT id_empresa, nom_empresa
+      INTO wid_empresa, wnom_empresa
+      FROM tab_pmtros_grales
+     WHERE ind_borrado = FALSE
+     ORDER BY id_empresa
+     LIMIT 1;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'No hay empresa configurada en Parámetros Generales.';
+    END IF;
+
+-- CUENTA DE ORIGEN: la primera cuenta activa de la empresa con banco activo
+-- (mismo orden que el select de Archivo Plano). Tesorería la puede cambiar.
+    SELECT c.cta_empresa, c.id_banco, c.ind_tipocuenta
+      INTO wcta
+      FROM tab_ctas_empresa c
+      JOIN tab_bancos       b ON b.id_banco = c.id_banco
+     WHERE c.id_empresa  = wid_empresa
+       AND c.ind_borrado = FALSE
+       AND b.ind_borrado = FALSE
+       AND b.ind_estado  = TRUE
+     ORDER BY b.nom_banco, c.cta_empresa
+     LIMIT 1;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Tesorería no tiene cuentas bancarias activas para pagar las inversiones. Avise a Tesorería.';
+    END IF;
+
+-- FECHA DE APLICACIÓN: próximo día de pago que no sea festivo
+    IF NOT EXISTS (SELECT 1 FROM tab_pmtros_tescxp WHERE id_empresa = wid_empresa AND ind_borrado = FALSE) THEN
+        RAISE EXCEPTION 'Tesorería no tiene configurados los días de pago (Parámetros de Tesorería). Avise a Tesorería.';
+    END IF;
+
+    wfecha_aplicacion := fun_proxima_fecha_pago(wid_empresa, CURRENT_DATE);
+    IF wfecha_aplicacion IS NULL THEN
+        RAISE EXCEPTION 'No se encontró una fecha de pago válida en los próximos 120 días. Revise Parámetros de Tesorería y Festivos.';
+    END IF;
+
+-- NOMBRE: INVERSION_2026_11_14, y _R2, _R3... si ese corte ya se envió antes.
+-- El encabezado no guarda la fecha de corte: se cuentan los archivos de
+-- inversiones (los que tienen líneas en tab_det_archivo_inversion) con ese nombre.
+    wnom_base := 'INVERSION_' || TO_CHAR(wfec_corte, 'YYYY_MM_DD');
+
+    SELECT COUNT(*) INTO wenvios_previos
+      FROM tab_enc_archivo_plano a
+     WHERE (a.nom_archivo = wnom_base OR a.nom_archivo LIKE wnom_base || '\_R%')
+       AND EXISTS (SELECT 1 FROM tab_det_archivo_inversion d WHERE d.id_archivo_plano = a.id_archivo_plano);
+
+    wnom_archivo := wnom_base || CASE WHEN wenvios_previos > 0 THEN '_R' || (wenvios_previos + 1) ELSE '' END;
+
+-- ENCABEZADO (el mismo de todos los archivos planos)
+    LOCK TABLE tab_enc_archivo_plano IN SHARE ROW EXCLUSIVE MODE;   -- el MAX + 1 no se cruza con otro envío
+
+    SELECT COALESCE(MAX(id_archivo_plano), 0) + 1 INTO wid_archivo_plano
+      FROM tab_enc_archivo_plano;
+
+    INSERT INTO tab_enc_archivo_plano (id_archivo_plano, nom_archivo, id_empresa, nom_empresa, id_banco,
+                                       ind_tipocuenta, cta_empresa, fecha_aplicacion)
+    VALUES                            (wid_archivo_plano, wnom_archivo, wid_empresa, TRIM(wnom_empresa), wcta.id_banco,
+                                       wcta.ind_tipocuenta, wcta.cta_empresa, wfecha_aplicacion);
+
+-- DETALLE: copia de los datos bancarios del inversor y el neto a pagar
+    INSERT INTO tab_det_archivo_inversion (id_archivo_plano, id_proyecto, id_inversor, id_cuota,
+                                           id_tipo, nom_inversor, id_banco, ind_tipocuenta, num_cuenta,
+                                           val_a_pagar, concepto)
+    SELECT wid_archivo_plano, c.id_proyecto, c.id_inversor, c.id_cuota,
+           i.id_tipo,
+           LEFT(TRIM(i.nom_inversor), 100),
+           i.id_banco,
+           COALESCE(i.ind_tipocuenta, FALSE),
+           i.num_cuenta,
+           c.val_neto,
+           LEFT('Inversion ' || c.id_proyecto || ' cuota ' || c.id_cuota, 80)
+      FROM tab_cuotas_inversion c
+      JOIN tab_inversiones      n ON n.id_proyecto = c.id_proyecto AND n.id_inversor = c.id_inversor
+      JOIN tab_inversores       i ON i.id_inversor = c.id_inversor
+     WHERE c.ind_aprobada     = TRUE
+       AND c.estado_pago      IN (0, 3)
+       AND c.fec_vencimiento  <= wfec_corte
+       AND c.val_neto         > 0
+       AND n.ind_borrado      = FALSE
+       AND n.estado_inversion IN ('VIGENTE', 'RENOVADA', 'VENCIDA');
+
+-- MARCAR LAS CUOTAS COMO ENVIADAS
+    UPDATE tab_cuotas_inversion c
+       SET estado_pago      = 1,
+           fec_pago         = NULL,
+           id_archivo_plano = wid_archivo_plano
+      FROM tab_det_archivo_inversion d
+     WHERE d.id_archivo_plano = wid_archivo_plano
+       AND c.id_proyecto      = d.id_proyecto
+       AND c.id_inversor      = d.id_inversor
+       AND c.id_cuota         = d.id_cuota;
+
+    RETURN wid_archivo_plano;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN AUXILIAR: REFLEJAR LA RESPUESTA DEL BANCO EN tab_cuotas_inversion
+-- 2 = APROBADO  → cuota PAGADA (con la fecha del banco). Si era la última
+--                 por pagar, el trigger de Financiero deja la inversión LIQUIDADA.
+-- 3 = RECHAZADO → cuota RECHAZADA (Financiero corrige la cuenta y la reenvía)
+-- 1 = PENDIENTE → sigue enviada
+-- No se llama desde PHP.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_aplicar_respuesta_inversion (wid_proyecto  tab_cuotas_inversion.id_proyecto%TYPE,
+                                                            wid_inversor  tab_cuotas_inversion.id_inversor%TYPE,
+                                                            wid_cuota     tab_cuotas_inversion.id_cuota%TYPE,
+                                                            westado_pago  tab_pagos_inversion.estado_pago%TYPE,
+                                                            wfec_pago     tab_pagos_inversion.fec_pago%TYPE) RETURNS VOID AS
+$BODY$
+BEGIN
+    IF westado_pago = 2 THEN
+        UPDATE tab_cuotas_inversion
+           SET estado_pago = 2,
+               fec_pago    = wfec_pago
+         WHERE id_proyecto = wid_proyecto
+           AND id_inversor = wid_inversor
+           AND id_cuota    = wid_cuota;
+    ELSIF westado_pago = 3 THEN
+        UPDATE tab_cuotas_inversion
+           SET estado_pago = 3,
+               fec_pago    = NULL
+         WHERE id_proyecto = wid_proyecto
+           AND id_inversor = wid_inversor
+           AND id_cuota    = wid_cuota
+           AND estado_pago = 1;
+    END IF;
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN DE INSERT DE PAGOS DE INVERSIONES
+-- Registra la respuesta del banco para UNA línea de un archivo de inversiones.
+-- El valor sale de la línea del archivo y el banco del encabezado.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_insert_pagos_inversion (wid_archivo_plano  tab_pagos_inversion.id_archivo_plano%TYPE,
+                                                       wid_proyecto       tab_pagos_inversion.id_proyecto%TYPE,
+                                                       wid_inversor       tab_pagos_inversion.id_inversor%TYPE,
+                                                       wid_cuota          tab_pagos_inversion.id_cuota%TYPE,
+                                                       wfec_pago          tab_pagos_inversion.fec_pago%TYPE,
+                                                       westado_pago       tab_pagos_inversion.estado_pago%TYPE,
+                                                       wid_codigo         tab_pagos_inversion.id_codigo%TYPE) RETURNS BOOLEAN AS
+$BODY$
+DECLARE wid_pago        tab_pagos_inversion.id_pago_inversion%TYPE;
+        wval_pago       tab_det_archivo_inversion.val_a_pagar%TYPE;
+        wid_banco       tab_enc_archivo_plano.id_banco%TYPE;
+        wind_generado   tab_enc_archivo_plano.ind_generado%TYPE;
+        wfec_generacion tab_enc_archivo_plano.fec_generacion%TYPE;
+BEGIN
+
+    IF wid_archivo_plano IS NULL OR wid_proyecto IS NULL OR wid_inversor IS NULL OR wid_cuota IS NULL THEN
+        RAISE EXCEPTION 'Archivo plano, proyecto, inversor y cuota son obligatorios.';
+    END IF;
+
+    IF wfec_pago IS NULL THEN
+        RAISE EXCEPTION 'La fecha de pago no puede ser nula.';
+    END IF;
+
+    IF westado_pago IS NULL OR westado_pago NOT IN (1, 2, 3) THEN
+        RAISE EXCEPTION 'El estado % no es válido: debe ser 1 (Pendiente), 2 (Aprobado) o 3 (Rechazado).', westado_pago;
+    END IF;
+
+    IF wid_codigo IS NULL THEN
+        RAISE EXCEPTION 'El código de respuesta del banco no puede ser nulo.';
+    END IF;
+
+-- EL ARCHIVO EXISTE, ES DE INVERSIONES Y YA SE GENERÓ
+    SELECT id_banco, ind_generado, fec_generacion
+      INTO wid_banco, wind_generado, wfec_generacion
+      FROM tab_enc_archivo_plano
+     WHERE id_archivo_plano = wid_archivo_plano;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El archivo plano % no existe.', wid_archivo_plano;
+    END IF;
+
+    IF fun_tipo_archivo_plano(wid_archivo_plano) <> 'INVERSION' THEN
+        RAISE EXCEPTION 'El archivo plano % no es de inversiones.', wid_archivo_plano;
+    END IF;
+
+    IF NOT wind_generado THEN
+        RAISE EXCEPTION 'El archivo plano % todavía no ha sido generado; no puede tener respuesta del banco.', wid_archivo_plano;
+    END IF;
+
+-- LA CUOTA ESTÁ EN ESE ARCHIVO
+    SELECT val_a_pagar INTO wval_pago
+      FROM tab_det_archivo_inversion
+     WHERE id_archivo_plano = wid_archivo_plano
+       AND id_proyecto      = wid_proyecto
+       AND id_inversor      = wid_inversor
+       AND id_cuota         = wid_cuota;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'La cuota % del inversor % (proyecto %) no está en el archivo plano %.', wid_cuota, wid_inversor, wid_proyecto, wid_archivo_plano;
+    END IF;
+
+-- ESA LÍNEA NO TIENE YA UNA RESPUESTA
+    IF EXISTS (SELECT 1 FROM tab_pagos_inversion
+                WHERE id_archivo_plano = wid_archivo_plano
+                  AND id_proyecto      = wid_proyecto
+                  AND id_inversor      = wid_inversor
+                  AND id_cuota         = wid_cuota) THEN
+        RAISE EXCEPTION 'La cuota % del inversor % ya tiene una respuesta registrada en el archivo plano %. Si está pendiente, actualícela.', wid_cuota, wid_inversor, wid_archivo_plano;
+    END IF;
+
+-- NO ESTÁ YA PAGADA
+    IF westado_pago = 2 AND EXISTS (SELECT 1 FROM tab_pagos_inversion
+                                     WHERE id_proyecto = wid_proyecto
+                                       AND id_inversor = wid_inversor
+                                       AND id_cuota    = wid_cuota
+                                       AND estado_pago = 2) THEN
+        RAISE EXCEPTION 'La cuota % del inversor % (proyecto %) ya fue pagada.', wid_cuota, wid_inversor, wid_proyecto;
+    END IF;
+
+-- CÓDIGO ACTIVO PARA EL BANCO DEL ARCHIVO
+    IF NOT EXISTS (SELECT 1 FROM tab_codigos_respuesta_banco
+                    WHERE id_codigo   = wid_codigo
+                      AND id_banco    = wid_banco
+                      AND ind_borrado = FALSE) THEN
+        RAISE EXCEPTION 'El código % no existe o está inactivo para el banco % del archivo plano.', wid_codigo, wid_banco;
+    END IF;
+
+-- FECHA: NO FUTURA NI ANTERIOR A LA GENERACIÓN
+    IF wfec_pago > CURRENT_DATE THEN
+        RAISE EXCEPTION 'La fecha de pago no puede ser futura.';
+    END IF;
+
+    IF wfec_generacion IS NOT NULL AND wfec_pago < wfec_generacion THEN
+        RAISE EXCEPTION 'La fecha de pago no puede ser anterior a la generación del archivo plano (%).', TO_CHAR(wfec_generacion, 'DD/MM/YYYY');
+    END IF;
+
+    SELECT COALESCE(MAX(id_pago_inversion), 0) + 1 INTO wid_pago FROM tab_pagos_inversion;
+
+    INSERT INTO tab_pagos_inversion (id_pago_inversion, id_archivo_plano, id_proyecto, id_inversor, id_cuota,
+                                     fec_pago, val_pago, estado_pago, id_codigo, id_banco)
+    VALUES                          (wid_pago, wid_archivo_plano, wid_proyecto, wid_inversor, wid_cuota,
+                                     wfec_pago, wval_pago, westado_pago, wid_codigo, wid_banco);
+
+    PERFORM fun_aplicar_respuesta_inversion(wid_proyecto, wid_inversor, wid_cuota, westado_pago, wfec_pago);
+
+    RETURN TRUE;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;

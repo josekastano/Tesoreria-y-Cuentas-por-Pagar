@@ -517,17 +517,12 @@ function buildCtasProveedorPayload() {
 function openNewModal() {
     clearAllFieldErrors('new');
     setVal('new-cta-empresa', '');
-    setVal('new-id-tipo-pago', '');
     // Fecha de aplicación: la próxima fecha válida (día de pago y no festivo)
     setFecha('new-fecha-aplicacion', proximaFechaValida() || '');
     setVal('new-nom-archivo', '');
     setVal('new-concepto', '');
     setVal('new-id-cronograma', '');
     mostrarEmpresaCuenta();
-
-    // Si solo hay un tipo de pago, se deja elegido
-    const tipoPago = document.getElementById('new-id-tipo-pago');
-    if (tipoPago && tipoPago.options.length === 2) tipoPago.selectedIndex = 1;
 
     limpiarProveedores();
     setHint('Seleccione un cronograma para ver los proveedores a pagar.');
@@ -803,7 +798,11 @@ function initModalesRapidos() {
 }
 
 // ============================================================
-// 4. MODAL: EDITAR ARCHIVO PLANO (solo el nombre)
+// 4. MODAL: EDITAR ARCHIVO PLANO
+// ------------------------------------------------------------
+// Proveedores: solo el nombre. Nómina e inversiones: nombre, cuenta de origen
+// y fecha de aplicación (el módulo que lo envió no elige de qué cuenta sale el
+// dinero). Esos campos se deshabilitan cuando no aplican, así no viajan en el POST.
 // ============================================================
 function openEditModal(archivo) {
     if (archivo.generado) {
@@ -814,11 +813,88 @@ function openEditModal(archivo) {
     setVal('edit-archivo-id', archivo.id_archivo_plano);
     setVal('edit-origen-display', `${archivo.nom_banco} — ${archivo.cta_empresa} (${archivo.tipo_cuenta})`);
     setVal('edit-nom-archivo', archivo.nom_archivo);
+
+    const esNomina   = !!archivo.es_externo;   // nómina o inversiones
+    const camposNom  = document.getElementById('edit-nomina-campos');
+    const origenFijo = document.getElementById('edit-origen-fijo');
+    const selCta     = document.getElementById('edit-cta-empresa');
+    const hidFecha   = document.getElementById('edit-fecha-aplicacion');
+
+    if (camposNom)  camposNom.style.display  = esNomina ? '' : 'none';
+    if (origenFijo) origenFijo.style.display = esNomina ? 'none' : '';
+    if (selCta)     selCta.disabled   = !esNomina;
+    if (hidFecha)   hidFecha.disabled = !esNomina;
+
+    setText('edit-subtitulo', esNomina
+        ? 'Elija de qué cuenta sale el pago y cuándo se aplica'
+        : 'Solo se puede cambiar el nombre mientras no se haya generado');
+
+    if (esNomina) {
+        setText('edit-nomina-periodo', `${archivo.periodo_nomina} — enviado por el módulo ${archivo.es_inversion ? 'Financiero' : 'de Nómina'}.`);
+        if (selCta) selCta.value = archivo.cta_combo || '';
+        // Si la fecha que puso Nómina ya pasó o no es válida, se propone la próxima válida
+        const fecha = archivo.fecha_aplicacion && !motivoFechaBloqueada(archivo.fecha_aplicacion)
+            ? archivo.fecha_aplicacion
+            : proximaFechaValida();
+        setFecha('edit-fecha-aplicacion', fecha || '');
+    }
+
     show('modal-edit-archivo');
 }
 
 function closeEditModal() {
+    cerrarSelectorFecha();
     hide('modal-edit-archivo');
+}
+
+// ============================================================
+// 4.1 DEVOLVER UN ARCHIVO A NÓMINA O A FINANCIERO (solo si no se ha descargado)
+// ============================================================
+let idArchivoDevolver = null;
+
+function openDevolverModal(archivo) {
+    if (archivo.generado) {
+        showToast('El archivo ya se descargó para el banco: no se puede devolver.', 'error');
+        return;
+    }
+    idArchivoDevolver = archivo.id_archivo_plano;
+    const modulo = archivo.modulo_origen || 'Nómina';
+    setText('devolver-titulo', `Devolver a ${modulo}`);
+    setText('devolver-subtitulo', `${archivo.nom_archivo} — ${archivo.periodo_nomina || ''}`);
+    setText('devolver-texto', archivo.es_inversion
+        ? 'El archivo se elimina de Tesorería y las cuotas vuelven a quedar pendientes en el módulo Financiero, para que corrijan y las envíen otra vez.'
+        : 'El archivo se elimina de Tesorería y los empleados vuelven a quedar pendientes en el módulo de Nómina, para que corrijan y lo envíen otra vez.');
+    show('modal-devolver-nomina');
+}
+
+function closeDevolverModal() {
+    idArchivoDevolver = null;
+    hide('modal-devolver-nomina');
+}
+
+async function confirmarDevolver() {
+    const btn = document.getElementById('devolver-btn-ok');
+    if (!idArchivoDevolver || btn?.disabled) return;
+    if (btn) btn.disabled = true;
+
+    const formData = new FormData();
+    formData.append('btn_devolver_archivo', '1');
+    formData.append('hid_id_archivo_plano', idArchivoDevolver);
+
+    try {
+        const result = await enviarPost(formData, 'btn_devolver_archivo');
+        if (result.success) {
+            showToast(result.message, 'success');
+            closeDevolverModal();
+            setTimeout(() => location.reload(), 800);
+        } else {
+            showToast(result.message || 'No se pudo devolver el archivo.', 'error');
+        }
+    } catch (err) {
+        showToast('Error de conexión', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 // ============================================================
@@ -839,14 +915,17 @@ function badgeEstadoPago(d) {
 async function openDetailModal(archivo) {
     idArchivoDetalleActual = archivo.id_archivo_plano;
 
+    const esNomina    = !!archivo.es_nomina;
+    const esInversion = !!archivo.es_inversion;
+    const esExterno   = esNomina || esInversion;
     setText('detail-title', archivo.nom_archivo);
-    setText('detail-subtitle', `#${archivo.id_archivo_plano} — ${archivo.generado ? 'Generado' : 'Por generar'}`);
+    setText('detail-subtitle', `#${archivo.id_archivo_plano} — ${archivo.generado ? 'Generado' : 'Por generar'}${esExterno ? ' — ' + archivo.periodo_nomina : ''}`);
 
     document.getElementById('detail-content').innerHTML = `
         <div class="detail-grid">
             <div class="detail-item"><span class="detail-label">Empresa</span><span class="detail-value">${escapeHtml(archivo.nom_empresa)}<br><small>${escapeHtml(archivo.id_empresa)}</small></span></div>
             <div class="detail-item"><span class="detail-label">Cuenta de Origen</span><span class="detail-value">${escapeHtml(archivo.nom_banco)}<br><small>${escapeHtml(archivo.cta_empresa)} · ${escapeHtml(archivo.tipo_cuenta)}</small></span></div>
-            <div class="detail-item"><span class="detail-label">Tipo de Pago</span><span class="detail-value">${escapeHtml(archivo.nom_tipo_pago)}</span></div>
+            <div class="detail-item"><span class="detail-label">Tipo de Archivo</span><span class="detail-value">${escapeHtml(archivo.nom_tipo_pago)}${esExterno ? '<br><small>' + escapeHtml(archivo.periodo_nomina) + '</small>' : ''}</span></div>
             <div class="detail-item"><span class="detail-label">Fecha de Aplicación</span><span class="detail-value">${formatDate(archivo.fecha_aplicacion)}</span></div>
             <div class="detail-item"><span class="detail-label">Fecha de Generación</span><span class="detail-value">${formatDate(archivo.fec_generacion)}</span></div>
             <div class="detail-item"><span class="detail-label">Total</span><span class="detail-value" id="detail-total">—</span></div>
@@ -874,14 +953,19 @@ async function openDetailModal(archivo) {
             return;
         }
 
-        setText('detail-total', `${formatCurrency(detalle.reduce((n, d) => n + Number(d.val_a_pagar || 0), 0))} (${detalle.length} pago${detalle.length !== 1 ? 's' : ''})`);
+        const unidad = esNomina ? 'empleado' : (esInversion ? 'cuota' : 'pago');
+        setText('detail-total', `${formatCurrency(detalle.reduce((n, d) => n + Number(d.val_a_pagar || 0), 0))} (${detalle.length} ${unidad}${detalle.length !== 1 ? 's' : ''})`);
 
         detalleList.innerHTML = detalle.map(d => `
             <div class="cuota-row">
                 <span class="cuota-num">
                     ${escapeHtml(d.nom_tercero)}
                     <small>${escapeHtml(d.id_tipo)} ${escapeHtml(d.id_proveedor)} · ${escapeHtml(d.nom_banco)} ${escapeHtml(d.cta_proveedor)} (${escapeHtml(d.tipo_cuenta)})</small>
-                    <small>Fact. ${escapeHtml(d.id_factura)} · cuota ${escapeHtml(d.id_cuota)}${d.concepto ? ' · ' + escapeHtml(d.concepto) : ''}</small>
+                    <small>${esNomina
+                        ? escapeHtml(d.concepto || 'Pago de nómina')
+                        : esInversion
+                            ? `Proyecto ${escapeHtml(d.id_proyecto)} · cuota ${escapeHtml(d.id_cuota)}`
+                            : `Fact. ${escapeHtml(d.id_factura)} · cuota ${escapeHtml(d.id_cuota)}${d.concepto ? ' · ' + escapeHtml(d.concepto) : ''}`}</small>
                     ${Number(d.estado_pago) === 3 && d.des_motivo ? `<small class="motivo-rechazo">${escapeHtml(d.id_codigo)}: ${escapeHtml(d.des_motivo)}</small>` : ''}
                 </span>
                 ${badgeEstadoPago(d)}
@@ -954,11 +1038,66 @@ async function descargarArchivoPlano(id) {
 let archivosPage     = 1;
 let archivosPageSize = 25; // debe coincidir con el <option selected> de #archivos-page-size
 
+// ---- SECCIONES: Proveedores / Nómina / Inversiones ----
+// Cada sección tiene su tabla (tbody-proveedores / tbody-nomina / tbody-inversiones), sus tarjetas
+// y su aviso; todo lo que lleva data-seccion se muestra solo en su sección.
+// Filtros, paginación y orden actúan sobre la sección activa. La sección se
+// recuerda en sessionStorage para que al recargar (después de editar, devolver
+// o descargar) se quede en la misma.
+const SECCIONES = ['proveedores', 'nomina', 'inversiones'];
+let seccion = 'proveedores';
+
+function tbodyActivo()     { return document.getElementById(`tbody-${seccion}`); }
+function filasSeccion()    { return Array.from(tbodyActivo()?.querySelectorAll('tr:not(.empty-row)') ?? []); }
+function encabezadosSeccion() { return document.querySelectorAll(`#tabla-${seccion} th.sortable`); }
+
+function cambiarSeccion(nueva, guardar = true) {
+    if (!SECCIONES.includes(nueva)) nueva = 'proveedores';
+    seccion = nueva;
+
+    document.querySelectorAll('#mod-archivo-plano .ap-tab').forEach(tab => {
+        const activa = tab.dataset.tab === nueva;
+        tab.classList.toggle('active', activa);
+        tab.setAttribute('aria-selected', activa ? 'true' : 'false');
+    });
+    document.querySelectorAll('#mod-archivo-plano [data-seccion]').forEach(el => {
+        el.style.display = el.dataset.seccion === nueva ? '' : 'none';
+    });
+
+    const buscador = document.getElementById('archivo-search');
+    if (buscador) {
+        buscador.placeholder = {
+            nomina:      'Buscar por nombre, periodo, banco o cuenta...',
+            inversiones: 'Buscar por nombre, inversores, banco o cuenta...',
+        }[nueva] || 'Buscar por nombre, banco o cuenta...';
+    }
+
+    // El orden de la otra sección no aplica aquí
+    archivosSortKey = null;
+    archivosSortDir = 'asc';
+    document.querySelectorAll('#mod-archivo-plano .data-table th.sortable').forEach(th => {
+        th.classList.remove('sort-active');
+        const icon = th.querySelector('.sort-icon');
+        if (icon) icon.className = 'fas fa-caret-down sort-icon';
+    });
+
+    if (guardar) {
+        try { sessionStorage.setItem('archivo_plano_seccion', nueva); } catch (e) { /* sin almacenamiento */ }
+    }
+    clearFilters();
+    ajustarAlturaTablaArchivos();
+}
+
+function seccionGuardada() {
+    const delHash = location.hash.slice(1);
+    if (SECCIONES.includes(delHash)) return delHash;
+    try { return sessionStorage.getItem('archivo_plano_seccion') || 'proveedores'; } catch (e) { return 'proveedores'; }
+}
+
 function getFilteredArchivoRows() {
     const query  = val('archivo-search').toLowerCase().trim();
     const active = document.querySelector('#mod-archivo-plano .filter-toggle.active')?.dataset.filter ?? 'all';
-    const filas  = Array.from(document.querySelectorAll('#archivos-tbody tr:not(.empty-row)'));
-    return filas.filter(fila => {
+    return filasSeccion().filter(fila => {
         const texto = [0, 1, 2].map(i => (fila.children[i]?.textContent ?? '').toLowerCase()).join(' ');
         const pasaTexto  = !query || texto.includes(query);
         const pasaEstado = active === 'all' || fila.dataset.estado === active;
@@ -984,7 +1123,7 @@ function clearFilters() {
 }
 
 function renderArchivosPage() {
-    const todas     = Array.from(document.querySelectorAll('#archivos-tbody tr:not(.empty-row)'));
+    const todas     = filasSeccion();
     const coinciden = getFilteredArchivoRows();
     todas.forEach(fila => { fila.style.display = 'none'; });
 
@@ -1026,7 +1165,7 @@ let archivosSortKey = null;
 let archivosSortDir = 'asc';
 
 function sortArchivoRows(key, type) {
-    const tbody = document.getElementById('archivos-tbody');
+    const tbody = tbodyActivo();
     if (!tbody) return;
     const filas = Array.from(tbody.querySelectorAll('tr:not(.empty-row)'));
     if (filas.length === 0) return;
@@ -1049,7 +1188,7 @@ function sortArchivoRows(key, type) {
     });
     filas.forEach(fila => tbody.appendChild(fila));
 
-    document.querySelectorAll('#mod-archivo-plano .data-table th.sortable').forEach(th => {
+    encabezadosSeccion().forEach(th => {
         const icon   = th.querySelector('.sort-icon');
         const activo = th.dataset.sortKey === key;
         th.classList.toggle('sort-active', activo);
@@ -1105,7 +1244,7 @@ function initArchivoModule() {
     // Mover modales, calendario y toast al <body> para que el overlay cubra
     // también la barra superior (escapan del contexto de apilamiento del layout).
     ['modal-new-archivo', 'modal-ctaemp-rapida', 'modal-ctaprov-rapida', 'modal-banco-rapido',
-     'modal-edit-archivo', 'modal-detail', 'dp-pop', 'toast'].forEach(id => {
+     'modal-edit-archivo', 'modal-devolver-nomina', 'modal-detail', 'dp-pop', 'toast'].forEach(id => {
         const el = document.getElementById(id);
         if (el && el.parentElement !== document.body) document.body.appendChild(el);
     });
@@ -1128,7 +1267,7 @@ function initArchivoModule() {
     // ---------- CLIC EN LA TABLA ----------
     // Los datos de cada archivo van en data-archivo (JSON). Clic en la fila =
     // detalle; los botones de acciones hacen lo suyo sin abrir el detalle.
-    document.getElementById('archivos-tbody')?.addEventListener('click', function(e) {
+    document.querySelectorAll('#mod-archivo-plano .tbody-archivos').forEach(tb => tb.addEventListener('click', function(e) {
         const fila = e.target.closest('tr[data-archivo]');
         if (!fila) return;
         let archivo;
@@ -1138,16 +1277,22 @@ function initArchivoModule() {
         if (btn) {
             if (btn.dataset.action === 'descargar') descargarArchivoPlano(archivo.id_archivo_plano);
             if (btn.dataset.action === 'editar')    openEditModal(archivo);
+            if (btn.dataset.action === 'devolver')  openDevolverModal(archivo);
             return;
         }
         if (e.target.closest('.accion-bloqueada')) return;
         openDetailModal(archivo);
-    });
+    }));
 
     // ---------- PAGINACIÓN Y ORDENAMIENTO ----------
     initArchivosPagination();
     initArchivosSorting();
-    renderArchivosPage();
+
+    // ---------- SECCIONES (pestañas Proveedores / Nómina / Inversiones) ----------
+    document.querySelectorAll('#mod-archivo-plano .ap-tab').forEach(tab => {
+        tab.addEventListener('click', () => cambiarSeccion(tab.dataset.tab));
+    });
+    cambiarSeccion(seccionGuardada(), false);   // también pinta la primera página
     ajustarAlturaTablaArchivos();
     window.addEventListener('resize', ajustarAlturaTablaArchivos);
 
@@ -1172,6 +1317,10 @@ function initArchivoModule() {
         .forEach(btn => btn.addEventListener('click', closeNewModal));
     document.querySelectorAll('.btn-close-edit-modal, .btn-cancel-edit-modal')
         .forEach(btn => btn.addEventListener('click', closeEditModal));
+
+    document.getElementById('close-devolver-modal')?.addEventListener('click', closeDevolverModal);
+    document.getElementById('cancel-devolver-modal')?.addEventListener('click', closeDevolverModal);
+    document.getElementById('devolver-btn-ok')?.addEventListener('click', confirmarDevolver);
 
     document.getElementById('close-detail-modal')?.addEventListener('click', closeDetailModal);
     document.getElementById('close-detail-btn')?.addEventListener('click', closeDetailModal);

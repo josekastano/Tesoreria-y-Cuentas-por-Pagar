@@ -10,7 +10,22 @@ BEGIN
     FOR r IN SELECT oid::regprocedure AS fn
                FROM pg_proc
               WHERE proname IN ('fun_update_motivos_rechazo',
-                                'fun_update_pagos_cxp') LOOP
+                                'fun_update_festivos',
+                                'fun_update_enc_caja_menor',
+                                'fun_update_det_caja_menor',
+                                'fun_update_pmtros_tescxp',
+                                'fun_update_ctas_empresa',
+                                'fun_update_bancoxprov',
+                                'fun_update_enc_cronopagos',
+                                'fun_update_enc_archivo_plano',
+                                'fun_update_codigos_respuesta_banco',
+                                'fun_update_bancos',
+                                'fun_update_pagos_cxp',
+                                'fun_update_origen_archivo_plano',
+                                'fun_update_archivo_nomina',
+                                'fun_update_archivo_inversion',
+                                'fun_update_pagos_nomina',
+                                'fun_update_pagos_inversion') LOOP
         EXECUTE 'DROP FUNCTION ' || r.fn;
     END LOOP;
 END $$;
@@ -472,69 +487,6 @@ $BODY$
 LANGUAGE PLPGSQL;
 
 --------------------------------------------------------------------------------------------------------------------------------------
--- FUNCIÓN DE UPDATE DE TIPOS DE PAGO
--- NOTA: El ID es la llave primaria y no se cambia. Actualiza el nombre y el indicador de
---       borrado: con wind_borrado = FALSE se reactiva un tipo de pago inactivo. Para
---       inactivar se usa fun_delete_tipos_pago, que valida los archivos planos pendientes.
---------------------------------------------------------------------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION fun_update_tipos_pago (wid_tipo_pago     tab_tipos_pago.id_tipo_pago%TYPE,
-                                                  wnom_tipo_pago    tab_tipos_pago.nom_tipo_pago%TYPE,
-                                                  wind_borrado      tab_tipos_pago.ind_borrado%TYPE) RETURNS BOOLEAN AS
-$BODY$
-BEGIN
-
--- VALIDAR QUE LOS CAMPOS NO SEAN NULOS
-    IF wid_tipo_pago IS NULL THEN
-        RAISE EXCEPTION 'El ID del tipo de pago no puede ser nulo.';
-    END IF;
-
-    IF wnom_tipo_pago IS NULL THEN
-        RAISE EXCEPTION 'El nombre del tipo de pago no puede ser nulo.';
-    END IF;
-
-    IF wind_borrado IS NULL THEN
-        RAISE EXCEPTION 'El indicador de borrado no puede ser nulo.';
-    END IF;
-
--- VALIDAR QUE EL TIPO DE PAGO EXISTA
-    IF NOT EXISTS (SELECT 1 FROM tab_tipos_pago WHERE id_tipo_pago = wid_tipo_pago) THEN
-        RAISE EXCEPTION 'El tipo de pago % no existe.', wid_tipo_pago;
-    END IF;
-
--- VALIDAR LONGITUD DEL NOMBRE
-    IF LENGTH(TRIM(wnom_tipo_pago)) < 1 OR LENGTH(TRIM(wnom_tipo_pago)) > 15 THEN
-        RAISE EXCEPTION 'El nombre del tipo de pago debe tener entre 1 y 15 caracteres.';
-    END IF;
-
--- VALIDAR QUE EL NOMBRE NO LO TENGA OTRO TIPO DE PAGO
-    IF EXISTS (SELECT 1 FROM tab_tipos_pago
-                WHERE UPPER(nom_tipo_pago) = UPPER(TRIM(wnom_tipo_pago))
-                  AND id_tipo_pago <> wid_tipo_pago) THEN
-        RAISE EXCEPTION 'Ya existe otro tipo de pago con el nombre %.', UPPER(TRIM(wnom_tipo_pago));
-    END IF;
-
--- NO SE INACTIVA POR AQUÍ (hay que pasar por las validaciones de fun_delete_tipos_pago)
-    IF wind_borrado = TRUE AND EXISTS (SELECT 1 FROM tab_tipos_pago
-                                        WHERE id_tipo_pago = wid_tipo_pago AND ind_borrado = FALSE) THEN
-        RAISE EXCEPTION 'Para inactivar un tipo de pago use la opción de inactivar.';
-    END IF;
-
--- SI TODO VA BIEN, SE ACTUALIZA
-    UPDATE tab_tipos_pago
-    SET    nom_tipo_pago = UPPER(TRIM(wnom_tipo_pago)),
-           ind_borrado   = wind_borrado
-    WHERE  id_tipo_pago  = wid_tipo_pago;
-
-    RETURN TRUE;
-
-EXCEPTION
-    WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
-END;
-$BODY$
-LANGUAGE PLPGSQL;
-
---------------------------------------------------------------------------------------------------------------------------------------
 -- FUNCIÓN DE UPDATE DE ENCABEZADO DE ARCHIVO PLANO
 -- NOTA: Solo se permite editar mientras el archivo plano NO haya sido generado (ind_generado = FALSE).
 --------------------------------------------------------------------------------------------------------------------------------------
@@ -817,3 +769,260 @@ END;
 $BODY$
 LANGUAGE PLPGSQL;
 
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN AUXILIAR: CAMBIAR NOMBRE, CUENTA DE ORIGEN Y FECHA DE UN ARCHIVO PLANO
+-- La usan fun_update_archivo_nomina y fun_update_archivo_inversion: Nómina y
+-- Financiero no eligen de qué cuenta sale el dinero; Tesorería lo ajusta
+-- antes de descargar el archivo. Banco y tipo de cuenta salen de la cuenta
+-- elegida. Solo mientras el archivo no esté generado.
+-- No se llama desde PHP.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_update_origen_archivo_plano (wid_archivo_plano  tab_enc_archivo_plano.id_archivo_plano%TYPE,
+                                                            wnom_archivo       tab_enc_archivo_plano.nom_archivo%TYPE,
+                                                            wid_empresa        tab_enc_archivo_plano.id_empresa%TYPE,
+                                                            wcta_empresa       tab_enc_archivo_plano.cta_empresa%TYPE,
+                                                            wfecha_aplicacion  tab_enc_archivo_plano.fecha_aplicacion%TYPE) RETURNS VOID AS
+$BODY$
+DECLARE wind_generado  tab_enc_archivo_plano.ind_generado%TYPE;
+        wcta           RECORD;
+        wdia1          tab_pmtros_tescxp.fec_diapago1%TYPE;
+        wdia2          tab_pmtros_tescxp.fec_diapago2%TYPE;
+        wdia3          tab_pmtros_tescxp.fec_diapago3%TYPE;
+        wnom_festivo   tab_festivos.nom_festivo%TYPE;
+BEGIN
+
+    IF wid_archivo_plano IS NULL OR wnom_archivo IS NULL OR wid_empresa IS NULL
+       OR wcta_empresa IS NULL OR wfecha_aplicacion IS NULL THEN
+        RAISE EXCEPTION 'Archivo, nombre, cuenta de origen y fecha de aplicación son obligatorios.';
+    END IF;
+
+    SELECT ind_generado INTO wind_generado
+      FROM tab_enc_archivo_plano
+     WHERE id_archivo_plano = wid_archivo_plano;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El archivo plano % no existe.', wid_archivo_plano;
+    END IF;
+
+    IF wind_generado THEN
+        RAISE EXCEPTION 'El archivo plano % ya fue generado y no se puede editar.', wid_archivo_plano;
+    END IF;
+
+    IF LENGTH(TRIM(wnom_archivo)) < 3 OR LENGTH(wnom_archivo) > 30 THEN
+        RAISE EXCEPTION 'El nombre del archivo plano debe tener entre 3 y 30 caracteres.';
+    END IF;
+
+-- CUENTA DE ORIGEN ACTIVA, CON BANCO ACTIVO
+    SELECT c.id_banco, c.ind_tipocuenta
+      INTO wcta
+      FROM tab_ctas_empresa c
+      JOIN tab_bancos       b ON b.id_banco = c.id_banco
+     WHERE c.id_empresa  = wid_empresa
+       AND c.cta_empresa = wcta_empresa
+       AND c.ind_borrado = FALSE
+       AND b.ind_borrado = FALSE
+       AND b.ind_estado  = TRUE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'La cuenta % no está registrada, está inactiva o su banco está inactivo.', wcta_empresa;
+    END IF;
+
+-- FECHA: no pasada, día de pago y no festivo (misma regla que fun_insert_enc_archivo_plano)
+    IF wfecha_aplicacion < CURRENT_DATE THEN
+        RAISE EXCEPTION 'La fecha de aplicación no puede ser anterior a la fecha actual.';
+    END IF;
+
+    SELECT fec_diapago1, fec_diapago2, fec_diapago3
+      INTO wdia1, wdia2, wdia3
+      FROM tab_pmtros_tescxp
+     WHERE id_empresa  = wid_empresa
+       AND ind_borrado = FALSE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'No hay días de pago configurados en Parámetros de Tesorería para la empresa %.', wid_empresa;
+    END IF;
+
+    IF EXTRACT(ISODOW FROM wfecha_aplicacion) NOT IN (wdia1, wdia2, wdia3) THEN
+        RAISE EXCEPTION 'La fecha de aplicación % no es un día de pago configurado en Parámetros de Tesorería.', TO_CHAR(wfecha_aplicacion, 'DD/MM/YYYY');
+    END IF;
+
+    SELECT nom_festivo INTO wnom_festivo
+      FROM tab_festivos
+     WHERE fecha = wfecha_aplicacion AND ind_borrado = FALSE
+     LIMIT 1;
+
+    IF FOUND THEN
+        RAISE EXCEPTION 'La fecha de aplicación % es festivo (%).', TO_CHAR(wfecha_aplicacion, 'DD/MM/YYYY'), wnom_festivo;
+    END IF;
+
+    UPDATE tab_enc_archivo_plano
+       SET nom_archivo      = TRIM(wnom_archivo),
+           id_empresa       = wid_empresa,
+           cta_empresa      = wcta_empresa,
+           id_banco         = wcta.id_banco,
+           ind_tipocuenta   = wcta.ind_tipocuenta,
+           fecha_aplicacion = wfecha_aplicacion
+     WHERE id_archivo_plano = wid_archivo_plano;
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN: EDITAR UN ARCHIVO DE NÓMINA (nombre, cuenta de origen y fecha)
+-- Nómina no elige de qué cuenta sale el dinero: Tesorería lo ajusta aquí
+-- antes de descargarlo.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_update_archivo_nomina (wid_archivo_plano  tab_enc_archivo_plano.id_archivo_plano%TYPE,
+                                                      wnom_archivo       tab_enc_archivo_plano.nom_archivo%TYPE,
+                                                      wid_empresa        tab_enc_archivo_plano.id_empresa%TYPE,
+                                                      wcta_empresa       tab_enc_archivo_plano.cta_empresa%TYPE,
+                                                      wfecha_aplicacion  tab_enc_archivo_plano.fecha_aplicacion%TYPE) RETURNS BOOLEAN AS
+$BODY$
+BEGIN
+    IF fun_tipo_archivo_plano(wid_archivo_plano) IS DISTINCT FROM 'NOMINA' THEN
+        RAISE EXCEPTION 'El archivo plano % no existe o no es de nómina.', wid_archivo_plano;
+    END IF;
+
+    PERFORM fun_update_origen_archivo_plano(wid_archivo_plano, wnom_archivo, wid_empresa, wcta_empresa, wfecha_aplicacion);
+    RETURN TRUE;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN: EDITAR UN ARCHIVO DE INVERSIONES (nombre, cuenta de origen y fecha)
+-- Financiero no elige de qué cuenta sale el dinero: Tesorería lo ajusta aquí
+-- antes de descargarlo.
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_update_archivo_inversion (wid_archivo_plano  tab_enc_archivo_plano.id_archivo_plano%TYPE,
+                                                         wnom_archivo       tab_enc_archivo_plano.nom_archivo%TYPE,
+                                                         wid_empresa        tab_enc_archivo_plano.id_empresa%TYPE,
+                                                         wcta_empresa       tab_enc_archivo_plano.cta_empresa%TYPE,
+                                                         wfecha_aplicacion  tab_enc_archivo_plano.fecha_aplicacion%TYPE) RETURNS BOOLEAN AS
+$BODY$
+BEGIN
+    IF fun_tipo_archivo_plano(wid_archivo_plano) IS DISTINCT FROM 'INVERSION' THEN
+        RAISE EXCEPTION 'El archivo plano % no existe o no es de inversiones.', wid_archivo_plano;
+    END IF;
+
+    PERFORM fun_update_origen_archivo_plano(wid_archivo_plano, wnom_archivo, wid_empresa, wcta_empresa, wfecha_aplicacion);
+    RETURN TRUE;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN DE UPDATE DE PAGOS DE NÓMINA
+-- Resuelve un pago que quedó PENDIENTE (1) a APROBADO (2) o RECHAZADO (3).
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_update_pagos_nomina (wid_pago_nomina  tab_pagos_nomina.id_pago_nomina%TYPE,
+                                                    westado_pago     tab_pagos_nomina.estado_pago%TYPE,
+                                                    wid_codigo       tab_pagos_nomina.id_codigo%TYPE) RETURNS BOOLEAN AS
+$BODY$
+DECLARE wpago RECORD;
+BEGIN
+
+    IF wid_pago_nomina IS NULL OR westado_pago IS NULL OR wid_codigo IS NULL THEN
+        RAISE EXCEPTION 'Pago, estado y código de respuesta son obligatorios.';
+    END IF;
+
+    SELECT * INTO wpago FROM tab_pagos_nomina WHERE id_pago_nomina = wid_pago_nomina;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El pago de nómina % no existe.', wid_pago_nomina;
+    END IF;
+
+    IF wpago.estado_pago <> 1 THEN
+        RAISE EXCEPTION 'El pago de nómina % ya fue resuelto (estado %) y no puede modificarse.', wid_pago_nomina,
+            CASE wpago.estado_pago WHEN 2 THEN 'APROBADO' ELSE 'RECHAZADO' END;
+    END IF;
+
+    IF westado_pago NOT IN (2, 3) THEN
+        RAISE EXCEPTION 'El estado % no es válido: debe ser 2 (Aprobado) o 3 (Rechazado).', westado_pago;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM tab_codigos_respuesta_banco
+                    WHERE id_codigo   = wid_codigo
+                      AND id_banco    = wpago.id_banco
+                      AND ind_borrado = FALSE) THEN
+        RAISE EXCEPTION 'El código % no existe o está inactivo para el banco %.', wid_codigo, wpago.id_banco;
+    END IF;
+
+    UPDATE tab_pagos_nomina
+       SET estado_pago = westado_pago,
+           id_codigo   = wid_codigo
+     WHERE id_pago_nomina = wid_pago_nomina;
+
+    PERFORM fun_aplicar_respuesta_nomina(wpago.ano_nomina, wpago.mes_nomina, wpago.val_periodo,
+                                         wpago.id_empleado, westado_pago, wpago.fec_pago);
+
+    RETURN TRUE;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- FUNCIÓN DE UPDATE DE PAGOS DE INVERSIONES
+-- Resuelve un pago que quedó PENDIENTE (1) a APROBADO (2) o RECHAZADO (3).
+--------------------------------------------------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fun_update_pagos_inversion (wid_pago_inversion  tab_pagos_inversion.id_pago_inversion%TYPE,
+                                                       westado_pago        tab_pagos_inversion.estado_pago%TYPE,
+                                                       wid_codigo          tab_pagos_inversion.id_codigo%TYPE) RETURNS BOOLEAN AS
+$BODY$
+DECLARE wpago RECORD;
+BEGIN
+
+    IF wid_pago_inversion IS NULL OR westado_pago IS NULL OR wid_codigo IS NULL THEN
+        RAISE EXCEPTION 'Pago, estado y código de respuesta son obligatorios.';
+    END IF;
+
+    SELECT * INTO wpago FROM tab_pagos_inversion WHERE id_pago_inversion = wid_pago_inversion;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El pago de inversión % no existe.', wid_pago_inversion;
+    END IF;
+
+    IF wpago.estado_pago <> 1 THEN
+        RAISE EXCEPTION 'El pago de inversión % ya fue resuelto (estado %) y no puede modificarse.', wid_pago_inversion,
+            CASE wpago.estado_pago WHEN 2 THEN 'APROBADO' ELSE 'RECHAZADO' END;
+    END IF;
+
+    IF westado_pago NOT IN (2, 3) THEN
+        RAISE EXCEPTION 'El estado % no es válido: debe ser 2 (Aprobado) o 3 (Rechazado).', westado_pago;
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM tab_codigos_respuesta_banco
+                    WHERE id_codigo   = wid_codigo
+                      AND id_banco    = wpago.id_banco
+                      AND ind_borrado = FALSE) THEN
+        RAISE EXCEPTION 'El código % no existe o está inactivo para el banco %.', wid_codigo, wpago.id_banco;
+    END IF;
+
+    UPDATE tab_pagos_inversion
+       SET estado_pago = westado_pago,
+           id_codigo   = wid_codigo
+     WHERE id_pago_inversion = wid_pago_inversion;
+
+    PERFORM fun_aplicar_respuesta_inversion(wpago.id_proyecto, wpago.id_inversor, wpago.id_cuota,
+                                            westado_pago, wpago.fec_pago);
+
+    RETURN TRUE;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;

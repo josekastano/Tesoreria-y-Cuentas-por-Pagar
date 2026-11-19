@@ -125,6 +125,77 @@
 #mod-archivo-plano .stat-icon.green  { background: var(--dash-green-light); color: var(--dash-green-dark); }
 #mod-archivo-plano .stat-icon.red    { background: var(--dash-red-light);   color: var(--dash-red); }
 #mod-archivo-plano .stat-icon.yellow { background: var(--dash-amber-light); color: var(--dash-amber); }
+#mod-archivo-plano .stat-icon.purple { background: #f3e8ff; color: #7c3aed; }
+#mod-archivo-plano .stat-value.stat-money { font-size: 20px; }
+
+/* ---- SECCIONES: PROVEEDORES / NÓMINA ---- */
+#mod-archivo-plano .ap-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--dash-border);
+    margin-bottom: 22px;
+}
+#mod-archivo-plano .ap-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 18px;
+    margin-bottom: -1px;
+    background: none;
+    border: none;
+    border-bottom: 3px solid transparent;
+    font-family: var(--dash-font);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--dash-text-sub);
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s;
+}
+#mod-archivo-plano .ap-tab:hover { color: var(--dash-blue); }
+#mod-archivo-plano .ap-tab.active {
+    color: var(--dash-blue);
+    border-bottom-color: var(--dash-blue);
+}
+#mod-archivo-plano .ap-tab-count {
+    min-width: 22px;
+    padding: 1px 8px;
+    border-radius: 20px;
+    background: #f1f5f9;
+    color: var(--dash-text-sub);
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+}
+#mod-archivo-plano .ap-tab.active .ap-tab-count { background: var(--dash-blue-light); color: var(--dash-blue); }
+#mod-archivo-plano .ap-tab-alerta {
+    padding: 1px 8px;
+    border-radius: 20px;
+    background: var(--dash-amber-light);
+    color: var(--dash-amber);
+    font-size: 11px;
+    font-weight: 700;
+}
+#mod-archivo-plano .ap-hint-seccion { margin: -8px 0 18px; }
+
+/* Archivo de nómina generado, esperando la respuesta del banco */
+#mod-archivo-plano .badge-banco { background: #f3e8ff; color: #7c3aed; }
+#mod-archivo-plano .badge-banco::before { background: currentColor; }
+
+
+/* Archivo enviado por el módulo de Nómina */
+#mod-archivo-plano .badge-nomina {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 8px;
+    border-radius: 20px;
+    background: #f3e8ff;
+    color: #7c3aed;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    vertical-align: middle;
+}
 
 #mod-archivo-plano .stat-info {
     display: flex;
@@ -276,13 +347,22 @@
 }
 
 /* Reparto proporcional del ancho (suma 100%) */
-#mod-archivo-plano .data-table col.col-archivo     { width: 20%; }
-#mod-archivo-plano .data-table col.col-origen      { width: 21%; }
-#mod-archivo-plano .data-table col.col-tipo-pago   { width: 13%; }
-#mod-archivo-plano .data-table col.col-aplicacion  { width: 11%; }
-#mod-archivo-plano .data-table col.col-generacion  { width: 11%; }
+/* Proveedores: archivo, origen, pagos, aplicación, generación, estado, acciones
+   Nómina:      archivo, periodo, origen, empleados, aplicación, generación, estado, acciones
+   Inversiones: archivo, inversores, origen, cuotas, aplicación, generación, estado, acciones */
+#mod-archivo-plano .data-table col.col-archivo     { width: 17%; }
+#mod-archivo-plano .data-table col.col-origen      { width: 17%; }
+#mod-archivo-plano .data-table col.col-periodo     { width: 11%; }
+#mod-archivo-plano .data-table col.col-pagos       { width: 12%; }
+#mod-archivo-plano .data-table col.col-aplicacion  { width: 9.5%; }
+#mod-archivo-plano .data-table col.col-generacion  { width: 9.5%; }
 #mod-archivo-plano .data-table col.col-estado      { width: 12%; }
 #mod-archivo-plano .data-table col.col-acciones    { width: 12%; }
+/* Proveedores ya no tiene columna de tipo de pago: su 11% pasa a la cuenta de origen */
+#mod-archivo-plano #tabla-proveedores col.col-origen   { width: 28%; }
+/* Inversiones: "N inversores · M proyectos" necesita un poco más que el periodo de nómina */
+#mod-archivo-plano #tabla-inversiones col.col-periodo  { width: 14%; }
+#mod-archivo-plano #tabla-inversiones col.col-origen   { width: 14%; }
 
 /* Segunda línea gris dentro de una celda (id, número de cuenta) */
 #mod-archivo-plano .cell-sub { color: var(--dash-text-muted); font-size: 11px; }

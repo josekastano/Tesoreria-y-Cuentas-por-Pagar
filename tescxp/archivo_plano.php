@@ -3,10 +3,14 @@
 $pageTitle        = 'ERP ADSO — Tesorería';
 $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Archivo Plano";
-$page_description = "Generación del archivo plano para pago de cronogramas al banco";
+$page_description = "Archivos planos de pago al banco: proveedores, nómina e inversiones";
 $page_icon        = "bi-file-earmark-spreadsheet";
-$page_extra_css   = ["../modules/tescxp/css/archivo_plano.css"];
-$page_extra_js    = ["../modules/tescxp/js/archivo_plano.js"];
+// Cache-busting (igual que Gestión Humana): ?v= cambia cada vez que se
+// actualiza el archivo, así el navegador no sigue usando un JS/CSS viejo.
+$v_ap_css         = @filemtime(__DIR__ . '/css/archivo_plano.css') ?: time();
+$v_ap_js          = @filemtime(__DIR__ . '/js/archivo_plano.js')   ?: time();
+$page_extra_css   = ["../modules/tescxp/css/archivo_plano.css?v=$v_ap_css"];
+$page_extra_js    = ["../modules/tescxp/js/archivo_plano.js?v=$v_ap_js"];
 $show_welcome     = false;
 // ==========================================
 
@@ -22,15 +26,27 @@ require_once('prepare_tescxp.php');
 // ============================================================
 // - ENCABEZADO (tab_enc_archivo_plano): cuenta de ORIGEN de la empresa
 //   (id_empresa, cta_empresa, y su id_banco e ind_tipocuenta), nom_empresa
-//   (de tab_pmtros_grales),
-//   fecha_aplicacion, id_tipo_pago. Ya NO lleva cronograma: el banco del
-//   archivo es el de la cuenta de origen.
+//   (de tab_pmtros_grales) y fecha_aplicacion. Ya NO lleva cronograma: el
+//   banco del archivo es el de la cuenta de origen. Es el MISMO encabezado
+//   para todos los archivos (no hay tipo de pago ni columnas por origen): si
+//   un archivo es de proveedores, nómina o inversiones se sabe por la tabla de
+//   detalle que tiene sus líneas (tipo_archivo en $list_enc_archivo_plano).
 // - DETALLE (tab_det_archivo_plano): una línea por cuota, con su
 //   id_cronograma y una COPIA de los datos del beneficiario (tipo y número de
 //   documento, nombre, banco, tipo de cuenta y cuenta).
 // - Solo se usan cronogramas PENDIENTES. Cuando el banco responde todas las
 //   cuotas de un cronograma, este queda cerrado aunque haya rechazos; las
 //   cuotas rechazadas se reprograman en un cronograma nuevo.
+// - ARCHIVOS DE NÓMINA (tipo_archivo = NOMINA): no se crean aquí. Los envía
+//   el módulo de Nómina con su botón "Enviar a Tesorería"
+//   (fun_enviar_nomina_tesoreria). Su detalle está en tab_det_archivo_nomina
+//   (una línea por empleado).
+// - ARCHIVOS DE INVERSIONES (tipo_archivo = INVERSION): los envía el área
+//   Financiera (fun_enviar_inversiones_tesoreria). Su detalle está en
+//   tab_det_archivo_inversion (una línea por cuota de inversión).
+// - A los de nómina e inversiones ("externos"), mientras no se descarguen,
+//   Tesorería les puede cambiar nombre, cuenta de origen y fecha, o
+//   devolverlos al módulo que los envió.
 
 // ============================================================
 // LIMPIAR MENSAJE DE ERROR DE POSTGRESQL
@@ -135,6 +151,50 @@ function tipo_cuenta_txt($valor): string {
     return es_verdadero($valor) ? 'Corriente' : 'Ahorros';
 }
 
+// PROVEEDORES / NOMINA / INVERSION (lo calcula $list_enc_archivo_plano a
+// partir de la tabla de detalle; el encabezado no lo guarda)
+function tipo_archivo(array $a): string {
+    return (string)($a['tipo_archivo'] ?? 'PROVEEDORES');
+}
+
+// Archivos que llegan de otro módulo (Nómina o Financiero)
+function es_externo(array $a): bool {
+    return in_array(tipo_archivo($a), ['NOMINA', 'INVERSION'], true);
+}
+
+// Módulo que envió el archivo (para "Devolver a ...")
+function modulo_origen(array $a): string {
+    return ['NOMINA' => 'Nómina', 'INVERSION' => 'Financiero'][tipo_archivo($a)] ?? 'Tesorería';
+}
+
+// "Nómina 2026-11 · periodo 1" o "Inversiones · 2 inversores · vencen hasta 15/11/2026"
+function descripcion_origen(array $a): string {
+    if (tipo_archivo($a) === 'NOMINA') {
+        return 'Nómina ' . (int)$a['ano_nomina'] . '-' . str_pad((string)(int)$a['mes_nomina'], 2, '0', STR_PAD_LEFT)
+             . ' · periodo ' . (int)$a['val_periodo'];
+    }
+    if (tipo_archivo($a) === 'INVERSION') {
+        $n = (int)($a['cant_inversores'] ?? 0);
+        $txt = 'Inversiones · ' . $n . ' inversor' . ($n !== 1 ? 'es' : '');
+        if (!empty($a['max_vencimiento'])) {
+            $txt .= ' · vencen hasta ' . date('d/m/Y', strtotime((string)$a['max_vencimiento']));
+        }
+        return $txt;
+    }
+    return '';
+}
+
+// Encabezado de un archivo plano, o excepción si no existe
+function leer_enc_archivo(int $id_archivo_plano, $stmt_enc): array {
+    $stmt_enc = requerir_stmt($stmt_enc, 'get_enc_archivo_plano');
+    $stmt_enc->execute([':wid_archivo_plano' => $id_archivo_plano]);
+    $enc = $stmt_enc->fetch(PDO::FETCH_ASSOC);
+    if (!$enc) {
+        throw new Exception('El archivo plano solicitado no existe.');
+    }
+    return $enc;
+}
+
 
 // ============================================================
 // CUOTAS DISPONIBLES Y CUENTAS DE UN CRONOGRAMA, POR PROVEEDOR
@@ -212,9 +272,6 @@ $ctas_empresa_disp = $list_ctas_empresa->fetchAll(PDO::FETCH_ASSOC);
 
 $list_cronogramas_pendientes->execute();
 $cronogramas_pend = $list_cronogramas_pendientes->fetchAll(PDO::FETCH_ASSOC);
-
-$list_tipos_pago->execute();
-$tipos_pago = $list_tipos_pago->fetchAll(PDO::FETCH_ASSOC);
 
 // Bancos para los modales rápidos de "Nueva cuenta" (empresa y proveedor)
 $list_bancos->execute();
@@ -428,6 +485,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception('Archivo plano no válido.');
             }
 
+            // Archivo de NÓMINA (una línea por empleado) o de INVERSIONES (una por
+            // cuota), con su respuesta del banco. Las consultas ya traen los
+            // alias que usa el JS (nom_tercero, id_proveedor, cta_proveedor).
+            $enc = leer_enc_archivo($id_archivo_plano, $get_enc_archivo_plano ?? null);
+            if (es_externo($enc)) {
+                $stmt_ext = tipo_archivo($enc) === 'NOMINA'
+                    ? requerir_stmt($list_conciliacion_nomina    ?? null, 'list_conciliacion_nomina')
+                    : requerir_stmt($list_conciliacion_inversion ?? null, 'list_conciliacion_inversion');
+                $stmt_ext->execute([':wid_archivo_plano' => $id_archivo_plano]);
+                $detalle = $stmt_ext->fetchAll(PDO::FETCH_ASSOC);
+                foreach ($detalle as &$d) {
+                    $d['tipo_cuenta'] = tipo_cuenta_txt($d['ind_tipocuenta']);
+                }
+                unset($d);
+
+                $respuesta['success']      = true;
+                $respuesta['tipo_archivo'] = tipo_archivo($enc);
+                $respuesta['es_nomina']    = tipo_archivo($enc) === 'NOMINA';
+                $respuesta['es_inversion'] = tipo_archivo($enc) === 'INVERSION';
+                $respuesta['detalle']      = $detalle;
+                responder_json($respuesta);
+            }
+
             $stmt_det = requerir_stmt($list_det_archivo_plano ?? null, 'list_det_archivo_plano');
             $stmt_det->execute([':wid_archivo_plano' => $id_archivo_plano]);
             $detalle = $stmt_det->fetchAll(PDO::FETCH_ASSOC);
@@ -464,14 +544,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new Exception('Archivo plano no válido.');
             }
 
-            $stmt_enc = requerir_stmt($get_enc_archivo_plano ?? null, 'get_enc_archivo_plano');
-            $stmt_enc->execute([':wid_archivo_plano' => $id_archivo_plano]);
-            $enc = $stmt_enc->fetch(PDO::FETCH_ASSOC);
-            if (!$enc) {
-                throw new Exception('El archivo plano solicitado no existe.');
-            }
+            $enc          = leer_enc_archivo($id_archivo_plano, $get_enc_archivo_plano ?? null);
+            $es_nomina    = tipo_archivo($enc) === 'NOMINA';
+            $es_inversion = tipo_archivo($enc) === 'INVERSION';
 
-            $stmt_det = requerir_stmt($list_det_archivo_plano ?? null, 'list_det_archivo_plano');
+            if ($es_nomina) {
+                $stmt_det = requerir_stmt($list_det_archivo_nomina ?? null, 'list_det_archivo_nomina');
+            } elseif ($es_inversion) {
+                $stmt_det = requerir_stmt($list_det_archivo_inversion ?? null, 'list_det_archivo_inversion');
+            } else {
+                $stmt_det = requerir_stmt($list_det_archivo_plano ?? null, 'list_det_archivo_plano');
+            }
             $stmt_det->execute([':wid_archivo_plano' => $id_archivo_plano]);
             $detalle = $stmt_det->fetchAll(PDO::FETCH_ASSOC);
             if (empty($detalle)) {
@@ -495,6 +578,86 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // de la copia en el detalle, así el archivo refleja exactamente lo que
             // quedó registrado (trazabilidad). El banco se identifica por id_banco.
             // id_factura e id_cuota no van: al banco no le sirven, son de control interno.
+            // Nómina: mismo formato, pero el beneficiario es el EMPLEADO (copia
+            // guardada en tab_det_archivo_nomina el día que Nómina lo envió) y
+            // las líneas salen en el orden de $list_det_archivo_nomina, que es
+            // el que usa la importación de la respuesta del banco.
+            if ($es_nomina) {
+                $filas = [[
+                    'NIT Empresa',
+                    'Nombre Empresa',
+                    'NIT Banco Origen',
+                    'Tipo Cuenta Origen',
+                    'Cuenta Origen',
+                    'Tipo Documento Empleado',
+                    'Documento Empleado',
+                    'Nombre Empleado',
+                    'NIT Banco Destino',
+                    'Tipo Cuenta Destino',
+                    'Cuenta Destino',
+                    'Valor a Pagar',
+                ]];
+                foreach ($detalle as $d) {
+                    $filas[] = [
+                        texto_excel($enc['id_empresa']),
+                        $enc['nom_empresa'],
+                        texto_excel($enc['id_banco']),
+                        tipo_cuenta_txt($enc['ind_tipocuenta']),
+                        texto_excel($enc['cta_empresa']),
+                        $d['id_tipo'],
+                        texto_excel($d['id_empleado']),
+                        $d['nom_empleado'],
+                        texto_excel($d['id_banco']),
+                        tipo_cuenta_txt($d['ind_tipocuenta']),
+                        texto_excel($d['num_cuenta']),
+                        number_format((float)$d['val_a_pagar'], 0, '', ''),
+                    ];
+                }
+
+                // (ya quedó marcado como generado arriba, igual que los de proveedores)
+                $nombre_archivo = preg_replace('/[^A-Za-z0-9_\-]/', '_', (string)$enc['nom_archivo']);
+                responder_csv($nombre_archivo !== '' ? $nombre_archivo : 'nomina_' . $id_archivo_plano, $filas);
+            }
+
+            // Inversiones: mismo formato; el beneficiario es el INVERSOR (copia
+            // guardada en tab_det_archivo_inversion el día que Financiero lo
+            // envió), en el orden de $list_det_archivo_inversion.
+            if ($es_inversion) {
+                $filas = [[
+                    'NIT Empresa',
+                    'Nombre Empresa',
+                    'NIT Banco Origen',
+                    'Tipo Cuenta Origen',
+                    'Cuenta Origen',
+                    'Tipo Documento Inversor',
+                    'Documento Inversor',
+                    'Nombre Inversor',
+                    'NIT Banco Destino',
+                    'Tipo Cuenta Destino',
+                    'Cuenta Destino',
+                    'Valor a Pagar',
+                ]];
+                foreach ($detalle as $d) {
+                    $filas[] = [
+                        texto_excel($enc['id_empresa']),
+                        $enc['nom_empresa'],
+                        texto_excel($enc['id_banco']),
+                        tipo_cuenta_txt($enc['ind_tipocuenta']),
+                        texto_excel($enc['cta_empresa']),
+                        $d['id_tipo'],
+                        texto_excel($d['id_inversor']),
+                        $d['nom_inversor'],
+                        texto_excel($d['id_banco']),
+                        tipo_cuenta_txt($d['ind_tipocuenta']),
+                        texto_excel($d['num_cuenta']),
+                        number_format((float)$d['val_a_pagar'], 0, '', ''),
+                    ];
+                }
+
+                $nombre_archivo = preg_replace('/[^A-Za-z0-9_\-]/', '_', (string)$enc['nom_archivo']);
+                responder_csv($nombre_archivo !== '' ? $nombre_archivo : 'inversiones_' . $id_archivo_plano, $filas);
+            }
+
             // Primera línea: el nombre de cada columna
             $filas = [[
                 'NIT Empresa',
@@ -539,7 +702,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (isset($_POST['btn_nuevo'])) {
             $id_cronograma     = (int)($_POST['sel_id_cronograma']    ?? 0);
             $cta_empresa_combo = trim($_POST['sel_cta_empresa']       ?? '');
-            $id_tipo_pago      = (int)($_POST['sel_id_tipo_pago']     ?? 0);
             $nom_archivo       = trim($_POST['txt_nom_archivo']       ?? '');
             $fecha_aplicacion  = trim($_POST['dat_fecha_aplicacion']  ?? '');
             $concepto          = trim($_POST['txt_concepto']          ?? '');
@@ -560,9 +722,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if (strlen($nom_archivo) < 3 || strlen($nom_archivo) > 30) {
                 $errores['err-new-nombre'] = 'El nombre debe tener entre 3 y 30 caracteres.';
-            }
-            if ($id_tipo_pago <= 0) {
-                $errores['err-new-tipo-pago'] = 'Seleccione el tipo de pago.';
             }
             $fecha_ok = DateTime::createFromFormat('Y-m-d', $fecha_aplicacion);
             if (!$fecha_ok || $fecha_ok->format('Y-m-d') !== $fecha_aplicacion) {
@@ -680,7 +839,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':wind_tipocuenta'   => pg_bool($cta_origen['ind_tipocuenta']),
                 ':wcta_empresa'      => $cta_origen['cta_empresa'],
                 ':wfecha_aplicacion' => $fecha_aplicacion,
-                ':wid_tipo_pago'     => $id_tipo_pago,
             ]);
 
             $stmt_id->execute([
@@ -716,9 +874,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             responder_json($respuesta);
         }
 
-        // ---------- EDITAR ARCHIVO PLANO (solo el nombre) ----------
-        // El banco del encabezado es el de la cuenta de origen: no se cambia
-        // aquí (se reenvía el mismo) para que no deje de coincidir con la cuenta.
+        // ---------- EDITAR ARCHIVO PLANO ----------
+        // Proveedores: solo el nombre. El banco del encabezado es el de la
+        // cuenta de origen: no se cambia aquí (se reenvía el mismo) para que no
+        // deje de coincidir con la cuenta.
+        // Nómina e inversiones: nombre, cuenta de origen y fecha de aplicación
+        // (el módulo que lo envió no eligió de qué cuenta sale el dinero; lo
+        // decide Tesorería aquí).
         if (isset($_POST['btn_editar'])) {
             $id_archivo_plano = (int)($_POST['hid_edit_id']          ?? 0);
             $nom_archivo      = trim($_POST['txt_edit_nom_archivo']  ?? '');
@@ -726,19 +888,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($id_archivo_plano <= 0) {
                 throw new Exception('Archivo plano no válido.');
             }
+
+            $enc = leer_enc_archivo($id_archivo_plano, $get_enc_archivo_plano ?? null);
+            if (es_verdadero($enc['ind_generado'])) {
+                throw new Exception('El archivo plano ya fue generado y no se puede editar.');
+            }
+
+            $errores = [];
             if (strlen($nom_archivo) < 3 || strlen($nom_archivo) > 30) {
-                $respuesta['errors'] = ['err-edit-nombre' => 'El nombre debe tener entre 3 y 30 caracteres.'];
+                $errores['err-edit-nombre'] = 'El nombre debe tener entre 3 y 30 caracteres.';
+            }
+
+            if (es_externo($enc)) {
+                $cta_combo        = trim($_POST['sel_edit_cta_empresa']      ?? '');
+                $fecha_aplicacion = trim($_POST['dat_edit_fecha_aplicacion'] ?? '');
+
+                $cta_origen = null;
+                if (strpos($cta_combo, ':') !== false) {
+                    [$id_emp, $cta_emp] = explode(':', $cta_combo, 2);
+                    foreach ($ctas_empresa_disp as $ce) {
+                        if ((string)$ce['id_empresa'] === $id_emp && (string)$ce['cta_empresa'] === $cta_emp) {
+                            $cta_origen = $ce;
+                            break;
+                        }
+                    }
+                }
+                if ($cta_origen === null) {
+                    $errores['err-edit-cuenta-empresa'] = 'Seleccione la cuenta de la empresa de origen.';
+                }
+
+                $fecha_ok = DateTime::createFromFormat('Y-m-d', $fecha_aplicacion);
+                if (!$fecha_ok || $fecha_ok->format('Y-m-d') !== $fecha_aplicacion) {
+                    $errores['err-edit-fecha'] = 'Indique la fecha de aplicación.';
+                } elseif ($fecha_aplicacion < date('Y-m-d')) {
+                    $errores['err-edit-fecha'] = 'La fecha de aplicación no puede ser anterior a hoy.';
+                } elseif (($motivo = motivo_fecha_no_valida($fecha_aplicacion, $dias_pago, $festivos)) !== null) {
+                    $errores['err-edit-fecha'] = $motivo;
+                }
+
+                if (!empty($errores)) {
+                    $respuesta['errors'] = $errores;
+                    responder_json($respuesta);
+                }
+
+                $stmt_upd = tipo_archivo($enc) === 'NOMINA'
+                    ? requerir_stmt($upd_archivo_nomina    ?? null, 'upd_archivo_nomina')
+                    : requerir_stmt($upd_archivo_inversion ?? null, 'upd_archivo_inversion');
+                $stmt_upd->execute([
+                    ':wid_archivo_plano' => $id_archivo_plano,
+                    ':wnom_archivo'      => $nom_archivo,
+                    ':wid_empresa'       => $cta_origen['id_empresa'],
+                    ':wcta_empresa'      => $cta_origen['cta_empresa'],
+                    ':wfecha_aplicacion' => $fecha_aplicacion,
+                ]);
+
+                $respuesta['success'] = true;
+                $respuesta['message'] = tipo_archivo($enc) === 'NOMINA'
+                    ? 'Archivo de nómina actualizado correctamente.'
+                    : 'Archivo de inversiones actualizado correctamente.';
                 responder_json($respuesta);
             }
 
-            $stmt_enc = requerir_stmt($get_enc_archivo_plano ?? null, 'get_enc_archivo_plano');
-            $stmt_enc->execute([':wid_archivo_plano' => $id_archivo_plano]);
-            $enc = $stmt_enc->fetch(PDO::FETCH_ASSOC);
-            if (!$enc) {
-                throw new Exception('El archivo plano no existe.');
-            }
-            if (es_verdadero($enc['ind_generado'])) {
-                throw new Exception('El archivo plano ya fue generado y no se puede editar.');
+            if (!empty($errores)) {
+                $respuesta['errors'] = $errores;
+                responder_json($respuesta);
             }
 
             requerir_stmt($upd_enc_archivo_plano ?? null, 'upd_enc_archivo_plano')->execute([
@@ -749,6 +962,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $respuesta['success'] = true;
             $respuesta['message'] = 'Archivo plano actualizado correctamente.';
+            responder_json($respuesta);
+        }
+
+        // ---------- DEVOLVER UN ARCHIVO AL MÓDULO QUE LO ENVIÓ ----------
+        // Nómina o Financiero. Solo si no se ha descargado. Se borra el archivo
+        // y los empleados / cuotas quedan otra vez pendientes de envío allá.
+        // (btn_devolver_nomina es el nombre anterior del botón: se sigue aceptando)
+        if (isset($_POST['btn_devolver_archivo']) || isset($_POST['btn_devolver_nomina'])) {
+            $id_archivo_plano = (int)($_POST['hid_id_archivo_plano'] ?? 0);
+            if ($id_archivo_plano <= 0) {
+                throw new Exception('Archivo plano no válido.');
+            }
+            $enc = leer_enc_archivo($id_archivo_plano, $get_enc_archivo_plano ?? null);
+            if (!es_externo($enc)) {
+                throw new Exception('Solo se pueden devolver archivos que envió Nómina o Financiero.');
+            }
+
+            $stmt_dev = tipo_archivo($enc) === 'NOMINA'
+                ? requerir_stmt($devolver_nomina    ?? null, 'devolver_nomina')
+                : requerir_stmt($devolver_inversion ?? null, 'devolver_inversion');
+            $stmt_dev->execute([':wid_archivo_plano' => $id_archivo_plano]);
+
+            $respuesta['success'] = true;
+            $respuesta['message'] = 'Archivo devuelto a ' . modulo_origen($enc) . '. Allá pueden corregir y volver a enviarlo.';
             responder_json($respuesta);
         }
 
@@ -794,6 +1031,76 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $list_enc_archivo_plano->execute();
 $archivos = $list_enc_archivo_plano->fetchAll(PDO::FETCH_ASSOC);
 
+// Tres secciones: archivos de proveedores (los arma Tesorería desde un
+// cronograma), de nómina (los envía Gestión Humana) y de inversiones (los
+// envía el área Financiera). El tipo sale de la tabla de detalle.
+$arch_prov = array_values(array_filter($archivos, fn($a) => tipo_archivo($a) === 'PROVEEDORES'));
+$arch_nom  = array_values(array_filter($archivos, fn($a) => tipo_archivo($a) === 'NOMINA'));
+$arch_inv  = array_values(array_filter($archivos, fn($a) => tipo_archivo($a) === 'INVERSION'));
+
+// Estado de un archivo de nómina o de inversiones según la respuesta del banco
+//   por_generar | esperando (generado y con líneas sin respuesta)
+//   pagado (todas aprobadas) | rechazos (todo respondido, con al menos un rechazo)
+function estado_archivo_externo(array $a): string {
+    if (!es_verdadero($a['ind_generado'])) return 'por_generar';
+    $cant = (int)$a['cant_lineas'];
+    $apr  = (int)$a['nom_aprobados'];
+    $rec  = (int)$a['nom_rechazados'];
+    if ($apr + $rec < $cant) return 'esperando';
+    return $rec > 0 ? 'rechazos' : 'pagado';
+}
+
+$st_prov = [
+    'total'      => count($arch_prov),
+    'generados'  => count(array_filter($arch_prov, fn($a) => es_verdadero($a['ind_generado']))),
+    'valor_pend' => array_sum(array_map(fn($a) => es_verdadero($a['ind_generado']) ? 0 : (float)$a['total'], $arch_prov)),
+];
+$st_prov['pendientes'] = $st_prov['total'] - $st_prov['generados'];
+
+function stats_externos(array $lista): array {
+    $st = ['total' => count($lista), 'por_generar' => 0, 'esperando' => 0, 'rechazos' => 0];
+    foreach ($lista as $a) {
+        $e = estado_archivo_externo($a);
+        if (isset($st[$e])) $st[$e]++;
+    }
+    return $st;
+}
+$st_nom = stats_externos($arch_nom);
+$st_inv = stats_externos($arch_inv);
+
+// Datos que usa el JS (detalle, editar, devolver, descargar)
+function datos_fila_archivo(array $a): string {
+    $datos = [
+        'id_archivo_plano' => $a['id_archivo_plano'],
+        'nom_archivo'      => $a['nom_archivo'],
+        'id_empresa'       => $a['id_empresa'],
+        'nom_empresa'      => $a['nom_empresa'],
+        'cta_empresa'      => $a['cta_empresa'],
+        'nom_banco'        => $a['nom_banco'],
+        'tipo_cuenta'      => tipo_cuenta_txt($a['ind_tipocuenta']),
+        'nom_tipo_pago'    => $a['nom_tipo_pago'],      // PROVEEDORES / NÓMINA / INVERSIONES (sale del detalle)
+        'fecha_aplicacion' => $a['fecha_aplicacion'],
+        'fec_generacion'   => $a['fec_generacion'],
+        'generado'         => es_verdadero($a['ind_generado']),
+        'tipo_archivo'     => tipo_archivo($a),
+        'es_nomina'        => tipo_archivo($a) === 'NOMINA',
+        'es_inversion'     => tipo_archivo($a) === 'INVERSION',
+        'es_externo'       => es_externo($a),
+        'modulo_origen'    => modulo_origen($a),
+        'periodo_nomina'   => descripcion_origen($a),   // descripción del origen (nómina o inversiones)
+        'cta_combo'        => $a['id_empresa'] . ':' . $a['cta_empresa'],
+    ];
+    return htmlspecialchars(json_encode($datos, JSON_UNESCAPED_UNICODE), ENT_QUOTES);
+}
+
+function ap_fecha_corta($iso): string {
+    return $iso ? date('d/m/Y', strtotime((string)$iso)) : '—';
+}
+
+function ap_pesos($v): string {
+    return '$' . number_format((float)$v, 0, ',', '.');
+}
+
 $hoy = date('Y-m-d');
 $fecha_sugerida = proxima_fecha_valida($dias_pago, $festivos);
 
@@ -803,51 +1110,154 @@ $fecha_sugerida = proxima_fecha_valida($dias_pago, $festivos);
 ob_start();
 ?>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-<link rel="stylesheet" href="modules/tescxp/css/archivo_plano.css">
+<link rel="stylesheet" href="modules/tescxp/css/archivo_plano.css?v=<?= $v_ap_css ?>">
 <div id="mod-archivo-plano" class="app-view active">
 
     <!-- ENCABEZADO -->
     <div class="module-header">
         <div class="module-header-text">
             <h1>Archivo Plano</h1>
-            <p>Genere el archivo de pagos para enviar al banco a partir de un cronograma</p>
+            <p>Archivos de pago para enviar al banco: los de proveedores se arman aquí; los de nómina los envía Gestión Humana y los de inversiones el área Financiera</p>
         </div>
-        <button id="btn-add-archivo" class="btn btn-primary">
+        <button id="btn-add-archivo" class="btn btn-primary" data-seccion="proveedores">
             <i class="fas fa-plus"></i> Nuevo Archivo Plano
         </button>
     </div>
 
-    <!-- STATS -->
-    <div class="stats-grid">
-        <?php
-        $total      = count($archivos);
-        $generados  = count(array_filter($archivos, fn($a) => es_verdadero($a['ind_generado'])));
-        $pendientes = $total - $generados;
-        ?>
+    <!-- SECCIONES -->
+    <div class="ap-tabs" role="tablist">
+        <button type="button" class="ap-tab active" role="tab" data-tab="proveedores">
+            <i class="fas fa-truck"></i> Proveedores
+            <span class="ap-tab-count"><?= $st_prov['total'] ?></span>
+        </button>
+        <button type="button" class="ap-tab" role="tab" data-tab="nomina">
+            <i class="fas fa-users"></i> Nómina
+            <span class="ap-tab-count"><?= $st_nom['total'] ?></span>
+            <?php if ($st_nom['por_generar'] > 0): ?>
+                <span class="ap-tab-alerta" title="Archivos enviados por Gestión Humana que aún no se han descargado"><?= $st_nom['por_generar'] ?> por generar</span>
+            <?php endif; ?>
+        </button>
+        <button type="button" class="ap-tab" role="tab" data-tab="inversiones">
+            <i class="fas fa-hand-holding-dollar"></i> Inversiones
+            <span class="ap-tab-count"><?= $st_inv['total'] ?></span>
+            <?php if ($st_inv['por_generar'] > 0): ?>
+                <span class="ap-tab-alerta" title="Archivos enviados por el área Financiera que aún no se han descargado"><?= $st_inv['por_generar'] ?> por generar</span>
+            <?php endif; ?>
+        </button>
+    </div>
+
+    <!-- STATS: PROVEEDORES -->
+    <div class="stats-grid" data-seccion="proveedores">
         <div class="stat-card">
             <div class="stat-icon blue"><i class="fas fa-file-invoice"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Total archivos</div>
-                <div class="stat-value" id="stat-total"><?= $total ?></div>
+                <div class="stat-value"><?= $st_prov['total'] ?></div>
             </div>
         </div>
         <div class="stat-card">
             <div class="stat-icon green"><i class="fas fa-check-circle"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Generados</div>
-                <div class="stat-value" id="stat-generados"><?= $generados ?></div>
+                <div class="stat-value"><?= $st_prov['generados'] ?></div>
             </div>
         </div>
         <div class="stat-card">
             <div class="stat-icon yellow"><i class="fas fa-clock"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Por generar</div>
-                <div class="stat-value" id="stat-pendientes"><?= $pendientes ?></div>
+                <div class="stat-value"><?= $st_prov['pendientes'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon purple"><i class="fas fa-coins"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Valor por generar</div>
+                <div class="stat-value stat-money"><?= ap_pesos($st_prov['valor_pend']) ?></div>
             </div>
         </div>
     </div>
 
-    <!-- FILTROS -->
+    <!-- STATS: NÓMINA -->
+    <div class="stats-grid" data-seccion="nomina" style="display:none">
+        <div class="stat-card">
+            <div class="stat-icon blue"><i class="fas fa-inbox"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Recibidos de Nómina</div>
+                <div class="stat-value"><?= $st_nom['total'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon yellow"><i class="fas fa-clock"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Por generar</div>
+                <div class="stat-value"><?= $st_nom['por_generar'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon purple"><i class="fas fa-building-columns"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Esperando al banco</div>
+                <div class="stat-value"><?= $st_nom['esperando'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon red"><i class="fas fa-circle-exclamation"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Con rechazos</div>
+                <div class="stat-value"><?= $st_nom['rechazos'] ?></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- STATS: INVERSIONES -->
+    <div class="stats-grid" data-seccion="inversiones" style="display:none">
+        <div class="stat-card">
+            <div class="stat-icon blue"><i class="fas fa-inbox"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Recibidos de Financiero</div>
+                <div class="stat-value"><?= $st_inv['total'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon yellow"><i class="fas fa-clock"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Por generar</div>
+                <div class="stat-value"><?= $st_inv['por_generar'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon purple"><i class="fas fa-building-columns"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Esperando al banco</div>
+                <div class="stat-value"><?= $st_inv['esperando'] ?></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon red"><i class="fas fa-circle-exclamation"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Con rechazos</div>
+                <div class="stat-value"><?= $st_inv['rechazos'] ?></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Avisos de las secciones Nómina e Inversiones -->
+    <p class="config-hint ap-hint-seccion" data-seccion="nomina" style="display:none">
+        <i class="fas fa-info-circle"></i>
+        <span>Gestión Humana envía estos archivos con «Enviar a Tesorería». Antes de descargarlos puede
+        cambiar la cuenta de origen y la fecha (<i class="fas fa-edit"></i>) o devolverlos a Nómina
+        (<i class="fas fa-rotate-left"></i>). La respuesta del banco se carga en Historial de Pagos.</span>
+    </p>
+    <p class="config-hint ap-hint-seccion" data-seccion="inversiones" style="display:none">
+        <i class="fas fa-info-circle"></i>
+        <span>El área Financiera envía aquí las cuotas aprobadas de las inversiones (dividendos, rendimientos y
+        devolución de capital). Antes de descargarlos puede cambiar la cuenta de origen y la fecha
+        (<i class="fas fa-edit"></i>) o devolverlos a Financiero (<i class="fas fa-rotate-left"></i>).
+        La respuesta del banco se carga en Historial de Pagos.</span>
+    </p>
+
+    <!-- FILTROS (aplican a la sección activa) -->
     <div class="filter-bar">
         <div class="search-wrapper">
             <span class="search-icon"><i class="fas fa-search"></i></span>
@@ -870,18 +1280,20 @@ ob_start();
                 <option value="all">Todos</option>
             </select>
         </div>
-        <span class="filter-info" id="archivos-count"><?= $total ?> resultado<?= $total !== 1 ? 's' : '' ?></span>
+        <span class="filter-info" id="archivos-count"><?= $st_prov['total'] ?> resultado<?= $st_prov['total'] !== 1 ? 's' : '' ?></span>
     </div>
 
-    <!-- TABLA -->
+    <!-- TABLAS -->
     <div class="table-container">
       <div class="table-scroll" id="archivos-table-scroll">
-        <table class="data-table">
+
+        <!-- ===== PROVEEDORES ===== -->
+        <table class="data-table" id="tabla-proveedores" data-seccion="proveedores">
             <!-- Anchos fijos: las columnas no se mueven al ordenar o cambiar de página -->
             <colgroup>
                 <col class="col-archivo">
                 <col class="col-origen">
-                <col class="col-tipo-pago">
+                <col class="col-pagos">
                 <col class="col-aplicacion">
                 <col class="col-generacion">
                 <col class="col-estado">
@@ -891,46 +1303,29 @@ ob_start();
                 <tr>
                     <th class="sortable" data-sort-key="0" data-sort-type="text">Archivo <i class="fas fa-caret-down sort-icon"></i></th>
                     <th class="sortable" data-sort-key="1" data-sort-type="text">Cuenta de Origen <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="2" data-sort-type="text">Tipo de Pago <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable text-right" data-sort-key="2" data-sort-type="number">Pagos <i class="fas fa-caret-down sort-icon"></i></th>
                     <th class="sortable" data-sort-key="3" data-sort-type="text">Aplicación <i class="fas fa-caret-down sort-icon"></i></th>
                     <th class="sortable" data-sort-key="4" data-sort-type="text">Generación <i class="fas fa-caret-down sort-icon"></i></th>
                     <th class="text-center">Estado</th>
                     <th class="text-center">Acciones</th>
                 </tr>
             </thead>
-            <tbody id="archivos-tbody">
-            <?php if (empty($archivos)): ?>
+            <tbody id="tbody-proveedores" class="tbody-archivos">
+            <?php if (empty($arch_prov)): ?>
                 <tr class="empty-row">
                     <td colspan="7">
                         <div class="empty-state">
                             <i class="fas fa-file-invoice"></i>
-                            <p>No hay archivos planos</p>
-                            <span>Haga clic en "Nuevo Archivo Plano" para crear el primero</span>
+                            <p>No hay archivos planos de proveedores</p>
+                            <span>Haga clic en "Nuevo Archivo Plano" para crear el primero a partir de un cronograma</span>
                         </div>
                     </td>
                 </tr>
-            <?php else: ?>
-                <?php foreach ($archivos as $a):
-                    $generado  = es_verdadero($a['ind_generado']);
-                    $filtro    = $generado ? 'generado' : 'pendiente';
-                    $fecha_gen = $a['fec_generacion'] ? date('d/m/Y', strtotime($a['fec_generacion'])) : '—';
-                    $fecha_apl = $a['fecha_aplicacion'] ? date('d/m/Y', strtotime($a['fecha_aplicacion'])) : '—';
-                    $datos = [
-                        'id_archivo_plano' => $a['id_archivo_plano'],
-                        'nom_archivo'      => $a['nom_archivo'],
-                        'id_empresa'       => $a['id_empresa'],
-                        'nom_empresa'      => $a['nom_empresa'],
-                        'cta_empresa'      => $a['cta_empresa'],
-                        'nom_banco'        => $a['nom_banco'],
-                        'tipo_cuenta'      => tipo_cuenta_txt($a['ind_tipocuenta']),
-                        'nom_tipo_pago'    => $a['nom_tipo_pago'],
-                        'fecha_aplicacion' => $a['fecha_aplicacion'],
-                        'fec_generacion'   => $a['fec_generacion'],
-                        'generado'         => $generado,
-                    ];
-                    $json = htmlspecialchars(json_encode($datos, JSON_UNESCAPED_UNICODE), ENT_QUOTES);
-                ?>
-                <tr data-estado="<?= $filtro ?>" data-archivo="<?= $json ?>">
+            <?php endif; ?>
+            <?php foreach ($arch_prov as $a):
+                $generado = es_verdadero($a['ind_generado']);
+            ?>
+                <tr data-estado="<?= $generado ? 'generado' : 'pendiente' ?>" data-archivo="<?= datos_fila_archivo($a) ?>">
                     <td data-sort="<?= htmlspecialchars($a['nom_archivo']) ?>">
                         <strong><?= htmlspecialchars($a['nom_archivo']) ?></strong><br>
                         <small class="cell-sub">#<?= htmlspecialchars($a['id_archivo_plano']) ?></small>
@@ -939,9 +1334,12 @@ ob_start();
                         <?= htmlspecialchars($a['nom_banco']) ?><br>
                         <small class="cell-sub"><?= htmlspecialchars($a['cta_empresa']) ?> · <?= tipo_cuenta_txt($a['ind_tipocuenta']) ?></small>
                     </td>
-                    <td data-sort="<?= htmlspecialchars($a['nom_tipo_pago']) ?>"><?= htmlspecialchars($a['nom_tipo_pago']) ?></td>
-                    <td data-sort="<?= htmlspecialchars((string)$a['fecha_aplicacion']) ?>"><?= htmlspecialchars($fecha_apl) ?></td>
-                    <td data-sort="<?= htmlspecialchars((string)$a['fec_generacion']) ?>"><?= htmlspecialchars($fecha_gen) ?></td>
+                    <td class="text-right" data-sort="<?= (float)$a['total'] ?>">
+                        <strong><?= ap_pesos($a['total']) ?></strong><br>
+                        <small class="cell-sub"><?= (int)$a['cant_lineas'] ?> pago<?= (int)$a['cant_lineas'] !== 1 ? 's' : '' ?></small>
+                    </td>
+                    <td data-sort="<?= htmlspecialchars((string)$a['fecha_aplicacion']) ?>"><?= ap_fecha_corta($a['fecha_aplicacion']) ?></td>
+                    <td data-sort="<?= htmlspecialchars((string)$a['fec_generacion']) ?>"><?= ap_fecha_corta($a['fec_generacion']) ?></td>
                     <td class="text-center">
                         <?php if ($generado): ?>
                             <span class="badge badge-active">Generado</span>
@@ -965,8 +1363,205 @@ ob_start();
                         <?php endif; ?>
                     </td>
                 </tr>
-                <?php endforeach; ?>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+
+        <!-- ===== NÓMINA ===== -->
+        <table class="data-table" id="tabla-nomina" data-seccion="nomina" style="display:none">
+            <colgroup>
+                <col class="col-archivo">
+                <col class="col-periodo">
+                <col class="col-origen">
+                <col class="col-pagos">
+                <col class="col-aplicacion">
+                <col class="col-generacion">
+                <col class="col-estado">
+                <col class="col-acciones">
+            </colgroup>
+            <thead>
+                <tr>
+                    <th class="sortable" data-sort-key="0" data-sort-type="text">Archivo <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="1" data-sort-type="text">Periodo <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="2" data-sort-type="text">Cuenta de Origen <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable text-right" data-sort-key="3" data-sort-type="number">Empleados <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="4" data-sort-type="text">Aplicación <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="5" data-sort-type="text">Generación <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="text-center">Estado</th>
+                    <th class="text-center">Acciones</th>
+                </tr>
+            </thead>
+            <tbody id="tbody-nomina" class="tbody-archivos">
+            <?php if (empty($arch_nom)): ?>
+                <tr class="empty-row">
+                    <td colspan="8">
+                        <div class="empty-state">
+                            <i class="fas fa-users"></i>
+                            <p>No hay archivos de nómina</p>
+                            <span>Aparecen aquí cuando Gestión Humana pulsa «Enviar a Tesorería» en Liquidar Nómina</span>
+                        </div>
+                    </td>
+                </tr>
             <?php endif; ?>
+            <?php foreach ($arch_nom as $a):
+                $generado = es_verdadero($a['ind_generado']);
+                $estado   = estado_archivo_externo($a);
+                $cant     = (int)$a['cant_lineas'];
+                $apr      = (int)$a['nom_aprobados'];
+                $rec      = (int)$a['nom_rechazados'];
+                $periodo  = (int)$a['ano_nomina'] . '-' . str_pad((string)(int)$a['mes_nomina'], 2, '0', STR_PAD_LEFT);
+            ?>
+                <tr data-estado="<?= $generado ? 'generado' : 'pendiente' ?>" data-archivo="<?= datos_fila_archivo($a) ?>">
+                    <td data-sort="<?= htmlspecialchars($a['nom_archivo']) ?>">
+                        <strong><?= htmlspecialchars($a['nom_archivo']) ?></strong><br>
+                        <small class="cell-sub">#<?= htmlspecialchars($a['id_archivo_plano']) ?></small>
+                    </td>
+                    <td data-sort="<?= htmlspecialchars($periodo . '-' . (int)$a['val_periodo']) ?>">
+                        <strong><?= htmlspecialchars($periodo) ?></strong><br>
+                        <small class="cell-sub">Periodo <?= (int)$a['val_periodo'] ?></small>
+                    </td>
+                    <td data-sort="<?= htmlspecialchars($a['nom_banco'] . ' ' . $a['cta_empresa']) ?>">
+                        <?= htmlspecialchars($a['nom_banco']) ?><br>
+                        <small class="cell-sub"><?= htmlspecialchars($a['cta_empresa']) ?> · <?= tipo_cuenta_txt($a['ind_tipocuenta']) ?></small>
+                    </td>
+                    <td class="text-right" data-sort="<?= (float)$a['total'] ?>">
+                        <strong><?= ap_pesos($a['total']) ?></strong><br>
+                        <small class="cell-sub"><?= $cant ?> empleado<?= $cant !== 1 ? 's' : '' ?></small>
+                    </td>
+                    <td data-sort="<?= htmlspecialchars((string)$a['fecha_aplicacion']) ?>"><?= ap_fecha_corta($a['fecha_aplicacion']) ?></td>
+                    <td data-sort="<?= htmlspecialchars((string)$a['fec_generacion']) ?>"><?= ap_fecha_corta($a['fec_generacion']) ?></td>
+                    <td class="text-center">
+                        <?php if ($estado === 'por_generar'): ?>
+                            <span class="badge badge-pending">Por generar</span>
+                        <?php elseif ($estado === 'esperando'): ?>
+                            <span class="badge badge-banco">Esperando banco</span>
+                            <br><small class="cell-sub"><?= $apr + $rec ?> de <?= $cant ?> con respuesta</small>
+                        <?php elseif ($estado === 'pagado'): ?>
+                            <span class="badge badge-active">Pagado</span>
+                        <?php else: ?>
+                            <span class="badge badge-inactive">Con rechazos</span>
+                            <br><small class="cell-sub"><?= $rec ?> rechazado<?= $rec !== 1 ? 's' : '' ?> · <?= $apr ?> pagado<?= $apr !== 1 ? 's' : '' ?></small>
+                        <?php endif; ?>
+                    </td>
+                    <td class="text-center">
+                        <button class="btn-icon-sm view" data-action="descargar" title="Descargar CSV">
+                            <i class="fas fa-download"></i>
+                        </button>
+                        <?php if (!$generado): ?>
+                            <button class="btn-icon-sm edit" data-action="editar" title="Editar nombre, cuenta de origen y fecha">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button class="btn-icon-sm reject" data-action="devolver" title="Devolver a Nómina">
+                                <i class="fas fa-rotate-left"></i>
+                            </button>
+                        <?php else: ?>
+                            <span class="accion-bloqueada" title="Archivo generado: no se puede editar ni devolver">
+                                <i class="fas fa-lock"></i>
+                            </span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+
+        <!-- ===== INVERSIONES ===== -->
+        <table class="data-table" id="tabla-inversiones" data-seccion="inversiones" style="display:none">
+            <colgroup>
+                <col class="col-archivo">
+                <col class="col-periodo">
+                <col class="col-origen">
+                <col class="col-pagos">
+                <col class="col-aplicacion">
+                <col class="col-generacion">
+                <col class="col-estado">
+                <col class="col-acciones">
+            </colgroup>
+            <thead>
+                <tr>
+                    <th class="sortable" data-sort-key="0" data-sort-type="text">Archivo <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="1" data-sort-type="text">Inversores <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="2" data-sort-type="text">Cuenta de Origen <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable text-right" data-sort-key="3" data-sort-type="number">Cuotas <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="4" data-sort-type="text">Aplicación <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="sortable" data-sort-key="5" data-sort-type="text">Generación <i class="fas fa-caret-down sort-icon"></i></th>
+                    <th class="text-center">Estado</th>
+                    <th class="text-center">Acciones</th>
+                </tr>
+            </thead>
+            <tbody id="tbody-inversiones" class="tbody-archivos">
+            <?php if (empty($arch_inv)): ?>
+                <tr class="empty-row">
+                    <td colspan="8">
+                        <div class="empty-state">
+                            <i class="fas fa-hand-holding-dollar"></i>
+                            <p>No hay archivos de inversiones</p>
+                            <span>Aparecen aquí cuando el área Financiera envía las cuotas aprobadas a Tesorería</span>
+                        </div>
+                    </td>
+                </tr>
+            <?php endif; ?>
+            <?php foreach ($arch_inv as $a):
+                $generado = es_verdadero($a['ind_generado']);
+                $estado   = estado_archivo_externo($a);
+                $cant     = (int)$a['cant_lineas'];
+                $apr      = (int)$a['nom_aprobados'];
+                $rec      = (int)$a['nom_rechazados'];
+                $n_inv    = (int)($a['cant_inversores'] ?? 0);
+                $n_pry    = (int)($a['cant_proyectos'] ?? 0);
+            ?>
+                <tr data-estado="<?= $generado ? 'generado' : 'pendiente' ?>" data-archivo="<?= datos_fila_archivo($a) ?>">
+                    <td data-sort="<?= htmlspecialchars($a['nom_archivo']) ?>">
+                        <strong><?= htmlspecialchars($a['nom_archivo']) ?></strong><br>
+                        <small class="cell-sub">#<?= htmlspecialchars($a['id_archivo_plano']) ?></small>
+                    </td>
+                    <td data-sort="<?= htmlspecialchars((string)($a['max_vencimiento'] ?? '')) ?>">
+                        <strong><?= $n_inv ?> inversor<?= $n_inv !== 1 ? 'es' : '' ?></strong>
+                        <small class="cell-sub">· <?= $n_pry ?> proyecto<?= $n_pry !== 1 ? 's' : '' ?></small><br>
+                        <small class="cell-sub">Vencen hasta <?= ap_fecha_corta($a['max_vencimiento'] ?? null) ?></small>
+                    </td>
+                    <td data-sort="<?= htmlspecialchars($a['nom_banco'] . ' ' . $a['cta_empresa']) ?>">
+                        <?= htmlspecialchars($a['nom_banco']) ?><br>
+                        <small class="cell-sub"><?= htmlspecialchars($a['cta_empresa']) ?> · <?= tipo_cuenta_txt($a['ind_tipocuenta']) ?></small>
+                    </td>
+                    <td class="text-right" data-sort="<?= (float)$a['total'] ?>">
+                        <strong><?= ap_pesos($a['total']) ?></strong><br>
+                        <small class="cell-sub"><?= $cant ?> cuota<?= $cant !== 1 ? 's' : '' ?></small>
+                    </td>
+                    <td data-sort="<?= htmlspecialchars((string)$a['fecha_aplicacion']) ?>"><?= ap_fecha_corta($a['fecha_aplicacion']) ?></td>
+                    <td data-sort="<?= htmlspecialchars((string)$a['fec_generacion']) ?>"><?= ap_fecha_corta($a['fec_generacion']) ?></td>
+                    <td class="text-center">
+                        <?php if ($estado === 'por_generar'): ?>
+                            <span class="badge badge-pending">Por generar</span>
+                        <?php elseif ($estado === 'esperando'): ?>
+                            <span class="badge badge-banco">Esperando banco</span>
+                            <br><small class="cell-sub"><?= $apr + $rec ?> de <?= $cant ?> con respuesta</small>
+                        <?php elseif ($estado === 'pagado'): ?>
+                            <span class="badge badge-active">Pagado</span>
+                        <?php else: ?>
+                            <span class="badge badge-inactive">Con rechazos</span>
+                            <br><small class="cell-sub"><?= $rec ?> rechazada<?= $rec !== 1 ? 's' : '' ?> · <?= $apr ?> pagada<?= $apr !== 1 ? 's' : '' ?></small>
+                        <?php endif; ?>
+                    </td>
+                    <td class="text-center">
+                        <button class="btn-icon-sm view" data-action="descargar" title="Descargar CSV">
+                            <i class="fas fa-download"></i>
+                        </button>
+                        <?php if (!$generado): ?>
+                            <button class="btn-icon-sm edit" data-action="editar" title="Editar nombre, cuenta de origen y fecha">
+                                <i class="fas fa-edit"></i>
+                            </button>
+                            <button class="btn-icon-sm reject" data-action="devolver" title="Devolver a Financiero">
+                                <i class="fas fa-rotate-left"></i>
+                            </button>
+                        <?php else: ?>
+                            <span class="accion-bloqueada" title="Archivo generado: no se puede editar ni devolver">
+                                <i class="fas fa-lock"></i>
+                            </span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
             </tbody>
         </table>
       </div>
@@ -1027,16 +1622,6 @@ ob_start();
 
 
                     <div class="form-grid">
-                        <div class="form-field">
-                            <label class="form-label">Tipo de Pago <span class="required">*</span></label>
-                            <select id="new-id-tipo-pago" name="sel_id_tipo_pago" class="form-select">
-                                <option value="">Seleccione...</option>
-                                <?php foreach ($tipos_pago as $tp): ?>
-                                    <option value="<?= htmlspecialchars($tp['id_tipo_pago']) ?>"><?= htmlspecialchars($tp['nom_tipo_pago']) ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                            <span class="field-error" id="err-new-tipo-pago"></span>
-                        </div>
                         <div class="form-field">
                             <label class="form-label">Fecha de Aplicación <span class="required">*</span></label>
                             <input type="hidden" id="new-fecha-aplicacion" name="dat_fecha_aplicacion" value="<?= $fecha_sugerida ?>" data-sugerida="<?= $fecha_sugerida ?>">
@@ -1241,7 +1826,7 @@ ob_start();
         <div class="modal-header blue">
             <div>
                 <h2>Editar Archivo Plano</h2>
-                <p>Solo se puede cambiar el nombre mientras no se haya generado</p>
+                <p id="edit-subtitulo">Solo se puede cambiar el nombre mientras no se haya generado</p>
             </div>
             <button class="modal-close btn-close-edit-modal"><i class="fas fa-times"></i></button>
         </div>
@@ -1249,10 +1834,38 @@ ob_start();
             <form id="edit-archivo-form" novalidate>
                 <input type="hidden" name="btn_editar" value="1">
                 <input type="hidden" name="hid_edit_id" id="edit-archivo-id" value="">
-                <div class="form-field">
+                <!-- Archivos de proveedores: la cuenta de origen no se cambia -->
+                <div class="form-field" id="edit-origen-fijo">
                     <label class="form-label">Cuenta de Origen</label>
                     <input type="text" id="edit-origen-display" class="form-input" disabled="disabled">
                     <p class="field-hint">Para usar otra cuenta de origen, cree un archivo nuevo.</p>
+                </div>
+                <!-- Archivos de nómina e inversiones: Tesorería elige cuenta de origen y fecha -->
+                <div id="edit-nomina-campos" style="display:none">
+                    <p class="config-hint" id="edit-nomina-periodo"></p>
+                    <div class="form-field">
+                        <label class="form-label" for="edit-cta-empresa">Cuenta de Origen (Empresa) <span class="required">*</span></label>
+                        <select id="edit-cta-empresa" name="sel_edit_cta_empresa" class="form-select" disabled>
+                            <option value=""><?= empty($ctas_empresa_disp) ? 'No hay cuentas registradas' : 'Seleccione...' ?></option>
+                            <?php foreach ($ctas_empresa_disp as $ce): ?>
+                                <option value="<?= htmlspecialchars($ce['id_empresa']) ?>:<?= htmlspecialchars($ce['cta_empresa']) ?>">
+                                    <?= htmlspecialchars($ce['nom_banco']) ?> — <?= htmlspecialchars($ce['cta_empresa']) ?> (<?= tipo_cuenta_txt($ce['ind_tipocuenta']) ?>)
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <span class="field-error" id="err-edit-cuenta-empresa"></span>
+                    </div>
+                    <div class="form-field">
+                        <label class="form-label">Fecha de Aplicación <span class="required">*</span></label>
+                        <input type="hidden" id="edit-fecha-aplicacion" name="dat_edit_fecha_aplicacion" value="" disabled>
+                        <button type="button" class="form-input dp-trigger" id="edit-fecha-aplicacion-btn"
+                                data-target="edit-fecha-aplicacion" data-min="<?= $hoy ?>" data-formato="corto"
+                                title="Solo <?= $dias_pago ? htmlspecialchars(nombres_dias($dias_pago)) : 'días de pago' ?> que no sean festivo">
+                            <span class="dp-trigger-texto vacio">Seleccione una fecha</span>
+                            <i class="fas fa-calendar-alt"></i>
+                        </button>
+                        <span class="field-error" id="err-edit-fecha"></span>
+                    </div>
                 </div>
                 <div class="form-field">
                     <label class="form-label">Nombre del Archivo <span class="required">*</span></label>
@@ -1264,6 +1877,30 @@ ob_start();
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-edit-modal">Cancelar</button>
             <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Actualizar Archivo</button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: DEVOLVER ARCHIVO A NÓMINA O A FINANCIERO -->
+<div id="modal-devolver-nomina" class="modal-overlay hidden">
+    <div class="modal-box modal-box-sm">
+        <div class="modal-header blue">
+            <div>
+                <h2 id="devolver-titulo">Devolver a Nómina</h2>
+                <p id="devolver-subtitulo"></p>
+            </div>
+            <button type="button" class="modal-close" id="close-devolver-modal"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="modal-body">
+            <p class="config-hint">
+                <i class="fas fa-info-circle"></i>
+                <span id="devolver-texto">El archivo se elimina de Tesorería y los empleados vuelven a quedar
+                pendientes en el módulo de Nómina, para que corrijan y lo envíen otra vez.</span>
+            </p>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="cancel-devolver-modal">Cancelar</button>
+            <button type="button" class="btn btn-primary" id="devolver-btn-ok"><i class="fas fa-rotate-left"></i> Devolver</button>
         </div>
     </div>
 </div>
@@ -1329,7 +1966,7 @@ ob_start();
 ], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) ?></script>
 
 <!-- SCRIPTS JS -->
-<script src="modules/tescxp/js/archivo_plano.js"></script>
+<script src="modules/tescxp/js/archivo_plano.js?v=<?= $v_ap_js ?>"></script>
 
 <?php
 $moduleContent = ob_get_clean();
