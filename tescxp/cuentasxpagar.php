@@ -5,8 +5,9 @@ $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Cuentas por Pagar";
 $page_description = "Registro y seguimiento de facturas de proveedores";
 $page_icon        = "bi-receipt";
-$page_extra_css   = ["../modules/tescxp/css/cuentasxpagar.css"];
-$page_extra_js    = ["../modules/tescxp/js/cuentasxpagar.js"];
+$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/cuentasxpagar.css', 'modules/tescxp/css/cmp_modales.css'];
+$page_extra_js    = ['modules/tescxp/js/cuentasxpagar.js'];
+$page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
 // ==========================================
 
@@ -17,18 +18,6 @@ if (!defined('INCLUDE_MENU_PRINCIPAL')) {
 
 require_once('prepare_tescxp.php');
 require_once __DIR__ . '/../compro/src/prepare_compro.php';
-// ============================================================
-// LIMPIAR MENSAJE DE ERROR DE POSTGRESQL
-// ============================================================
-function limpiar_error_pgsql(string $msg): string {
-    if (preg_match('/ERROR:\s*ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
-        return trim($m[1]);
-    }
-    if (preg_match('/ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
-        return trim($m[1]);
-    }
-    return $msg;
-}
 
 // ============================================================
 // CARGAR SELECTS (siempre se cargan para la vista inicial)
@@ -134,6 +123,7 @@ foreach ($ordenes as $o) {
 // MANEJO DE PETICIONES POST (SIEMPRE RESPONDEN CON JSON)
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    erp_validar_csrf();   // SEC-08: token de la sesión + origen
     header('Content-Type: application/json');
     $respuesta = ['success' => false, 'message' => '', 'errors' => []];
 
@@ -270,8 +260,7 @@ $facturas = $list_cuentasxpagar->fetchAll(PDO::FETCH_ASSOC);
 // ============================================================
 ob_start();
 ?>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-<link rel="stylesheet" href="modules/tescxp/css/cuentasxpagar.css">
+
 <div id="mod-cuentasxpagar" class="app-view active">
 
     <!-- ENCABEZADO -->
@@ -706,8 +695,6 @@ ob_start();
 const ordenesData = <?= json_encode($ordenes) ?>;
 const facturasData = <?= json_encode(array_values($facturas), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 </script>
-
-<script src="modules/tescxp/js/cuentasxpagar.js"></script>
 
 <?php
 $moduleContent = ob_get_clean();

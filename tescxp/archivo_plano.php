@@ -5,12 +5,9 @@ $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Archivo Plano";
 $page_description = "Archivos planos de pago al banco: proveedores, nómina e inversiones";
 $page_icon        = "bi-file-earmark-spreadsheet";
-// Cache-busting (igual que Gestión Humana): ?v= cambia cada vez que se
-// actualiza el archivo, así el navegador no sigue usando un JS/CSS viejo.
-$v_ap_css         = @filemtime(__DIR__ . '/css/archivo_plano.css') ?: time();
-$v_ap_js          = @filemtime(__DIR__ . '/js/archivo_plano.js')   ?: time();
-$page_extra_css   = ["../modules/tescxp/css/archivo_plano.css?v=$v_ap_css"];
-$page_extra_js    = ["../modules/tescxp/js/archivo_plano.js?v=$v_ap_js"];
+$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/archivo_plano.css', 'modules/tescxp/css/cmp_modales.css'];
+$page_extra_js    = ['modules/tescxp/js/archivo_plano.js'];
+$page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
 // ==========================================
 
@@ -48,18 +45,6 @@ require_once('prepare_tescxp.php');
 //   Tesorería les puede cambiar nombre, cuenta de origen y fecha, o
 //   devolverlos al módulo que los envió.
 
-// ============================================================
-// LIMPIAR MENSAJE DE ERROR DE POSTGRESQL
-// ============================================================
-function limpiar_error_pgsql(string $msg): string {
-    if (preg_match('/ERROR:\s*ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
-        return trim($m[1]);
-    }
-    if (preg_match('/ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
-        return trim($m[1]);
-    }
-    return $msg;
-}
 
 // ============================================================
 // RESPUESTA JSON A PRUEBA DE SALIDA ESPURIA
@@ -329,7 +314,7 @@ function proxima_fecha_valida(array $dias_pago, array $festivos): string {
 // MANEJO DE PETICIONES POST (SIEMPRE RESPONDEN CON JSON, SALVO LA DESCARGA)
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    ob_start();
+    erp_validar_csrf();   // SEC-08: token de la sesión + origen
     header('Content-Type: application/json');
     $respuesta = ['success' => false, 'message' => '', 'errors' => []];
 
@@ -1109,7 +1094,7 @@ $fecha_sugerida = proxima_fecha_valida($dias_pago, $festivos);
 // ============================================================
 ob_start();
 ?>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+
 <link rel="stylesheet" href="modules/tescxp/css/archivo_plano.css?v=<?= $v_ap_css ?>">
 <div id="mod-archivo-plano" class="app-view active">
 
@@ -1965,8 +1950,6 @@ ob_start();
     'festivos'  => (object)$festivos,
 ], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) ?></script>
 
-<!-- SCRIPTS JS -->
-<script src="modules/tescxp/js/archivo_plano.js?v=<?= $v_ap_js ?>"></script>
 
 <?php
 $moduleContent = ob_get_clean();

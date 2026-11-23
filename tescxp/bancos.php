@@ -5,8 +5,9 @@ $activeModule     = 'tescxp'; // Ajustar si "Bancos" vive bajo otro módulo del 
 $page_title       = "ADSOERP | Bancos";
 $page_description = "Catálogo de bancos disponibles en el sistema";
 $page_icon        = "bi-bank2";
-$page_extra_css   = ["../modules/tescxp/css/bancos.css"];
-$page_extra_js    = ["../modules/tescxp/js/bancos.js"];
+$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/bancos.css', 'modules/bancos/css/cmp_modales.css'];
+$page_extra_js    = ['modules/tescxp/js/bancos.js'];
+$page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
 // ==========================================
 
@@ -18,22 +19,10 @@ if (!defined('INCLUDE_MENU_PRINCIPAL')) {
 require_once('prepare_tescxp.php');
 
 // ============================================================
-// LIMPIAR MENSAJE DE ERROR DE POSTGRESQL
-// ============================================================
-function limpiar_error_pgsql(string $msg): string {
-    if (preg_match('/ERROR:\s*ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
-        return trim($m[1]);
-    }
-    if (preg_match('/ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
-        return trim($m[1]);
-    }
-    return $msg;
-}
-
-// ============================================================
 // MANEJO DE PETICIONES POST (SIEMPRE RESPONDEN CON JSON)
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    erp_validar_csrf();   // SEC-08: token de la sesión + origen
     header('Content-Type: application/json');
     $respuesta = ['success' => false, 'message' => '', 'errors' => []];
 
@@ -184,8 +173,6 @@ $bancos = $list_bancos_full->fetchAll(PDO::FETCH_ASSOC);
 // ============================================================
 ob_start();
 ?>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-<link rel="stylesheet" href="modules/tescxp/css/bancos.css">
 <div id="mod-bancos" class="app-view active">
 
     <!-- ENCABEZADO -->
@@ -427,7 +414,6 @@ ob_start();
 <!-- TOAST -->
 <div id="toast" class="hidden"><span id="toast-message"></span></div>
 
-<script src="modules/tescxp/js/bancos.js"></script>
 
 
 <?php

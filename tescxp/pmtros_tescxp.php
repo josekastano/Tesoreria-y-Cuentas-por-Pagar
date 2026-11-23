@@ -5,8 +5,9 @@ $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Parámetros de Tesorería";
 $page_description = "Configuración general de días de pago y reembolsos de caja menor";
 $page_icon        = "bi-sliders";
-$page_extra_css   = ["../modules/tescxp/css/parametros.css"];
-$page_extra_js    = ["../modules/tescxp/js/parametros.js"];
+$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/pmtros_tescxp.css', 'modules/tescxp/css/cmp_modales.css'];
+$page_extra_js    = ['modules/tescxp/js/pmtros_tescxp.js'];
+$page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
 // ==========================================
 
@@ -25,19 +26,6 @@ $pmtros_grales = $list_pmtros_grales->fetch(PDO::FETCH_ASSOC);
 $id_empresa_fijo = $pmtros_grales['id_empresa'] ?? '';
 
 // ============================================================
-// LIMPIAR MENSAJE DE ERROR DE POSTGRESQL
-// ============================================================
-function limpiar_error_pgsql(string $msg): string {
-    if (preg_match('/ERROR:\s*ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
-        return trim($m[1]);
-    }
-    if (preg_match('/ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
-        return trim($m[1]);
-    }
-    return $msg;
-}
-
-// ============================================================
 // DÍAS DE LA SEMANA VÁLIDOS PARA PAGO (1=Lunes ... 6=Sábado)
 // ============================================================
 const DIAS_SEMANA = [
@@ -53,6 +41,7 @@ const DIAS_SEMANA = [
 // MANEJO DE PETICIONES POST (SIEMPRE RESPONDEN CON JSON)
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    erp_validar_csrf();   // SEC-08: token de la sesión + origen
     header('Content-Type: application/json');
     $respuesta = ['success' => false, 'message' => '', 'errors' => []];
 
@@ -164,8 +153,6 @@ $nom_empresa = $pmtros_grales['nom_empresa']
 // ============================================================
 ob_start();
 ?>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-<link rel="stylesheet" href="modules/tescxp/css/pmtros_tescxp.css">
 <div id="mod-pmtros-tescxp" class="app-view active">
 
     <!-- ENCABEZADO -->
@@ -336,10 +323,6 @@ ob_start();
     <i class="fas fa-check-circle"></i>
     <span id="toast-message"></span>
 </div>
-
-<!-- SCRIPTS JS -->
-<script src="modules/tescxp/js/pmtros_tescxp.js"></script>
-
 
 <?php
 $moduleContent = ob_get_clean();

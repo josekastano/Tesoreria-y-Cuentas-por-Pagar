@@ -5,8 +5,9 @@ $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Códigos de Respuesta del Banco";
 $page_description = "Catálogo de los códigos que devuelve cada banco en su archivo de respuesta";
 $page_icon        = "bi-upc-scan";
-$page_extra_css   = ["../modules/tescxp/css/codigos_respuesta_banco_tescxp.css"];
-$page_extra_js    = ["../modules/tescxp/js/codigos_respuesta_banco_tescxp.js"];
+$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/codigos_respuesta_banco_tescxp.css', 'modules/tescxp/css/cmp_modales.css'];
+$page_extra_js    = ['modules/tescxp/js/codigos_respuesta_banco_tescxp.js'];
+$page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
 // ==========================================
 
@@ -17,20 +18,6 @@ if (!defined('INCLUDE_MENU_PRINCIPAL')) {
 
 require_once('prepare_tescxp.php');
 
-// ============================================================
-// LIMPIAR MENSAJE DE ERROR DE POSTGRESQL
-// ============================================================
-if (!function_exists('limpiar_error_pgsql')) {
-function limpiar_error_pgsql(string $msg): string {
-    if (preg_match('/ERROR:\s*ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
-        return trim($m[1]);
-    }
-    if (preg_match('/ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
-        return trim($m[1]);
-    }
-    return $msg;
-}
-}
 
 // ============================================================
 // TEXTO UTF-8 SIN DEPENDER DE mbstring
@@ -114,7 +101,7 @@ if (!function_exists('responder_json')) {
 // La llave de tab_codigos_respuesta_banco es (id_codigo, id_banco): el mismo
 // código puede existir en dos bancos con significados distintos.
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    ob_start();   // todo lo que se imprima por error queda aquí y responder_json lo descarta
+    erp_validar_csrf();   // SEC-08: token de la sesión + origen
     $respuesta = ['success' => false, 'message' => '', 'errors' => []];
 
     try {
@@ -279,8 +266,7 @@ $es_borrado = fn($c) => in_array($c['ind_borrado'], [true, 't', 'true', 1, '1'],
 // ============================================================
 ob_start();
 ?>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-<link rel="stylesheet" href="modules/tescxp/css/codigos_respuesta_banco_tescxp.css">
+
 <div id="mod-codigos" class="app-view active">
 
     <!-- ENCABEZADO -->
@@ -550,7 +536,6 @@ ob_start();
 <!-- TOAST -->
 <div id="toast" class="hidden"><span id="toast-message"></span></div>
 
-<script src="modules/tescxp/js/codigos_respuesta_banco_tescxp.js"></script>
 
 <?php
 $moduleContent = ob_get_clean();

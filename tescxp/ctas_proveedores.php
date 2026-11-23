@@ -5,8 +5,9 @@ $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Bancos por Proveedor";
 $page_description = "Gestión de cuentas bancarias de proveedores para el pago de facturas";
 $page_icon        = "bi-bank2";
-$page_extra_css   = ["../modules/tescxp/css/ctas_proveedores.css"];
-$page_extra_js    = ["../modules/tescxp/js/ctas_proveedores.js"];
+$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/ctas_proveedores.css', 'modules/tescxp/css/cmp_modales.css'];
+$page_extra_js    = ['modules/tescxp/js/ctas_proveedores.js'];
+$page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
 // ==========================================
 
@@ -16,19 +17,6 @@ if (!defined('INCLUDE_MENU_PRINCIPAL')) {
 }
 
 require_once('prepare_tescxp.php');
-
-// ============================================================
-// LIMPIAR MENSAJE DE ERROR DE POSTGRESQL
-// ============================================================
-function limpiar_error_pgsql(string $msg): string {
-    if (preg_match('/ERROR:\s*ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
-        return trim($m[1]);
-    }
-    if (preg_match('/ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
-        return trim($m[1]);
-    }
-    return $msg;
-}
 
 // ============================================================
 // CARGAR SELECTS (siempre se cargan para la vista inicial)
@@ -43,6 +31,7 @@ $proveedores_select = $list_proveedores_select->fetchAll(PDO::FETCH_ASSOC);
 // MANEJO DE PETICIONES POST (SIEMPRE RESPONDEN CON JSON)
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+ erp_validar_csrf();   // SEC-08: token de la sesión + origen
     header('Content-Type: application/json');
     $respuesta = ['success' => false, 'message' => '', 'errors' => []];
 
@@ -221,8 +210,7 @@ $bancoxprov = $list_bancoxprov->fetchAll(PDO::FETCH_ASSOC);
 // ============================================================
 ob_start();
 ?>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-<link rel="stylesheet" href="modules/tescxp/css/ctas_proveedores.css">
+
 <div id="mod-bancoxprov" class="app-view active">
 
     <!-- ENCABEZADO -->
@@ -543,10 +531,6 @@ ob_start();
 
 <!-- TOAST -->
 <div id="toast" class="hidden"><span id="toast-message"></span></div>
-
-<!-- SCRIPTS JS -->
-<script src="modules/tescxp/js/ctas_proveedores.js"></script>
-
 
 <?php
 $moduleContent = ob_get_clean();

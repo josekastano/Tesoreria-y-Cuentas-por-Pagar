@@ -5,11 +5,9 @@ $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Historial de Pagos";
 $page_description = "Pagos registrados con la respuesta del banco: proveedores, nómina e inversiones";
 $page_icon        = "bi-receipt";
-// Cache-busting (igual que Gestión Humana): el navegador no sigue usando un JS/CSS viejo.
-$v_pg_css         = @filemtime(__DIR__ . '/css/pagos_tescxp.css') ?: time();
-$v_pg_js          = @filemtime(__DIR__ . '/js/pagos_tescxp.js')   ?: time();
-$page_extra_css   = ["../modules/tescxp/css/historial_pagos.css"];
-$page_extra_js    = ["../modules/tescxp/js/historial_pagos.js"];
+$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/pagos_tescxp.css', 'modules/tescxp/css/cmp_modales.css'];
+$page_extra_js    = ['modules/tescxp/js/pagos_tescxp.js'];
+$page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
 // ==========================================
 
@@ -19,21 +17,6 @@ if (!defined('INCLUDE_MENU_PRINCIPAL')) {
 }
 
 require_once('prepare_tescxp.php');
-
-// ============================================================
-// LIMPIAR MENSAJE DE ERROR DE POSTGRESQL
-// ============================================================
-if (!function_exists('limpiar_error_pgsql')) {
-function limpiar_error_pgsql(string $msg): string {
-    if (preg_match('/ERROR:\s*ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
-        return trim($m[1]);
-    }
-    if (preg_match('/ERROR:\s*(.+?)(?:\s+CONTEXT:|$)/s', $msg, $m)) {
-        return trim($m[1]);
-    }
-    return $msg;
-}
-}
 
 // ============================================================
 // RESPONDER JSON
@@ -92,7 +75,7 @@ function fecha_iso(string $f): ?string {
 // MANEJO DE PETICIONES POST (SIEMPRE RESPONDEN CON JSON)
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    ob_start();
+    erp_validar_csrf();   // SEC-08: token de la sesión + origen
     $respuesta = ['success' => false, 'message' => '', 'errors' => []];
 
     try {
@@ -484,8 +467,7 @@ function estado_badge(string $estado): string {
 // ============================================================
 ob_start();
 ?>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-<link rel="stylesheet" href="modules/tescxp/css/pagos_tescxp.css?v=<?= $v_pg_css ?>">
+
 <div id="mod-historial" class="app-view active">
 
     <!-- ENCABEZADO -->
@@ -990,9 +972,6 @@ ob_start();
 // Datos completos para el detalle y los totales filtrados
 const pagosData = <?= json_encode($pagos, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG) ?>;
 </script>
-
-<script src="modules/tescxp/js/pagos_tescxp.js?v=<?= $v_pg_js ?>"></script>
-
 
 <?php
 $moduleContent = ob_get_clean();
