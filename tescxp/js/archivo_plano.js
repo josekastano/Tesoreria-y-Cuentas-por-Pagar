@@ -3,9 +3,8 @@
 // ============================================================
 // 0. AISLAMIENTO DEL MÓDULO
 // ============================================================
-// archivo_plano.php referencia este archivo dos veces ($page_extra_js y el
-// <script> del final). La IIFE le da a cada copia su propio ámbito y el guard
-// de initArchivoModule() evita que los listeners se registren dos veces.
+// La IIFE le da al archivo su propio ámbito y el guard de initArchivoModule()
+// evita que los listeners se registren dos veces si se carga de nuevo.
 (function () {
 
 // ============================================================
@@ -43,7 +42,7 @@ function showToast(message, type = 'success') {
     if (!toast || !span) return;
     const text = message && message.trim() ? message : (type === 'success' ? 'Operación exitosa' : 'Ocurrió un error');
     span.textContent = text;
-    toast.style.background = type === 'error' ? '#ef4444' : '#0f172a';
+    toast.classList.toggle('toast-error', type === 'error');
     toast.classList.remove('hidden');
     clearTimeout(toast._timer);
     toast._timer = setTimeout(() => toast.classList.add('hidden'), 4000);
@@ -453,7 +452,7 @@ function renderProveedorCuentas(proveedores) {
             cuentaHtml = `<span class="picker-cuenta-unica">${escapeHtml(c.nom_banco)} — ${escapeHtml(c.cta_proveedor)} (${tipoCuentaTxt(c.ind_tipocuenta)})</span>`;
         } else {
             cuentaHtml = `
-                <select class="form-select picker-select prov-cta-select" data-id-prov="${escapeHtml(p.id_proveedor)}" aria-label="Cuenta de ${escapeHtml(p.nom_tercero)}">
+                <select class="form-input picker-select prov-cta-select" data-id-prov="${escapeHtml(p.id_proveedor)}" aria-label="Cuenta de ${escapeHtml(p.nom_tercero)}">
                     ${cuentas.map(c => `<option value="${escapeHtml(c.cta_proveedor)}">${escapeHtml(c.nom_banco)} — ${escapeHtml(c.cta_proveedor)} (${tipoCuentaTxt(c.ind_tipocuenta)})</option>`).join('')}
                 </select>`;
         }
@@ -905,10 +904,10 @@ let idArchivoDetalleActual = null;
 // Respuesta del banco para una línea. Sin pago registrado = todavía sin respuesta.
 function badgeEstadoPago(d) {
     switch (Number(d.estado_pago)) {
-        case 2: return '<span class="badge badge-active">Aprobado</span>';
-        case 3: return `<span class="badge badge-inactive" title="${escapeHtml((d.id_codigo || '') + ' ' + (d.des_motivo || ''))}">Rechazado</span>`;
-        case 1: return '<span class="badge badge-pending">Pendiente</span>';
-        default: return '<span class="badge badge-muted">Sin respuesta</span>';
+        case 2: return '<span class="badge ok">Aprobado</span>';
+        case 3: return `<span class="badge bad" title="${escapeHtml((d.id_codigo || '') + ' ' + (d.des_motivo || ''))}">Rechazado</span>`;
+        case 1: return '<span class="badge warn">Pendiente</span>';
+        default: return '<span class="badge mute">Sin respuesta</span>';
     }
 }
 
@@ -944,12 +943,12 @@ async function openDetailModal(archivo) {
     try {
         const result = await enviarPost(formData, 'btn_ver_detalle');
         if (!result.success) {
-            detalleList.innerHTML = `<p class="detalle-msg error">${escapeHtml(result.message || 'Error al cargar el detalle.')}</p>`;
+            detalleList.innerHTML = `<p class="tcx-lista-msg error">${escapeHtml(result.message || 'Error al cargar el detalle.')}</p>`;
             return;
         }
         const detalle = result.detalle || [];
         if (detalle.length === 0) {
-            detalleList.innerHTML = '<p class="detalle-msg">Este archivo no tiene pagos.</p>';
+            detalleList.innerHTML = '<p class="tcx-lista-msg">Este archivo no tiene pagos.</p>';
             return;
         }
 
@@ -973,7 +972,7 @@ async function openDetailModal(archivo) {
             </div>
         `).join('');
     } catch (err) {
-        detalleList.innerHTML = '<p class="detalle-msg error">Error de conexión al cargar el detalle.</p>';
+        detalleList.innerHTML = '<p class="tcx-lista-msg error">Error de conexión al cargar el detalle.</p>';
     }
 }
 
@@ -1033,23 +1032,56 @@ async function descargarArchivoPlano(id) {
 }
 
 // ============================================================
-// 6. FILTROS + PAGINACIÓN + ORDENAMIENTO (mismo sistema que Proveedores)
+// 6. LISTA: SECCIONES, INDICADORES, FILTROS, ORDEN Y PAGINADOR
+// ------------------------------------------------------------
+// Las tablas las pinta este archivo desde archivosData (PHP). Tres secciones
+// (Proveedores / Nómina / Inversiones), cada una con su tabla y su orden; el
+// paginador es uno solo (componentes compartidos de erp_ui.js).
+// Indicadores y conteos: sobre TODOS los archivos de la sección activa.
+// Clic (o Enter/espacio) en la fila abre el detalle. La sección se recuerda
+// en sessionStorage para que al recargar (después de editar, devolver o
+// descargar) se quede en la misma.
 // ============================================================
-let archivosPage     = 1;
-let archivosPageSize = 25; // debe coincidir con el <option selected> de #archivos-page-size
-
-// ---- SECCIONES: Proveedores / Nómina / Inversiones ----
-// Cada sección tiene su tabla (tbody-proveedores / tbody-nomina / tbody-inversiones), sus tarjetas
-// y su aviso; todo lo que lleva data-seccion se muestra solo en su sección.
-// Filtros, paginación y orden actúan sobre la sección activa. La sección se
-// recuerda en sessionStorage para que al recargar (después de editar, devolver
-// o descargar) se quede en la misma.
 const SECCIONES = ['proveedores', 'nomina', 'inversiones'];
 let seccion = 'proveedores';
+let pag = null;
+const ordenes = {};
+const normArc = t => (window.erpNormalizar ? erpNormalizar(t) : String(t ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
+const archivosSeccion = () => ((typeof archivosData !== 'undefined' && archivosData && archivosData[seccion]) || []);
+const todosArchivos = () => (typeof archivosData !== 'undefined' && archivosData ? SECCIONES.flatMap(s => archivosData[s] || []) : []);
+const fechaCortaArc = v => String(v || '').slice(0, 10);
+const periodoArc = a => `${a.ano_nomina}-${String(Number(a.mes_nomina)).padStart(2, '0')}`;
+const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`;
 
-function tbodyActivo()     { return document.getElementById(`tbody-${seccion}`); }
-function filasSeccion()    { return Array.from(tbodyActivo()?.querySelectorAll('tr:not(.empty-row)') ?? []); }
-function encabezadosSeccion() { return document.querySelectorAll(`#tabla-${seccion} th.sortable`); }
+function columnasOrden(sec) {
+    const comunes = {
+        'Archivo':          { valor: a => a.nom_archivo },
+        'Cuenta de origen': { valor: a => `${a.nom_banco} ${a.cta_empresa}` },
+        'Aplicación':       { valor: a => fechaCortaArc(a.fecha_aplicacion), tipo: 'fecha' },
+        'Generación':       { valor: a => fechaCortaArc(a.fec_generacion), tipo: 'fecha' },
+        'Estado':           { valor: a => a.estado },
+    };
+    const total = { valor: a => Number(a.total) || 0, tipo: 'numero' };
+    if (sec === 'nomina') return { ...comunes, 'Periodo': { valor: a => `${periodoArc(a)}-${a.val_periodo}` }, 'Empleados': total };
+    if (sec === 'inversiones') return { ...comunes, 'Inversores': { valor: a => fechaCortaArc(a.max_vencimiento), tipo: 'fecha' }, 'Cuotas': total };
+    return { ...comunes, 'Pagos': total };
+}
+
+function prepararLista() {
+    if (!pag && window.ErpPaginador) {
+        pag = ErpPaginador.crear({ lista: document.getElementById('tbody-proveedores'), onCambio: renderArchivos, tam: 25 });
+    }
+    if (window.ErpOrden) {
+        SECCIONES.forEach(sec => {
+            if (ordenes[sec]) return;
+            ordenes[sec] = ErpOrden.crear({
+                tabla: document.getElementById(`tabla-${sec}`),
+                columnas: columnasOrden(sec),
+                onCambio: () => { if (pag) pag.inicio(); renderArchivos(); },
+            });
+        });
+    }
+}
 
 function cambiarSeccion(nueva, guardar = true) {
     if (!SECCIONES.includes(nueva)) nueva = 'proveedores';
@@ -1060,32 +1092,29 @@ function cambiarSeccion(nueva, guardar = true) {
         tab.classList.toggle('active', activa);
         tab.setAttribute('aria-selected', activa ? 'true' : 'false');
     });
-    document.querySelectorAll('#mod-archivo-plano [data-seccion]').forEach(el => {
-        el.style.display = el.dataset.seccion === nueva ? '' : 'none';
+    SECCIONES.forEach(sec => {
+        const t = document.getElementById(`tabla-${sec}`);
+        if (t) t.hidden = sec !== nueva;
     });
+    document.querySelectorAll('#mod-archivo-plano .ap-hint-seccion').forEach(el => { el.hidden = el.dataset.seccion !== nueva; });
+    // Solo los archivos de proveedores se arman aquí
+    const btnNuevo = document.getElementById('btn-add-archivo');
+    if (btnNuevo) btnNuevo.hidden = nueva !== 'proveedores';
 
     const buscador = document.getElementById('archivo-search');
     if (buscador) {
         buscador.placeholder = {
             nomina:      'Buscar por nombre, periodo, banco o cuenta...',
-            inversiones: 'Buscar por nombre, inversores, banco o cuenta...',
+            inversiones: 'Buscar por nombre, banco o cuenta...',
         }[nueva] || 'Buscar por nombre, banco o cuenta...';
     }
-
-    // El orden de la otra sección no aplica aquí
-    archivosSortKey = null;
-    archivosSortDir = 'asc';
-    document.querySelectorAll('#mod-archivo-plano .data-table th.sortable').forEach(th => {
-        th.classList.remove('sort-active');
-        const icon = th.querySelector('.sort-icon');
-        if (icon) icon.className = 'fas fa-caret-down sort-icon';
-    });
 
     if (guardar) {
         try { sessionStorage.setItem('archivo_plano_seccion', nueva); } catch (e) { /* sin almacenamiento */ }
     }
+    updateStats();
     clearFilters();
-    ajustarAlturaTablaArchivos();
+    if (window.ErpListaFija) ErpListaFija.ajustar();
 }
 
 function seccionGuardada() {
@@ -1094,138 +1123,139 @@ function seccionGuardada() {
     try { return sessionStorage.getItem('archivo_plano_seccion') || 'proveedores'; } catch (e) { return 'proveedores'; }
 }
 
-function getFilteredArchivoRows() {
-    const query  = val('archivo-search').toLowerCase().trim();
-    const active = document.querySelector('#mod-archivo-plano .filter-toggle.active')?.dataset.filter ?? 'all';
-    return filasSeccion().filter(fila => {
-        const texto = [0, 1, 2].map(i => (fila.children[i]?.textContent ?? '').toLowerCase()).join(' ');
-        const pasaTexto  = !query || texto.includes(query);
-        const pasaEstado = active === 'all' || fila.dataset.estado === active;
-        return pasaTexto && pasaEstado;
+function poneIndicador(n, label, icono, valor, hint) {
+    setText(`stat-${n}-label`, label);
+    const ico = document.getElementById(`stat-${n}-icono`);
+    if (ico && icono) ico.className = `fas ${icono}`;
+    setText(`stat-${n}`, valor);
+    setText(`stat-${n}-hint`, hint);
+}
+
+function updateStats() {
+    const data = archivosSeccion();
+    const generados = data.filter(a => a.generado).length;
+    const porGenerar = data.length - generados;
+    setText('stat-2', porGenerar);
+    if (seccion === 'proveedores') {
+        const valorPend = data.filter(a => !a.generado).reduce((t, a) => t + (Number(a.total) || 0), 0);
+        poneIndicador(1, 'Total archivos', 'fa-file-invoice', data.length, 'Armados desde un cronograma');
+        poneIndicador(3, 'Generados', 'fa-check-circle', generados, 'CSV descargado para el banco');
+        poneIndicador(4, 'Valor por generar', 'fa-coins', formatCurrency(valorPend), plural(porGenerar, 'archivo pendiente', 'archivos pendientes'));
+    } else {
+        const esperando = data.filter(a => a.estado === 'esperando').length;
+        const rechazos  = data.filter(a => a.estado === 'rechazos').length;
+        poneIndicador(1, seccion === 'nomina' ? 'Recibidos de Nómina' : 'Recibidos de Financiero', 'fa-inbox', data.length,
+            seccion === 'nomina' ? 'Enviados por Gestión Humana' : 'Enviados por el área Financiera');
+        poneIndicador(3, 'Esperando al banco', 'fa-building-columns', esperando, 'Generados, sin respuesta completa');
+        poneIndicador(4, 'Con rechazos', 'fa-circle-exclamation', rechazos, 'Hay que corregir y reenviar');
+    }
+    setText('arc-cnt-all', data.length);
+    setText('arc-cnt-generado', generados);
+    setText('arc-cnt-pendiente', porGenerar);
+}
+
+function hayFiltros() {
+    return val('archivo-search').trim() !== '' || (val('archivo-filtro-estado') || 'all') !== 'all';
+}
+
+function getFilteredArchivos() {
+    const q = normArc(val('archivo-search'));
+    const estado = val('archivo-filtro-estado') || 'all';
+    return archivosSeccion().filter(a => {
+        if (estado === 'generado' && !a.generado) return false;
+        if (estado === 'pendiente' && a.generado) return false;
+        const texto = `${a.id_archivo_plano} ${a.nom_archivo} ${a.nom_banco} ${a.cta_empresa} ${a.es_nomina ? periodoArc(a) : ''} ${a.periodo_nomina || ''}`;
+        if (q && !normArc(texto).includes(q)) return false;
+        return true;
     });
 }
 
 function applyFilters() {
-    archivosPage = 1;
-    renderArchivosPage();
-
-    const query    = val('archivo-search').trim();
-    const active   = document.querySelector('#mod-archivo-plano .filter-toggle.active')?.dataset.filter ?? 'all';
-    const clearBtn = document.getElementById('btn-clear-filters');
-    if (clearBtn) clearBtn.style.display = (query || active !== 'all') ? 'flex' : 'none';
+    if (pag) pag.inicio();
+    renderArchivos();
 }
 
 function clearFilters() {
     setVal('archivo-search', '');
-    document.querySelectorAll('#mod-archivo-plano .filter-toggle').forEach(btn => btn.classList.remove('active'));
-    document.querySelector('#mod-archivo-plano .filter-toggle[data-filter="all"]')?.classList.add('active');
+    setVal('archivo-filtro-estado', 'all');
+    if (window.ErpFiltros) ErpFiltros.sincronizar();
     applyFilters();
 }
 
-function renderArchivosPage() {
-    const todas     = filasSeccion();
-    const coinciden = getFilteredArchivoRows();
-    todas.forEach(fila => { fila.style.display = 'none'; });
-
-    const total        = coinciden.length;
-    const esTodos      = archivosPageSize === 'all';
-    const size         = esTodos ? total : archivosPageSize;
-    const totalPaginas = size > 0 ? Math.max(1, Math.ceil(total / size)) : 1;
-    if (archivosPage > totalPaginas) archivosPage = totalPaginas;
-    if (archivosPage < 1) archivosPage = 1;
-
-    const start = esTodos ? 0 : (archivosPage - 1) * size;
-    const end   = esTodos ? total : Math.min(start + size, total);
-    coinciden.slice(start, end).forEach(fila => { fila.style.display = ''; });
-
-    setText('archivos-count', `${total} resultado${total !== 1 ? 's' : ''}`);
-
-    const rangeEl = document.getElementById('archivos-range');
-    if (rangeEl) rangeEl.textContent = total === 0 ? '0 de 0' : `${start + 1}–${end} de ${total}`;
-
-    const btnPrev = document.getElementById('archivos-prev');
-    const btnNext = document.getElementById('archivos-next');
-    if (btnPrev) btnPrev.disabled = archivosPage <= 1;
-    if (btnNext) btnNext.disabled = esTodos || archivosPage >= totalPaginas;
-}
-
-function initArchivosPagination() {
-    document.getElementById('archivos-page-size')?.addEventListener('change', function() {
-        archivosPageSize = this.value === 'all' ? 'all' : parseInt(this.value, 10);
-        archivosPage = 1;
-        renderArchivosPage();
-    });
-    document.getElementById('archivos-prev')?.addEventListener('click', () => { archivosPage--; renderArchivosPage(); });
-    document.getElementById('archivos-next')?.addEventListener('click', () => { archivosPage++; renderArchivosPage(); });
-}
-
-// ---- ORDENAMIENTO ASC / DESC ----
-// Las fechas van en data-sort como 'YYYY-MM-DD'; sin fecha quedan al principio (asc).
-let archivosSortKey = null;
-let archivosSortDir = 'asc';
-
-function sortArchivoRows(key, type) {
-    const tbody = tbodyActivo();
-    if (!tbody) return;
-    const filas = Array.from(tbody.querySelectorAll('tr:not(.empty-row)'));
-    if (filas.length === 0) return;
-
-    archivosSortDir = (archivosSortKey === key && archivosSortDir === 'asc') ? 'desc' : 'asc';
-    archivosSortKey = key;
-
-    const getValor = fila => {
-        const celda = fila.cells[Number(key)];
-        const crudo = celda?.dataset.sort;
-        const base  = crudo !== undefined ? crudo : (celda?.textContent.trim() ?? '');
-        return type === 'number' ? (parseFloat(base) || 0) : base.toLowerCase();
-    };
-
-    filas.sort((a, b) => {
-        const va  = getValor(a);
-        const vb  = getValor(b);
-        const cmp = type === 'number' ? (va - vb) : va.localeCompare(vb, 'es', { numeric: true });
-        return archivosSortDir === 'asc' ? cmp : -cmp;
-    });
-    filas.forEach(fila => tbody.appendChild(fila));
-
-    encabezadosSeccion().forEach(th => {
-        const icon   = th.querySelector('.sort-icon');
-        const activo = th.dataset.sortKey === key;
-        th.classList.toggle('sort-active', activo);
-        if (icon) {
-            icon.className = activo
-                ? `fas sort-icon ${archivosSortDir === 'asc' ? 'fa-caret-up' : 'fa-caret-down'}`
-                : 'fas fa-caret-down sort-icon';
-        }
-    });
-
-    archivosPage = 1;
-    renderArchivosPage();
-}
-
-function initArchivosSorting() {
-    document.querySelectorAll('#mod-archivo-plano .data-table th.sortable').forEach(th => {
-        th.addEventListener('click', () => sortArchivoRows(th.dataset.sortKey, th.dataset.sortType));
-    });
-}
-
-// ---- ALTO DINÁMICO DE LA TABLA (evita el doble scroll) ----
-function ajustarAlturaTablaArchivos() {
-    const scrollBox = document.getElementById('archivos-table-scroll');
-    if (!scrollBox) return;
-    const footer = document.querySelector('#mod-archivo-plano .table-footer');
-    const top = scrollBox.getBoundingClientRect().top;
-    const alturaFooter = footer ? footer.offsetHeight : 0;
-
-    let margenInferior = 16;
-    const contentCard = scrollBox.closest('.content-card') || document.querySelector('.content-card');
-    if (contentCard) {
-        const cs = getComputedStyle(contentCard);
-        margenInferior += (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.marginBottom) || 0);
+function celdaEstado(a) {
+    if (!a.es_externo) return a.generado ? '<span class="badge ok">Generado</span>' : '<span class="badge warn">Por generar</span>';
+    const cant = Number(a.cant_lineas) || 0, apr = Number(a.nom_aprobados) || 0, rec = Number(a.nom_rechazados) || 0;
+    const fem = a.es_inversion;   // cuotas (femenino) / empleados (masculino)
+    switch (a.estado) {
+        case 'por_generar': return '<span class="badge warn">Por generar</span>';
+        case 'esperando':   return `<span class="badge info">Esperando banco</span><span class="tcx-sub">${apr + rec} de ${cant} con respuesta</span>`;
+        case 'pagado':      return '<span class="badge ok">Pagado</span>';
+        default:            return `<span class="badge bad">Con rechazos</span><span class="tcx-sub">${rec} rechazad${fem ? 'a' : 'o'}${rec !== 1 ? 's' : ''} · ${apr} pagad${fem ? 'a' : 'o'}${apr !== 1 ? 's' : ''}</span>`;
     }
+}
 
-    const disponible = window.innerHeight - top - alturaFooter - margenInferior;
-    scrollBox.style.maxHeight = Math.max(220, disponible) + 'px';
+function celdaAcciones(a) {
+    const nombre = escapeHtml(a.nom_archivo);
+    let html = `<button type="button" class="btn-icon-sm view" data-action="descargar" title="Descargar CSV" aria-label="Descargar el CSV de ${nombre}"><i class="fas fa-download"></i></button>`;
+    if (a.generado) {
+        html += `<span class="accion-bloqueada" title="Archivo generado: no se puede editar${a.es_externo ? ' ni devolver' : ''}"><i class="fas fa-lock" aria-hidden="true"></i></span>`;
+    } else {
+        html += `<button type="button" class="btn-icon-sm edit" data-action="editar" title="${a.es_externo ? 'Editar nombre, cuenta de origen y fecha' : 'Editar nombre'}" aria-label="Editar ${nombre}"><i class="fas fa-pen"></i></button>`;
+        if (a.es_externo) html += `<button type="button" class="btn-icon-sm reject" data-action="devolver" title="Devolver a ${escapeHtml(a.modulo_origen || (a.es_inversion ? 'Financiero' : 'Nómina'))}" aria-label="Devolver ${nombre}"><i class="fas fa-rotate-left"></i></button>`;
+    }
+    return `<td class="col-acciones"><div class="actions-cell">${html}</div></td>`;
+}
+
+function filaArchivo(a) {
+    const id = escapeHtml(a.id_archivo_plano);
+    const cant = Number(a.cant_lineas) || 0;
+    const archivo = `<td><span class="tcx-fuerte">${escapeHtml(a.nom_archivo)}</span><span class="tcx-sub">#${id}</span></td>`;
+    const origen = `<td>${escapeHtml(a.nom_banco)}<span class="tcx-sub">${escapeHtml(a.cta_empresa)} · ${escapeHtml(a.tipo_cuenta)}</span></td>`;
+    const unidad = a.es_nomina ? ['empleado', 'empleados'] : a.es_inversion ? ['cuota', 'cuotas'] : ['pago', 'pagos'];
+    const total = `<td class="text-right tcx-num"><span class="tcx-fuerte">${formatCurrency(a.total)}</span><span class="tcx-sub">${plural(cant, unidad[0], unidad[1])}</span></td>`;
+    const fechas = `<td class="tcx-num">${escapeHtml(formatDate(fechaCortaArc(a.fecha_aplicacion)))}</td><td class="tcx-num">${escapeHtml(formatDate(fechaCortaArc(a.fec_generacion)))}</td>`;
+    let segunda = '';
+    if (seccion === 'nomina') {
+        segunda = `<td><span class="tcx-fuerte">${escapeHtml(periodoArc(a))}</span><span class="tcx-sub">Periodo ${escapeHtml(Number(a.val_periodo))}</span></td>`;
+    } else if (seccion === 'inversiones') {
+        segunda = `<td><span class="tcx-fuerte">${plural(Number(a.cant_inversores) || 0, 'inversor', 'inversores')}</span><span class="tcx-sub">${plural(Number(a.cant_proyectos) || 0, 'proyecto', 'proyectos')} · vencen hasta ${escapeHtml(formatDate(fechaCortaArc(a.max_vencimiento)))}</span></td>`;
+    }
+    const cuerpo = seccion === 'proveedores' ? archivo + origen + total : archivo + segunda + origen + total;
+    return `<tr data-fila-abre data-id="${id}" tabindex="0" aria-label="Ver el archivo ${escapeHtml(a.nom_archivo)}">
+        ${cuerpo}${fechas}<td><div class="tcx-estado">${celdaEstado(a)}</div></td>${celdaAcciones(a)}
+    </tr>`;
+}
+
+// Lista: filtrar → contar → ordenar → paginar → pintar (sección activa)
+function renderArchivos() {
+    prepararLista();
+    let filas = getFilteredArchivos();
+    setText('archivos-count', `${filas.length} resultado${filas.length !== 1 ? 's' : ''}`);
+    const btnClear = document.getElementById('btn-clear-filters');
+    if (btnClear) btnClear.hidden = !hayFiltros();
+
+    const tbody = document.getElementById(`tbody-${seccion}`);
+    if (!tbody) return;
+    const columnas = seccion === 'proveedores' ? 7 : 8;
+    if (filas.length === 0) {
+        const hayDatos = archivosSeccion().length > 0;
+        const vacio = {
+            proveedores: ['fa-file-invoice', 'No hay archivos planos de proveedores para mostrar', 'Use «Nuevo archivo plano» para crear el primero a partir de un cronograma'],
+            nomina:      ['fa-users', 'No hay archivos de nómina para mostrar', 'Aparecen aquí cuando Gestión Humana pulsa «Enviar a Tesorería» en Liquidar Nómina'],
+            inversiones: ['fa-hand-holding-dollar', 'No hay archivos de inversiones para mostrar', 'Aparecen aquí cuando el área Financiera envía las cuotas aprobadas a Tesorería'],
+        }[seccion];
+        tbody.innerHTML = `<tr><td colspan="${columnas}"><div class="empty-state">
+            <i class="fas ${hayDatos ? 'fa-search' : vacio[0]}"></i>
+            <p>${hayDatos ? 'Ningún archivo coincide con los filtros' : vacio[1]}</p>
+            <span>${hayDatos ? 'Cambie la búsqueda o use «Limpiar»' : vacio[2]}</span>
+        </div></td></tr>`;
+        if (pag) pag.paginar([]);
+        return;
+    }
+    const orden = ordenes[seccion];
+    if (orden) filas = orden.ordenar(filas);
+    const pagina = pag ? pag.paginar(filas) : filas;
+    tbody.innerHTML = pagina.map(filaArchivo).join('');
 }
 
 // ============================================================
@@ -1241,10 +1271,10 @@ function initArchivoModule() {
     if (window.__archivoPlanoInit) return;
     window.__archivoPlanoInit = true;
 
-    // Mover modales, calendario y toast al <body> para que el overlay cubra
-    // también la barra superior (escapan del contexto de apilamiento del layout).
-    ['modal-new-archivo', 'modal-ctaemp-rapida', 'modal-ctaprov-rapida', 'modal-banco-rapido',
-     'modal-edit-archivo', 'modal-devolver-nomina', 'modal-detail', 'dp-pop', 'toast'].forEach(id => {
+    // Los modales los mueve a <body> el componente "modales" (erp_ui.js); en el HTML
+    // los modales rápidos van después del que los abre, para quedar encima.
+    // El calendario y el aviso se mueven aquí: así no los tapa el difuminado.
+    ['dp-pop', 'toast'].forEach(id => {
         const el = document.getElementById(id);
         if (el && el.parentElement !== document.body) document.body.appendChild(el);
     });
@@ -1254,47 +1284,55 @@ function initArchivoModule() {
 
     document.getElementById('btn-add-archivo')?.addEventListener('click', openNewModal);
     document.getElementById('archivo-search')?.addEventListener('input', applyFilters);
+    document.getElementById('archivo-filtro-estado')?.addEventListener('change', applyFilters);
     document.getElementById('btn-clear-filters')?.addEventListener('click', clearFilters);
 
-    document.querySelectorAll('#mod-archivo-plano .filter-toggle').forEach(btn => {
-        btn.addEventListener('click', function() {
-            document.querySelectorAll('#mod-archivo-plano .filter-toggle').forEach(b => b.classList.remove('active'));
-            this.classList.add('active');
-            applyFilters();
+    // ---------- CLIC EN LA TABLA ----------
+    // Clic (o Enter/espacio) en la fila = detalle; los botones de acciones hacen lo suyo.
+    const archivoDe = tr => todosArchivos().find(x => String(x.id_archivo_plano) === tr.dataset.id);
+    SECCIONES.forEach(sec => {
+        const tb = document.getElementById(`tbody-${sec}`);
+        tb?.addEventListener('click', e => {
+            const fila = e.target.closest('tr[data-fila-abre]');
+            if (!fila) return;
+            const archivo = archivoDe(fila);
+            if (!archivo) return;
+            const btn = e.target.closest('button[data-action]');
+            if (btn) {
+                if (btn.dataset.action === 'descargar') descargarArchivoPlano(archivo.id_archivo_plano);
+                if (btn.dataset.action === 'editar')    openEditModal(archivo);
+                if (btn.dataset.action === 'devolver')  openDevolverModal(archivo);
+                return;
+            }
+            if (e.target.closest('.accion-bloqueada, button, a, input, select, textarea')) return;
+            openDetailModal(archivo);
+        });
+        tb?.addEventListener('keydown', e => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            const fila = e.target.closest('tr[data-fila-abre]');
+            if (!fila || e.target !== fila) return;
+            e.preventDefault();
+            const archivo = archivoDe(fila);
+            if (archivo) openDetailModal(archivo);
         });
     });
-
-    // ---------- CLIC EN LA TABLA ----------
-    // Los datos de cada archivo van en data-archivo (JSON). Clic en la fila =
-    // detalle; los botones de acciones hacen lo suyo sin abrir el detalle.
-    document.querySelectorAll('#mod-archivo-plano .tbody-archivos').forEach(tb => tb.addEventListener('click', function(e) {
-        const fila = e.target.closest('tr[data-archivo]');
-        if (!fila) return;
-        let archivo;
-        try { archivo = JSON.parse(fila.dataset.archivo); } catch (err) { return; }
-
-        const btn = e.target.closest('button[data-action]');
-        if (btn) {
-            if (btn.dataset.action === 'descargar') descargarArchivoPlano(archivo.id_archivo_plano);
-            if (btn.dataset.action === 'editar')    openEditModal(archivo);
-            if (btn.dataset.action === 'devolver')  openDevolverModal(archivo);
-            return;
-        }
-        if (e.target.closest('.accion-bloqueada')) return;
-        openDetailModal(archivo);
-    }));
-
-    // ---------- PAGINACIÓN Y ORDENAMIENTO ----------
-    initArchivosPagination();
-    initArchivosSorting();
 
     // ---------- SECCIONES (pestañas Proveedores / Nómina / Inversiones) ----------
     document.querySelectorAll('#mod-archivo-plano .ap-tab').forEach(tab => {
         tab.addEventListener('click', () => cambiarSeccion(tab.dataset.tab));
     });
-    cambiarSeccion(seccionGuardada(), false);   // también pinta la primera página
-    ajustarAlturaTablaArchivos();
-    window.addEventListener('resize', ajustarAlturaTablaArchivos);
+    cambiarSeccion(seccionGuardada(), false);   // también calcula los indicadores y pinta la lista
+    const mod = document.getElementById('mod-archivo-plano');
+    requestAnimationFrame(() => requestAnimationFrame(() => mod?.classList.add('is-listo')));
+
+    // Esc cierra solo el detalle y la confirmación de devolver (de lectura).
+    // Los formularios se cierran solo con la X o Cancelar.
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape' || selectorFechaAbierto()) return;
+        const abierto = id => { const m = document.getElementById(id); return m && !m.classList.contains('hidden'); };
+        if (abierto('modal-devolver-nomina')) closeDevolverModal();
+        else if (abierto('modal-detail')) closeDetailModal();
+    });
 
     document.getElementById('new-id-cronograma')?.addEventListener('change', onCronogramaChange);
     document.getElementById('new-cta-empresa')?.addEventListener('change', mostrarEmpresaCuenta);

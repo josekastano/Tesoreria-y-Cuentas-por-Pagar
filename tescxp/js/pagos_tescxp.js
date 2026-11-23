@@ -15,7 +15,7 @@ function showToast(message, type = 'success') {
     if (!toast || !span) return;
     const text = message && message.trim() ? message : (type === 'success' ? 'Operación exitosa' : 'Ocurrió un error');
     span.textContent = text;
-    toast.style.background = type === 'error' ? '#ef4444' : '#0f172a';
+    toast.classList.toggle('toast-error', type === 'error');
     toast.classList.remove('hidden');
     clearTimeout(toast._timer);
     toast._timer = setTimeout(() => toast.classList.add('hidden'), type === 'error' ? 7000 : 4000);
@@ -43,63 +43,28 @@ function capEstado(estado) {
 }
 
 // ============================================================
-// 2. FILTROS + PAGINACIÓN + ORDENAMIENTO (mismo sistema que Proveedores)
+// 2. LISTA: SECCIONES, INDICADORES, FILTROS, ORDEN Y PAGINADOR
 // ------------------------------------------------------------
-// Filtros: búsqueda + estado + rango de fechas. El "Valor aprobado" de
-// la tarjeta suma TODOS los pagos aprobados que pasan el filtro, no solo
-// los de la página visible.
+// Las tablas las pinta este archivo desde pagosData (PHP). Tres secciones
+// (Proveedores / Nómina / Inversiones), cada una con su tabla y su orden;
+// el paginador es uno solo (componentes compartidos de erp_ui.js).
+// Indicadores y conteos: sobre TODOS los pagos de la sección activa.
+// Sin botón de "ver": clic (o Enter/espacio) en la fila abre el detalle.
+// La sección activa se recuerda en sessionStorage.
 // ============================================================
-
-// ---- ESTADO DE PAGINACIÓN ----
-let pagosPage     = 1;
-let pagosPageSize = 25; // debe coincidir con el <option selected> de #pagos-page-size
-
-// ---- SECCIONES: Proveedores / Nómina / Inversiones (igual que Archivo Plano) ----
-// Cada sección tiene su tabla (tbody-proveedores / tbody-nomina / tbody-inversiones) y sus
-// tarjetas; lo que lleva data-seccion se muestra solo en su sección.
-// Filtros, paginación, orden y "Valor aprobado" actúan sobre la sección
-// activa, que se recuerda en sessionStorage.
 const SECCIONES_PAGO = ['proveedores', 'nomina', 'inversiones'];
 const CLAVE_SECCION  = 'historial_pagos_seccion';
+const PREFIJO_SECCION = { CXP: 'proveedores', NOM: 'nomina', INV: 'inversiones' };
+const CLASE_ESTADO = { APROBADO: 'ok', PENDIENTE: 'warn', RECHAZADO: 'bad' };
 let seccion = 'proveedores';
-
-function filasSeccion() {
-    return Array.from(document.querySelectorAll(`#tbody-${seccion} tr:not(.empty-row)`));
-}
-
-function cambiarSeccion(nueva, guardar = true) {
-    if (!SECCIONES_PAGO.includes(nueva)) nueva = 'proveedores';
-    seccion = nueva;
-
-    document.querySelectorAll('#mod-historial .ap-tab').forEach(tab => {
-        const activa = tab.dataset.tab === nueva;
-        tab.classList.toggle('active', activa);
-        tab.setAttribute('aria-selected', activa ? 'true' : 'false');
-    });
-    document.querySelectorAll('#mod-historial [data-seccion]').forEach(el => {
-        el.style.display = el.dataset.seccion === nueva ? '' : 'none';
-    });
-
-    const buscador = document.getElementById('pago-search');
-    if (buscador) {
-        buscador.placeholder = {
-            nomina:      'Buscar por pago, empleado, documento, periodo o código del banco...',
-            inversiones: 'Buscar por pago, inversor, documento, proyecto o código del banco...',
-        }[nueva] || 'Buscar por pago, factura, proveedor o código del banco...';
-    }
-
-    pagosSortKey = null;
-    pagosSortDir = 'asc';
-    document.querySelectorAll('#mod-historial .data-table th.sortable').forEach(th => {
-        th.classList.remove('sort-active');
-        const icon = th.querySelector('.sort-icon');
-        if (icon) icon.className = 'fas fa-caret-down sort-icon';
-    });
-
-    if (guardar) guardarSeccion(nueva);
-    clearFilters();
-    ajustarAlturaTablaPagos();
-}
+let pag = null;
+const ordenes = {};
+const normPago = t => (window.erpNormalizar ? erpNormalizar(t) : String(t ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
+const todosPagos = () => (typeof pagosData !== 'undefined' && Array.isArray(pagosData) ? pagosData : []);
+const seccionDe = p => PREFIJO_SECCION[String(p.clave || '').split('-')[0]] || 'proveedores';
+const pagosSeccion = () => todosPagos().filter(p => seccionDe(p) === seccion);
+const fechaPago = p => String(p.fec_pago || '').slice(0, 10);
+const periodoNomina = p => `${p.ano_nomina}-${String(Number(p.mes_nomina)).padStart(2, '0')}`;
 
 function guardarSeccion(valor) {
     try { sessionStorage.setItem(CLAVE_SECCION, valor); } catch (e) { /* sin almacenamiento */ }
@@ -111,182 +76,191 @@ function seccionGuardada() {
     try { return sessionStorage.getItem(CLAVE_SECCION) || 'proveedores'; } catch (e) { return 'proveedores'; }
 }
 
-// Filas que pasan todos los filtros (sin tener en cuenta la página)
-function getFilteredPagoRows() {
-    const query  = val('pago-search').toLowerCase().trim();
-    const active = document.querySelector('#mod-historial .filter-toggle.active')?.dataset.filter ?? 'all';
-    const desde  = val('fec-desde');
-    const hasta  = val('fec-hasta');
-    const filas  = filasSeccion();
+// Columnas que se ordenan en cada tabla (por el texto del encabezado)
+function columnasOrden(sec) {
+    const comunes = {
+        'Pago':                { valor: p => Number(p.id_pago), tipo: 'numero' },
+        'Archivo plano':       { valor: p => Number(p.id_archivo_plano), tipo: 'numero' },
+        'Fecha de pago':       { valor: fechaPago, tipo: 'fecha' },
+        'Valor':               { valor: p => Number(p.val_pago) || 0, tipo: 'numero' },
+        'Respuesta del banco': { valor: p => p.id_codigo || '' },
+        'Estado':              { valor: p => p.nom_estado_pago || '' },
+    };
+    if (sec === 'nomina') return { ...comunes,
+        'Empleado': { valor: p => p.nom_tercero || '' },
+        'Periodo':  { valor: p => `${periodoNomina(p)}-${p.val_periodo}` } };
+    if (sec === 'inversiones') return { ...comunes,
+        'Inversor':         { valor: p => p.nom_tercero || '' },
+        'Proyecto / cuota': { valor: p => `${p.id_proyecto}-${String(Number(p.id_cuota)).padStart(3, '0')}` } };
+    return { ...comunes, 'Factura / cuota': { valor: p => Number(p.id_factura) * 1000 + Number(p.id_cuota), tipo: 'numero' } };
+}
 
-    return filas.filter(fila => {
-        const fecha  = fila.dataset.fecha ?? '';
-        const estado = fila.dataset.estado ?? '';
-        const pasaTexto  = !query || fila.textContent.toLowerCase().includes(query);
-        const pasaEstado = active === 'all' || estado === active;
-        const pasaDesde  = !desde || fecha >= desde;
-        const pasaHasta  = !hasta || fecha <= hasta;
-        return pasaTexto && pasaEstado && pasaDesde && pasaHasta;
+function prepararLista() {
+    if (!pag && window.ErpPaginador) {
+        pag = ErpPaginador.crear({ lista: document.getElementById('tbody-proveedores'), onCambio: renderPagos, tam: 25 });
+    }
+    if (window.ErpOrden) {
+        SECCIONES_PAGO.forEach(sec => {
+            if (ordenes[sec]) return;
+            ordenes[sec] = ErpOrden.crear({
+                tabla: document.getElementById(`tabla-${sec}`),
+                columnas: columnasOrden(sec),
+                onCambio: () => { if (pag) pag.inicio(); renderPagos(); },
+            });
+        });
+    }
+}
+
+function cambiarSeccion(nueva, guardar = true) {
+    if (!SECCIONES_PAGO.includes(nueva)) nueva = 'proveedores';
+    seccion = nueva;
+
+    document.querySelectorAll('#mod-historial .ap-tab').forEach(tab => {
+        const activa = tab.dataset.tab === nueva;
+        tab.classList.toggle('active', activa);
+        tab.setAttribute('aria-selected', activa ? 'true' : 'false');
+    });
+    SECCIONES_PAGO.forEach(sec => {
+        const t = document.getElementById(`tabla-${sec}`);
+        if (t) t.hidden = sec !== nueva;
+    });
+
+    const buscador = document.getElementById('pago-search');
+    if (buscador) {
+        buscador.placeholder = {
+            nomina:      'Buscar por pago, empleado, documento, periodo o código del banco...',
+            inversiones: 'Buscar por pago, inversor, documento, proyecto o código del banco...',
+        }[nueva] || 'Buscar por pago, factura, proveedor o código del banco...';
+    }
+    const rotulo = { nomina: ['Pagos de nómina', 'fa-users'], inversiones: ['Pagos de inversiones', 'fa-hand-holding-dollar'] }[nueva] || ['Total pagos', 'fa-receipt'];
+    setText('stat-total-label', rotulo[0]);
+    const ico = document.getElementById('stat-total-icono');
+    if (ico) ico.className = `fas ${rotulo[1]}`;
+
+    if (guardar) guardarSeccion(nueva);
+    updateStats();
+    clearFilters();
+    if (window.ErpListaFija) ErpListaFija.ajustar();
+}
+
+function updateStats() {
+    const data = pagosSeccion();
+    const cuenta = { APROBADO: 0, PENDIENTE: 0, RECHAZADO: 0 };
+    let valor = 0;
+    data.forEach(p => {
+        const e = String(p.nom_estado_pago || '');
+        if (e in cuenta) cuenta[e]++;
+        if (e === 'APROBADO') valor += Number(p.val_pago) || 0;
+    });
+    setText('stat-total', data.length);
+    setText('stat-total-hint', cuenta.PENDIENTE ? `${cuenta.PENDIENTE} pendiente${cuenta.PENDIENTE === 1 ? '' : 's'} de respuesta` : 'Con respuesta registrada');
+    setText('stat-aprobados', cuenta.APROBADO);
+    setText('stat-aprobados-hint', data.length ? `${Math.round(cuenta.APROBADO / data.length * 100)}% de los pagos` : 'Descontaron saldo');
+    setText('stat-rechazados', cuenta.RECHAZADO);
+    setText('stat-valor', formatMoney(valor));
+    setText('pag-cnt-all', data.length);
+    Object.keys(cuenta).forEach(k => setText(`pag-cnt-${k}`, cuenta[k]));
+}
+
+function textoBusqueda(p) {
+    const base = `${p.id_pago} ${p.id_archivo_plano} ${p.nom_tercero || ''} ${p.id_codigo || ''} ${p.des_motivo || ''} ${formatFecha(fechaPago(p))}`;
+    if (seccion === 'nomina') return `${base} ${p.id_tipo || ''} ${p.id_empleado || ''} ${periodoNomina(p)}`;
+    if (seccion === 'inversiones') return `${base} ${p.id_tipo || ''} ${p.id_inversor || ''} ${p.id_proyecto || ''}`;
+    return `${base} factura ${p.id_factura} cuota ${p.id_cuota}`;
+}
+
+function hayFiltros() {
+    return val('pago-search').trim() !== '' || (val('pago-filtro-estado') || 'all') !== 'all' || val('fec-desde') !== '' || val('fec-hasta') !== '';
+}
+
+function getFilteredPagos() {
+    const q = normPago(val('pago-search'));
+    const estado = val('pago-filtro-estado') || 'all';
+    const desde = val('fec-desde');
+    const hasta = val('fec-hasta');
+    return pagosSeccion().filter(p => {
+        const fecha = fechaPago(p);
+        if (estado !== 'all' && p.nom_estado_pago !== estado) return false;
+        if (desde && fecha < desde) return false;
+        if (hasta && fecha > hasta) return false;
+        if (q && !normPago(textoBusqueda(p)).includes(q)) return false;
+        return true;
     });
 }
 
-// Aplica los filtros, vuelve a la primera página y devuelve los id_pago
-// que pasan el filtro (todas las páginas), en el orden de la tabla.
 function applyFilters() {
-    pagosPage = 1;
-    const coinciden = renderPagosPage();
-
-    const query  = val('pago-search').trim();
-    const active = document.querySelector('#mod-historial .filter-toggle.active')?.dataset.filter ?? 'all';
-    const desde  = val('fec-desde');
-    const hasta  = val('fec-hasta');
-
-    const clearBtn = document.getElementById('btn-clear-filters');
-    if (clearBtn) {
-        clearBtn.style.display = (query || active !== 'all' || desde || hasta) ? 'flex' : 'none';
-    }
-
-    // data-id-pago es la clave CXP-n / NOM-n (los id de las dos tablas se repiten)
-    return coinciden.map(fila => fila.dataset.idPago);
+    ['fec-desde', 'fec-hasta'].forEach(id => document.getElementById(id)?.classList.toggle('is-set', val(id) !== ''));
+    if (pag) pag.inicio();
+    renderPagos();
 }
 
 function clearFilters() {
     setVal('pago-search', '');
+    setVal('pago-filtro-estado', 'all');
     setVal('fec-desde', '');
     setVal('fec-hasta', '');
-    document.querySelectorAll('#mod-historial .filter-toggle').forEach(btn => btn.classList.remove('active'));
-    document.querySelector('#mod-historial .filter-toggle[data-filter="all"]')?.classList.add('active');
+    if (window.ErpFiltros) ErpFiltros.sincronizar();
     applyFilters();
 }
 
-// Muestra solo las filas que pasan el filtro Y caen en la página actual.
-// Devuelve todas las filas que pasan el filtro.
-function renderPagosPage() {
-    const todas     = filasSeccion();
-    const coinciden = getFilteredPagoRows();
-    todas.forEach(fila => { fila.style.display = 'none'; });
+function celdaRespuesta(p) {
+    const codigo = String(p.id_codigo || '').trim();
+    const motivo = String(p.des_motivo || '').trim();
+    return `<td class="ref-bancaria"><span class="tcx-fuerte">${esc(codigo) || '<span class="tcx-muted">—</span>'}</span>${motivo ? `<span class="tcx-sub">${esc(motivo)}</span>` : ''}</td>`;
+}
 
-    const total        = coinciden.length;
-    const esTodos      = pagosPageSize === 'all';
-    const size         = esTodos ? total : pagosPageSize;
-    const totalPaginas = size > 0 ? Math.max(1, Math.ceil(total / size)) : 1;
-    if (pagosPage > totalPaginas) pagosPage = totalPaginas;
-    if (pagosPage < 1) pagosPage = 1;
-
-    const start = esTodos ? 0 : (pagosPage - 1) * size;
-    const end   = esTodos ? total : Math.min(start + size, total);
-    coinciden.slice(start, end).forEach(fila => { fila.style.display = ''; });
-
-    // Valor aprobado de TODO lo filtrado (no solo de la página visible)
-    let valorAprobado = 0;
-    coinciden.forEach(fila => {
-        if (fila.dataset.estado !== 'APROBADO') return;
-        const pago = pagosData.find(p => p.clave === fila.dataset.idPago);
-        if (pago) valorAprobado += Number(pago.val_pago);
-    });
-
-    setText('pagos-count', `${total} resultado${total !== 1 ? 's' : ''}`);
-    setText(`stat-valor-${seccion}`, formatMoney(valorAprobado));
-
-    const rangeEl = document.getElementById('pagos-range');
-    if (rangeEl) {
-        rangeEl.textContent = total === 0 ? '0 de 0' : `${start + 1}–${end} de ${total}`;
+function filaPago(p) {
+    const estado = String(p.nom_estado_pago || '');
+    const comunesIni = `<td class="tcx-num"><span class="tcx-fuerte">#${esc(p.id_pago)}</span></td>`;
+    const archivo = `<td class="tcx-num">Archivo #${esc(p.id_archivo_plano)}</td>`;
+    const fecha = `<td class="tcx-num">${esc(formatFecha(fechaPago(p)))}</td>`;
+    const valor = `<td class="text-right tcx-num">${formatMoney(p.val_pago)}</td>`;
+    const badge = `<td><span class="badge ${CLASE_ESTADO[estado] || 'mute'}">${esc(capEstado(estado))}</span></td>`;
+    let medio;
+    if (seccion === 'nomina') {
+        medio = `<td><span class="tcx-fuerte">${esc(p.nom_tercero)}</span><span class="tcx-sub">${esc((p.id_tipo || '') + ' ' + (p.id_empleado || ''))}</span></td>
+                 <td class="tcx-num">${esc(periodoNomina(p))}<span class="tcx-sub">Periodo ${esc(Number(p.val_periodo))}</span></td>${archivo}`;
+    } else if (seccion === 'inversiones') {
+        medio = `<td><span class="tcx-fuerte">${esc(p.nom_tercero)}</span><span class="tcx-sub">${esc((p.id_tipo || '') + ' ' + (p.id_inversor || ''))}</span></td>
+                 <td>${esc(p.id_proyecto)}<span class="tcx-sub">Cuota ${esc(Number(p.id_cuota))}</span></td>${archivo}`;
+    } else {
+        medio = `<td>Fact. #${esc(p.id_factura)} — Cuota ${esc(p.id_cuota)}<span class="tcx-sub">${esc(p.nom_tercero || '')}</span></td>${archivo}`;
     }
-
-    const btnPrev = document.getElementById('pagos-prev');
-    const btnNext = document.getElementById('pagos-next');
-    if (btnPrev) btnPrev.disabled = pagosPage <= 1;
-    if (btnNext) btnNext.disabled = esTodos || pagosPage >= totalPaginas;
-
-    return coinciden;
+    return `<tr data-fila-abre data-clave="${esc(p.clave)}" tabindex="0" aria-label="Ver el pago ${esc(p.id_pago)}" class="${estado === 'RECHAZADO' ? 'rechazado' : ''}">
+        ${comunesIni}${medio}${fecha}${valor}${celdaRespuesta(p)}${badge}
+    </tr>`;
 }
 
-function initPagosPagination() {
-    document.getElementById('pagos-page-size')?.addEventListener('change', function() {
-        pagosPageSize = this.value === 'all' ? 'all' : parseInt(this.value, 10);
-        pagosPage = 1;
-        renderPagosPage();
-    });
-    document.getElementById('pagos-prev')?.addEventListener('click', () => {
-        pagosPage--;
-        renderPagosPage();
-    });
-    document.getElementById('pagos-next')?.addEventListener('click', () => {
-        pagosPage++;
-        renderPagosPage();
-    });
-}
+// Lista: filtrar → contar → ordenar → paginar → pintar (sección activa)
+function renderPagos() {
+    prepararLista();
+    let filas = getFilteredPagos();
+    setText('pagos-count', `${filas.length} resultado${filas.length !== 1 ? 's' : ''}`);
+    const btnClear = document.getElementById('btn-clear-filters');
+    if (btnClear) btnClear.hidden = !hayFiltros();
 
-// ---- ORDENAMIENTO ASC / DESC ----
-// Cada celda ordenable trae su valor "crudo" en data-sort:
-//   Factura / Cuota → factura × 1000 + cuota (primero por factura, luego por cuota)
-//   Origen          → nombre del archivo plano; vacío si fue pago manual
-//   Fecha           → 'YYYY-MM-DD'; Valor → número; Referencia → vacía si no tiene
-let pagosSortKey = null; // índice de columna, coincide con data-sort-key del <th>
-let pagosSortDir = 'asc';
-
-function sortPagoRows(key, type) {
     const tbody = document.getElementById(`tbody-${seccion}`);
     if (!tbody) return;
-    const filas = Array.from(tbody.querySelectorAll('tr:not(.empty-row)'));
-    if (filas.length === 0) return;
-
-    pagosSortDir = (pagosSortKey === key && pagosSortDir === 'asc') ? 'desc' : 'asc';
-    pagosSortKey = key;
-
-    const getValor = fila => {
-        const celda = fila.cells[Number(key)];
-        const crudo = celda?.dataset.sort;
-        const base  = crudo !== undefined ? crudo : (celda?.textContent.trim() ?? '');
-        return type === 'number' ? (parseFloat(base) || 0) : base.toLowerCase();
-    };
-
-    filas.sort((a, b) => {
-        const va  = getValor(a);
-        const vb  = getValor(b);
-        const cmp = type === 'number' ? (va - vb) : va.localeCompare(vb, 'es', { numeric: true });
-        return pagosSortDir === 'asc' ? cmp : -cmp;
-    });
-    filas.forEach(fila => tbody.appendChild(fila));
-
-    document.querySelectorAll(`#tabla-${seccion} th.sortable`).forEach(th => {
-        const icon   = th.querySelector('.sort-icon');
-        const activo = th.dataset.sortKey === key;
-        th.classList.toggle('sort-active', activo);
-        if (icon) {
-            icon.className = activo
-                ? `fas sort-icon ${pagosSortDir === 'asc' ? 'fa-caret-up' : 'fa-caret-down'}`
-                : 'fas fa-caret-down sort-icon';
-        }
-    });
-
-    pagosPage = 1;
-    renderPagosPage();
-}
-
-function initPagosSorting() {
-    document.querySelectorAll('#mod-historial .data-table th.sortable').forEach(th => {
-        th.addEventListener('click', () => sortPagoRows(th.dataset.sortKey, th.dataset.sortType));
-    });
-}
-
-// ---- ALTO DINÁMICO DE LA TABLA (evita el doble scroll) ----
-function ajustarAlturaTablaPagos() {
-    const scrollBox = document.getElementById('pagos-table-scroll');
-    if (!scrollBox) return;
-    const footer = document.querySelector('#mod-historial .table-footer');
-    const top = scrollBox.getBoundingClientRect().top;
-    const alturaFooter = footer ? footer.offsetHeight : 0;
-
-    let margenInferior = 16;
-    const contentCard = scrollBox.closest('.content-card') || document.querySelector('.content-card');
-    if (contentCard) {
-        const cs = getComputedStyle(contentCard);
-        margenInferior += (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.marginBottom) || 0);
+    const columnas = seccion === 'proveedores' ? 7 : 8;
+    if (filas.length === 0) {
+        const hayDatos = pagosSeccion().length > 0;
+        const vacio = {
+            proveedores: ['fa-receipt', 'No hay pagos de proveedores para mostrar', 'Aparecen aquí al importar la respuesta del banco a un archivo plano de proveedores'],
+            nomina:      ['fa-users', 'No hay pagos de nómina para mostrar', 'Aparecen aquí al importar la respuesta del banco a un archivo plano de nómina'],
+            inversiones: ['fa-hand-holding-dollar', 'No hay pagos de inversiones para mostrar', 'Aparecen aquí al importar la respuesta del banco a un archivo plano de inversiones'],
+        }[seccion];
+        tbody.innerHTML = `<tr><td colspan="${columnas}"><div class="empty-state">
+            <i class="fas ${hayDatos ? 'fa-search' : vacio[0]}"></i>
+            <p>${hayDatos ? 'Ningún pago coincide con los filtros' : vacio[1]}</p>
+            <span>${hayDatos ? 'Cambie la búsqueda o use «Limpiar»' : vacio[2]}</span>
+        </div></td></tr>`;
+        if (pag) pag.paginar([]);
+        return;
     }
-
-    const disponible = window.innerHeight - top - alturaFooter - margenInferior;
-    scrollBox.style.maxHeight = Math.max(220, disponible) + 'px';
+    const orden = ordenes[seccion];
+    if (orden) filas = orden.ordenar(filas);
+    const pagina = pag ? pag.paginar(filas) : filas;
+    tbody.innerHTML = pagina.map(filaPago).join('');
 }
 
 // ============================================================
@@ -347,7 +321,7 @@ function openDetailModal(pago) {
             <div class="detail-item">
                 <span class="detail-label">Estado</span>
                 <span class="detail-value">
-                    <span class="badge-${estado.toLowerCase()}">${capEstado(estado)}</span>
+                    <span class="badge ${CLASE_ESTADO[estado] || 'mute'}">${capEstado(estado)}</span>
                 </span>
             </div>
             <div class="detail-item">
@@ -358,7 +332,7 @@ function openDetailModal(pago) {
                 <span class="detail-label">Respuesta del Banco</span>
                 <span class="detail-value">${esc(pago.id_codigo) || '—'}${pago.des_motivo ? '<br><small>' + esc(pago.des_motivo) + '</small>' : ''}</span>
             </div>
-            <div class="detail-item" style="grid-column:1/-1">
+            <div class="detail-item detail-item-ancho">
                 <span class="detail-label">Origen</span>
                 <span class="detail-value">${origen}</span>
             </div>
@@ -372,7 +346,6 @@ function closeDetailModal() {
     hide('modal-detail');
 }
 
-window.openDetailModal = openDetailModal;
 
 // ============================================================
 // 4. IMPORTAR RESPUESTA DEL BANCO (CSV)
@@ -672,29 +645,36 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initHistorialModule() {
-    // Mover modales y toast al <body> para que el overlay cubra también
-    // la barra superior (escapan del contexto de apilamiento del layout)
-    ['modal-import', 'modal-detail', 'toast'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el && el.parentElement !== document.body) document.body.appendChild(el);
-    });
+    // Los modales los mueve a <body> el componente "modales" (erp_ui.js); el aviso se mueve aquí
+    const toastEl = document.getElementById('toast');
+    if (toastEl && toastEl.parentElement !== document.body) document.body.appendChild(toastEl);
 
     document.getElementById('pago-search')?.addEventListener('input', applyFilters);
+    document.getElementById('pago-filtro-estado')?.addEventListener('change', applyFilters);
     document.getElementById('fec-desde')?.addEventListener('change', applyFilters);
     document.getElementById('fec-hasta')?.addEventListener('change', applyFilters);
     document.getElementById('btn-clear-filters')?.addEventListener('click', clearFilters);
 
-    document.querySelectorAll('#mod-historial .filter-toggle').forEach(btn => {
-        btn.addEventListener('click', function() {
-            document.querySelectorAll('#mod-historial .filter-toggle').forEach(b => b.classList.remove('active'));
-            this.classList.add('active');
-            applyFilters();
+    // Clic (o Enter/espacio) en la fila abre el detalle
+    const abrirFila = tr => {
+        const pago = todosPagos().find(x => String(x.clave) === tr.dataset.clave);
+        if (pago) openDetailModal(pago);
+    };
+    SECCIONES_PAGO.forEach(sec => {
+        const tbody = document.getElementById(`tbody-${sec}`);
+        tbody?.addEventListener('click', e => {
+            const tr = e.target.closest('tr[data-fila-abre]');
+            if (!tr || e.target.closest('button, a, input, select, textarea')) return;
+            abrirFila(tr);
+        });
+        tbody?.addEventListener('keydown', e => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            const tr = e.target.closest('tr[data-fila-abre]');
+            if (!tr || e.target !== tr) return;
+            e.preventDefault();
+            abrirFila(tr);
         });
     });
-
-    // ---------- PAGINACIÓN Y ORDENAMIENTO ----------
-    initPagosPagination();
-    initPagosSorting();
 
     // El botón solo abre el selector de archivos; el modal se abre al leerlo
     const csvInput = document.getElementById('csv-input');
@@ -720,7 +700,14 @@ function initHistorialModule() {
     document.querySelectorAll('#mod-historial .ap-tab').forEach(tab => {
         tab.addEventListener('click', () => cambiarSeccion(tab.dataset.tab));
     });
-    cambiarSeccion(seccionGuardada(), false);   // también aplica los filtros
-    ajustarAlturaTablaPagos();
-    window.addEventListener('resize', ajustarAlturaTablaPagos);
+    cambiarSeccion(seccionGuardada(), false);   // también calcula los indicadores y pinta la lista
+    const mod = document.getElementById('mod-historial');
+    requestAnimationFrame(() => requestAnimationFrame(() => mod?.classList.add('is-listo')));
+
+    // El detalle es de solo lectura: Esc lo cierra. La importación no (se perdería lo leído).
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        const m = document.getElementById('modal-detail');
+        if (m && !m.classList.contains('hidden')) closeDetailModal();
+    });
 }

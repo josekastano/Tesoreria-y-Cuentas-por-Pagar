@@ -32,7 +32,7 @@ function showToast(message, type = 'success') {
     if (!toast || !span) return;
     const text = message && message.trim() ? message : (type === 'success' ? 'Operación exitosa' : 'Ocurrió un error');
     span.textContent = text;
-    toast.style.background = type === 'error' ? '#ef4444' : '#0f172a';
+    toast.classList.toggle('toast-error', type === 'error');
     const ico = toast.querySelector('i');
     if (ico) ico.className = type === 'error' ? 'fas fa-exclamation-circle' : 'fas fa-check-circle';
     toast.classList.remove('hidden');

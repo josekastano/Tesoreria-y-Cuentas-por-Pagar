@@ -35,7 +35,7 @@ function showToast(message, type = 'success') {
     if (!toast || !span) return;
     const text = message && message.trim() ? message : (type === 'success' ? 'Operación exitosa' : 'Ocurrió un error');
     span.textContent = text;
-    toast.style.background = type === 'error' ? '#ef4444' : '#0f172a';
+    toast.classList.toggle('toast-error', type === 'error');
     toast.classList.remove('hidden');
     clearTimeout(toast._timer);
     toast._timer = setTimeout(() => toast.classList.add('hidden'), 3500);
@@ -102,7 +102,6 @@ function closeEditModal() {
     hide('modal-edit-caja');
 }
 
-window.openEditModal = openEditModal;
 
 // ============================================================
 // 4. MODAL: DETALLE DE CAJA (con movimientos)
@@ -151,7 +150,7 @@ function openDetailModal(caja) {
     if (btnCerrarCaja) {
         if (activa) {
             btnCerrarCaja.classList.remove('hidden');
-            btnCerrarCaja.onclick = () => cerrarCajaMenor(caja);
+            btnCerrarCaja.onclick = () => cerrarCajaMenor(caja);   // propiedad, no atributo onclick en el HTML
         } else {
             btnCerrarCaja.classList.add('hidden');
             btnCerrarCaja.onclick = null;
@@ -167,7 +166,6 @@ function closeDetailModal() {
     cajaActualDetalle = null;
 }
 
-window.openDetailModal = openDetailModal;
 
 function loadMovimientos(idCajaMenor) {
     const movList = document.getElementById('movimientos-list');
@@ -198,7 +196,7 @@ function loadMovimientos(idCajaMenor) {
                                 <span class="mov-fecha">${formatDate(m.fecha_movimiento)}</span>
                             </div>
                             <span class="mov-valor">${formatCurrency(m.val_movimiento)}</span>
-                            <select class="form-select mov-estado-select" data-id-caja="${m.id_caja_menor}" data-id-mov="${m.id_movimiento}" ${bloqueado ? 'disabled' : ''}>
+                            <select class="form-input mov-estado-select" data-id-caja="${m.id_caja_menor}" data-id-mov="${m.id_movimiento}" ${bloqueado ? 'disabled' : ''}>
                                 <option value="1" ${estado === 1 ? 'selected' : ''} ${estado > 1 ? 'disabled' : ''}>Pendiente</option>
                                 <option value="2" ${estado === 2 ? 'selected' : ''} ${estado > 2 ? 'disabled' : ''}>Aprobado</option>
                                 <option value="3" ${estado === 3 ? 'selected' : ''}>Reembolsado</option>
@@ -211,11 +209,11 @@ function loadMovimientos(idCajaMenor) {
                     sel.addEventListener('change', onCambiarEstadoMovimiento);
                 });
             } else {
-                movList.innerHTML = '<p style="font-size:12px;color:#94a3b8;text-align:center;padding:12px">No hay movimientos registrados en esta caja.</p>';
+                movList.innerHTML = '<p class="tcx-lista-msg">No hay movimientos registrados en esta caja.</p>';
             }
         })
         .catch(() => {
-            if (movList) movList.innerHTML = '<p style="font-size:12px;color:#ef4444;text-align:center;padding:12px">Error al cargar los movimientos.</p>';
+            if (movList) movList.innerHTML = '<p class="tcx-lista-msg error">Error al cargar los movimientos.</p>';
         });
 }
 
@@ -336,161 +334,120 @@ async function ejecutarCerrarCajaMenor(caja) {
     }
 }
 
-window.cerrarCajaMenor = cerrarCajaMenor;
 
 // ============================================================
-// 5. FILTROS + PAGINACIÓN + ORDENAMIENTO (mismo sistema que Proveedores)
+// 5. LISTA: INDICADORES, FILTROS, ORDEN Y PAGINADOR
+// La tabla la pinta este archivo desde cajasData (PHP). Paginador y
+// orden: componentes compartidos del ERP (erp_ui.js) — GUIA_PANTALLAS_ERP §4-§5.
+// Sin botón de "ver": clic (o Enter/espacio) en la fila abre el detalle.
 // ============================================================
+let pag = null, orden = null;
+const norm = t => (window.erpNormalizar ? erpNormalizar(t) : String(t ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
+const datos = () => (typeof cajasData !== 'undefined' && Array.isArray(cajasData) ? cajasData : []);
+const pctDisponible = c => (Number(c.monto_asignado) > 0 ? Math.round((Number(c.monto_disponible) / Number(c.monto_asignado)) * 100) : 0);
 
-// ---- ESTADO DE PAGINACIÓN ----
-let cajasPage     = 1;
-let cajasPageSize = 25; // debe coincidir con el <option selected> de #cajas-page-size
+function updateStats() {
+    const data = datos();
+    const activas = data.filter(cajaEstaActiva);
+    const suma = (arr, k) => arr.reduce((t, c) => t + (Number(c[k]) || 0), 0);
+    setText('stat-total', data.length);
+    setText('stat-activas', activas.length);
+    setText('stat-disponible', formatCurrency(suma(activas, 'monto_disponible')));
+    setText('stat-asignado', formatCurrency(suma(activas, 'monto_asignado')));
+    const asig = suma(activas, 'monto_asignado');
+    setText('stat-disponible-hint', asig > 0 ? `${Math.round(suma(activas, 'monto_disponible') / asig * 100)}% de lo asignado` : 'De las cajas activas');
+    setText('caja-cnt-all', data.length);
+    setText('caja-cnt-activa', activas.length);
+    setText('caja-cnt-cerrada', data.length - activas.length);
+}
 
-// Filas que pasan la búsqueda y el filtro Todas/Activas/Cerradas (sin tener en cuenta la página)
-function getFilteredCajaRows() {
-    const query  = val('caja-search').toLowerCase().trim();
-    const active = document.querySelector('#mod-caja-menor .filter-toggle.active')?.dataset.filter ?? 'all';
-    const filas  = Array.from(document.querySelectorAll('#cajas-tbody tr:not(.empty-row)'));
-    return filas.filter(fila => {
-        const nombre = fila.children[0]?.textContent.toLowerCase() ?? '';
-        const pasaTexto  = !query || nombre.includes(query);
-        const pasaEstado = active === 'all' || fila.dataset.estado === active;
-        return pasaTexto && pasaEstado;
+function prepararLista() {
+    if (!pag && window.ErpPaginador) {
+        pag = ErpPaginador.crear({ lista: document.getElementById('cajas-tbody'), onCambio: renderCajas, tam: 25 });
+    }
+    if (!orden && window.ErpOrden) {
+        orden = ErpOrden.crear({
+            tabla: document.getElementById('cajas-table'),
+            columnas: {
+                'Caja':       { valor: c => c.nom_caja_menor },
+                'Apertura':   { valor: c => String(c.fecha_apertura || '').slice(0, 10), tipo: 'fecha' },
+                'Asignado':   { valor: c => Number(c.monto_asignado) || 0, tipo: 'numero' },
+                'Disponible': { valor: c => Number(c.monto_disponible) || 0, tipo: 'numero' },
+                'Estado':     { valor: c => (cajaEstaActiva(c) ? 1 : 0), tipo: 'numero' },
+            },
+            onCambio: () => { if (pag) pag.inicio(); renderCajas(); },
+        });
+    }
+}
+
+function hayFiltros() {
+    return val('caja-search').trim() !== '' || (val('caja-filtro-estado') || 'all') !== 'all';
+}
+
+function getFilteredCajas() {
+    const q = norm(val('caja-search'));
+    const estado = val('caja-filtro-estado') || 'all';
+    return datos().filter(c => {
+        const activa = cajaEstaActiva(c);
+        if (estado === 'activa' && !activa) return false;
+        if (estado === 'cerrada' && activa) return false;
+        if (q && !norm(`${c.id_caja_menor} ${c.nom_caja_menor}`).includes(q)) return false;
+        return true;
     });
 }
 
-// Aplica búsqueda/estado y vuelve a la primera página
 function applyFilters() {
-    cajasPage = 1;
-    renderCajasPage();
-
-    const query    = val('caja-search').trim();
-    const active   = document.querySelector('#mod-caja-menor .filter-toggle.active')?.dataset.filter ?? 'all';
-    const clearBtn = document.getElementById('btn-clear-filters');
-    if (clearBtn) clearBtn.style.display = (query || active !== 'all') ? 'flex' : 'none';
+    if (pag) pag.inicio();
+    renderCajas();
 }
 
 function clearFilters() {
     setVal('caja-search', '');
-    document.querySelectorAll('.filter-toggle').forEach(btn => btn.classList.remove('active'));
-    document.querySelector('.filter-toggle[data-filter="all"]')?.classList.add('active');
+    setVal('caja-filtro-estado', 'all');
+    if (window.ErpFiltros) ErpFiltros.sincronizar();
     applyFilters();
 }
 
-// Muestra solo las filas que pasan el filtro Y caen en la página actual
-function renderCajasPage() {
-    const todas     = Array.from(document.querySelectorAll('#cajas-tbody tr:not(.empty-row)'));
-    const coinciden = getFilteredCajaRows();
-    todas.forEach(fila => { fila.style.display = 'none'; });
+// Lista: filtrar → contar → ordenar → paginar → pintar
+function renderCajas() {
+    prepararLista();
+    let filas = getFilteredCajas();
+    setText('cajas-count', `${filas.length} resultado${filas.length !== 1 ? 's' : ''}`);
+    const btnClear = document.getElementById('btn-clear-filters');
+    if (btnClear) btnClear.hidden = !hayFiltros();
 
-    const total        = coinciden.length;
-    const esTodos      = cajasPageSize === 'all';
-    const size         = esTodos ? total : cajasPageSize;
-    const totalPaginas = size > 0 ? Math.max(1, Math.ceil(total / size)) : 1;
-    if (cajasPage > totalPaginas) cajasPage = totalPaginas;
-    if (cajasPage < 1) cajasPage = 1;
-
-    const start = esTodos ? 0 : (cajasPage - 1) * size;
-    const end   = esTodos ? total : Math.min(start + size, total);
-    coinciden.slice(start, end).forEach(fila => { fila.style.display = ''; });
-
-    setText('cajas-count', `${total} resultado${total !== 1 ? 's' : ''}`);
-
-    const rangeEl = document.getElementById('cajas-range');
-    if (rangeEl) {
-        rangeEl.textContent = total === 0 ? '0 de 0' : `${start + 1}–${end} de ${total}`;
-    }
-
-    const btnPrev = document.getElementById('cajas-prev');
-    const btnNext = document.getElementById('cajas-next');
-    if (btnPrev) btnPrev.disabled = cajasPage <= 1;
-    if (btnNext) btnNext.disabled = esTodos || cajasPage >= totalPaginas;
-}
-
-function initCajasPagination() {
-    document.getElementById('cajas-page-size')?.addEventListener('change', function() {
-        cajasPageSize = this.value === 'all' ? 'all' : parseInt(this.value, 10);
-        cajasPage = 1;
-        renderCajasPage();
-    });
-    document.getElementById('cajas-prev')?.addEventListener('click', () => {
-        cajasPage--;
-        renderCajasPage();
-    });
-    document.getElementById('cajas-next')?.addEventListener('click', () => {
-        cajasPage++;
-        renderCajasPage();
-    });
-}
-
-// ---- ORDENAMIENTO ASC / DESC ----
-// Cada celda ordenable trae su valor "crudo" en data-sort: el nombre, la
-// fecha en 'YYYY-MM-DD' y los montos como número (no el texto "$1.500.000").
-let cajasSortKey = null; // índice de columna, coincide con data-sort-key del <th>
-let cajasSortDir = 'asc';
-
-function sortCajaRows(key, type) {
     const tbody = document.getElementById('cajas-tbody');
     if (!tbody) return;
-    const filas = Array.from(tbody.querySelectorAll('tr:not(.empty-row)'));
-    if (filas.length === 0) return;
-
-    cajasSortDir = (cajasSortKey === key && cajasSortDir === 'asc') ? 'desc' : 'asc';
-    cajasSortKey = key;
-
-    const getValor = fila => {
-        const celda = fila.cells[Number(key)];
-        const crudo = celda?.dataset.sort;
-        const base  = crudo !== undefined ? crudo : (celda?.textContent.trim() ?? '');
-        return type === 'number' ? (parseFloat(base) || 0) : base.toLowerCase();
-    };
-
-    filas.sort((a, b) => {
-        const va  = getValor(a);
-        const vb  = getValor(b);
-        const cmp = type === 'number' ? (va - vb) : va.localeCompare(vb, 'es');
-        return cajasSortDir === 'asc' ? cmp : -cmp;
-    });
-    filas.forEach(fila => tbody.appendChild(fila));
-
-    document.querySelectorAll('#mod-caja-menor .data-table th.sortable').forEach(th => {
-        const icon   = th.querySelector('.sort-icon');
-        const activo = th.dataset.sortKey === key;
-        th.classList.toggle('sort-active', activo);
-        if (icon) {
-            icon.className = activo
-                ? `fas sort-icon ${cajasSortDir === 'asc' ? 'fa-caret-up' : 'fa-caret-down'}`
-                : 'fas fa-caret-down sort-icon';
-        }
-    });
-
-    cajasPage = 1;
-    renderCajasPage();
-}
-
-function initCajasSorting() {
-    document.querySelectorAll('#mod-caja-menor .data-table th.sortable').forEach(th => {
-        th.addEventListener('click', () => sortCajaRows(th.dataset.sortKey, th.dataset.sortType));
-    });
-}
-
-// ---- ALTO DINÁMICO DE LA TABLA (evita el doble scroll) ----
-function ajustarAlturaTablaCajas() {
-    const scrollBox = document.getElementById('cajas-table-scroll');
-    if (!scrollBox) return;
-    const footer = document.querySelector('#mod-caja-menor .table-footer');
-    const top = scrollBox.getBoundingClientRect().top;
-    const alturaFooter = footer ? footer.offsetHeight : 0;
-
-    let margenInferior = 16;
-    const contentCard = scrollBox.closest('.content-card') || document.querySelector('.content-card');
-    if (contentCard) {
-        const cs = getComputedStyle(contentCard);
-        margenInferior += (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.marginBottom) || 0);
+    if (filas.length === 0) {
+        const hayDatos = datos().length > 0;
+        tbody.innerHTML = `<tr><td colspan="6"><div class="empty-state">
+            <i class="fas ${hayDatos ? 'fa-search' : 'fa-cash-register'}"></i>
+            <p>${hayDatos ? 'Ninguna caja coincide con los filtros' : 'No hay cajas menores para mostrar'}</p>
+            <span>${hayDatos ? 'Cambie la búsqueda o use «Limpiar»' : 'Use «Nueva caja» para registrar la primera'}</span>
+        </div></td></tr>`;
+        if (pag) pag.paginar([]);
+        return;
     }
-
-    const disponible = window.innerHeight - top - alturaFooter - margenInferior;
-    scrollBox.style.maxHeight = Math.max(220, disponible) + 'px';
+    if (orden) filas = orden.ordenar(filas);
+    const pagina = pag ? pag.paginar(filas) : filas;
+    tbody.innerHTML = pagina.map(c => {
+        const id = escapeHtml(c.id_caja_menor);
+        const nombre = escapeHtml(c.nom_caja_menor);
+        const activa = cajaEstaActiva(c);
+        return `<tr data-fila-abre data-id="${id}" tabindex="0" aria-label="Ver los movimientos de ${nombre}">
+            <td><span class="tcx-fuerte">${nombre}</span><span class="tcx-sub">#${id} · ${pctDisponible(c)}% disponible</span></td>
+            <td class="tcx-num">${escapeHtml(formatDate(String(c.fecha_apertura || '').slice(0, 10)))}</td>
+            <td class="text-right tcx-num">${formatCurrency(c.monto_asignado)}</td>
+            <td class="text-right tcx-num">${formatCurrency(c.monto_disponible)}</td>
+            <td><span class="badge ${activa ? 'ok' : 'mute'}">${activa ? 'Activa' : 'Cerrada'}</span></td>
+            <td class="col-acciones">
+                <div class="actions-cell">
+                    <button type="button" class="btn-icon-sm edit" data-caja-accion="editar" title="Editar nombre" aria-label="Editar el nombre de ${nombre}"><i class="fas fa-pen"></i></button>
+                    ${activa ? `<button type="button" class="btn-icon-sm reject" data-caja-accion="cerrar" title="Cerrar caja" aria-label="Cerrar ${nombre}"><i class="fas fa-lock"></i></button>` : ''}
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
 }
 
 // ============================================================
@@ -501,33 +458,56 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initCajaModule() {
-    // Mover modales y toast al <body> para que el overlay cubra también
-    // la barra superior (escapan del contexto de apilamiento del layout).
-    // El orden importa: la confirmación va después del detalle para quedar encima.
-    ['modal-new-caja', 'modal-edit-caja', 'modal-detail', 'modal-confirm-accion', 'toast'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el && el.parentElement !== document.body) document.body.appendChild(el);
-    });
+    // Los modales los mueve a <body> el componente "modales" (erp_ui.js); el aviso se mueve aquí
+    const toastEl = document.getElementById('toast');
+    if (toastEl && toastEl.parentElement !== document.body) document.body.appendChild(toastEl);
 
     document.getElementById('btn-add-caja')?.addEventListener('click', openNewModal);
 
     document.getElementById('caja-search')?.addEventListener('input', applyFilters);
+    document.getElementById('caja-filtro-estado')?.addEventListener('change', applyFilters);
     document.getElementById('btn-clear-filters')?.addEventListener('click', clearFilters);
 
-    document.querySelectorAll('.filter-toggle').forEach(btn => {
-        btn.addEventListener('click', function() {
-            document.querySelectorAll('.filter-toggle').forEach(b => b.classList.remove('active'));
-            this.classList.add('active');
-            applyFilters();
-        });
+    // Clic (o Enter/espacio) en la fila abre el detalle; los botones hacen lo suyo
+    const tbody = document.getElementById('cajas-tbody');
+    const cajaDe = tr => datos().find(x => String(x.id_caja_menor) === tr.dataset.id);
+    tbody?.addEventListener('click', e => {
+        const tr = e.target.closest('tr[data-fila-abre]');
+        if (!tr) return;
+        const caja = cajaDe(tr);
+        if (!caja) return;
+        const b = e.target.closest('[data-caja-accion]');
+        if (b) {
+            if (b.dataset.cajaAccion === 'editar') openEditModal(caja);
+            if (b.dataset.cajaAccion === 'cerrar') cerrarCajaMenor(caja);
+            return;
+        }
+        if (e.target.closest('button, a, input, select, textarea')) return;
+        openDetailModal(caja);
+    });
+    tbody?.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const tr = e.target.closest('tr[data-fila-abre]');
+        if (!tr || e.target !== tr) return;
+        e.preventDefault();
+        const caja = cajaDe(tr);
+        if (caja) openDetailModal(caja);
     });
 
-    // ---------- PAGINACIÓN Y ORDENAMIENTO ----------
-    initCajasPagination();
-    initCajasSorting();
-    renderCajasPage();
-    ajustarAlturaTablaCajas();
-    window.addEventListener('resize', ajustarAlturaTablaCajas);
+    // ---------- LISTA ----------
+    updateStats();
+    renderCajas();
+    if (window.ErpListaFija) ErpListaFija.ajustar();
+    const mod = document.getElementById('mod-caja-menor');
+    requestAnimationFrame(() => requestAnimationFrame(() => mod?.classList.add('is-listo')));
+
+    // La confirmación es de solo lectura: Esc la cierra (como "Cancelar").
+    // El detalle tiene el formulario de movimiento: se cierra solo con la X o "Cerrar".
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        const m = document.getElementById('modal-confirm-accion');
+        if (m && !m.classList.contains('hidden')) _resolverConfirmAccion(false);
+    });
 
     document.querySelectorAll('.btn-close-new-modal, .btn-cancel-new-modal')
         .forEach(btn => btn.addEventListener('click', closeNewModal));

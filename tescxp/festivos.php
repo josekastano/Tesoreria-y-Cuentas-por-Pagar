@@ -5,7 +5,7 @@ $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Festivos";
 $page_description = "Gestión de días festivos para cálculo de fechas de pago";
 $page_icon        = "bi-calendar-event";
-$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/festivos.css', 'modules/tescxp/css/cmp_modales.css'];
+$page_extra_css   = ['modules/tescxp/css/tcx_pantalla.css', 'modules/tescxp/css/tcx_modales.css', 'modules/tescxp/css/festivos.css'];
 $page_extra_js    = ['modules/tescxp/js/festivos.js'];
 $page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
@@ -144,138 +144,87 @@ $festivos = $list_festivos->fetchAll(PDO::FETCH_ASSOC);
 ob_start();
 ?>
 
-<div id="mod-festivos" class="app-view active">
+<div id="mod-festivos" class="app-view active tcx-pantalla" data-lista-fija>
 
     <!-- ENCABEZADO -->
     <div class="module-header">
         <div class="module-header-text">
-            <h1>Días Festivos</h1>
+            <h1>Días festivos</h1>
             <p>Gestión de festivos para el cálculo de fechas de pago</p>
         </div>
-        <button id="btn-add-festivo" class="btn btn-primary">
-            <i class="fas fa-plus"></i> Nuevo Festivo
-        </button>
+        <div class="module-header-acciones">
+            <button type="button" id="btn-add-festivo" class="btn btn-primary"><i class="fas fa-plus"></i> Nuevo festivo</button>
+        </div>
     </div>
 
-    <!-- STATS -->
+    <!-- Indicadores: los calcula festivos.js sobre todos los festivos -->
     <div class="stats-grid">
-        <?php
-        $total      = count($festivos);
-        $hoy        = date('Y-m-d');
-        $proximo30  = strtotime('+30 days', strtotime($hoy));
-        $proximos   = count(array_filter($festivos, fn($f) => strtotime($f['fecha']) >= strtotime($hoy) && strtotime($f['fecha']) <= $proximo30));
-        $este_anio  = count(array_filter($festivos, fn($f) => substr($f['fecha'], 0, 4) === date('Y')));
-        ?>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:0">
             <div class="stat-icon blue"><i class="fas fa-calendar-day"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Total</div>
-                <div class="stat-value" id="stat-total"><?= $total ?></div>
+                <div class="stat-value" id="stat-total">0</div>
+                <div class="stat-hint">Festivos registrados</div>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon yellow"><i class="fas fa-calendar-week"></i></div>
+        <div class="stat-card" style="--i:1">
+            <div class="stat-icon amber"><i class="fas fa-calendar-week"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Próximos 30 días</div>
-                <div class="stat-value" id="stat-proximos"><?= $proximos ?></div>
+                <div class="stat-value" id="stat-proximos">0</div>
+                <div class="stat-hint">Pueden mover una fecha de pago</div>
             </div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:2">
             <div class="stat-icon green"><i class="fas fa-calendar-check"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Este año</div>
-                <div class="stat-value" id="stat-anio"><?= $este_anio ?></div>
+                <div class="stat-value" id="stat-anio">0</div>
+                <div class="stat-hint" id="stat-anio-hint">Del año en curso</div>
+            </div>
+        </div>
+        <div class="stat-card" style="--i:3">
+            <div class="stat-icon rose"><i class="fas fa-flag"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Próximo festivo</div>
+                <div class="stat-value" id="stat-siguiente">—</div>
+                <div class="stat-hint" id="stat-siguiente-hint">Sin festivos próximos</div>
             </div>
         </div>
     </div>
 
-    <!-- FILTROS -->
+    <!-- Filtros (componente "filtros": píldoras con conteo) -->
     <div class="filter-bar">
-        <div class="search-wrapper">
-            <span class="search-icon"><i class="fas fa-search"></i></span>
-            <input type="text" id="festivo-search" class="search-input" placeholder="Buscar por nombre del festivo...">
+        <div class="filter-row">
+            <div class="search-wrapper">
+                <span class="search-icon"><i class="fas fa-search"></i></span>
+                <input type="search" id="festivo-search" class="search-input" maxlength="60" autocomplete="off" placeholder="Buscar por nombre o fecha...">
+            </div>
+            <div class="filter-toggle-group" role="group" aria-label="Periodo" data-para="festivo-filtro-periodo">
+                <button type="button" class="filter-toggle active" data-valor="all" aria-pressed="true">Todos <span class="count" id="fes-cnt-all"></span></button>
+                <button type="button" class="filter-toggle" data-valor="proximos" aria-pressed="false">Próximos <span class="count" id="fes-cnt-proximos"></span></button>
+                <button type="button" class="filter-toggle" data-valor="pasados" aria-pressed="false">Pasados <span class="count" id="fes-cnt-pasados"></span></button>
+            </div>
+            <input type="hidden" id="festivo-filtro-periodo" value="all">
+            <button type="button" id="btn-clear-filters" class="btn-clear-filter" hidden><i class="fas fa-eraser"></i> Limpiar</button>
         </div>
-        <button id="btn-clear-filters" class="btn-clear-filter" style="display:none">
-            <i class="fas fa-times"></i> Limpiar
-        </button>
-        <div class="pagination-size">
-            <label for="festivos-page-size">Filas por página</label>
-            <select id="festivos-page-size">
-                <option value="10">10</option>
-                <option value="25" selected>25</option>
-                <option value="50">50</option>
-                <option value="all">Todos</option>
-            </select>
-        </div>
-        <span class="filter-info" id="festivos-count"><?= $total ?> resultado<?= $total !== 1 ? 's' : '' ?></span>
+        <div class="filter-info" id="festivos-count" aria-live="polite">0 resultados</div>
     </div>
 
-    <!-- TABLA -->
-    <div class="table-container">
-      <div class="table-scroll" id="festivos-table-scroll">
-        <table class="data-table">
-            <!-- Anchos fijos: las columnas no se mueven al ordenar o cambiar de página -->
-            <colgroup>
-                <col class="col-id">
-                <col class="col-fecha">
-                <col class="col-nombre">
-                <col class="col-acciones">
-            </colgroup>
-            <thead>
-                <tr>
-                    <th class="sortable" data-sort-key="0" data-sort-type="number">ID <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="1" data-sort-type="text">Fecha <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="2" data-sort-type="text">Nombre del Festivo <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-center">Acciones</th>
-                </tr>
-            </thead>
-            <tbody id="festivos-tbody">
-            <?php if (empty($festivos)): ?>
-                <tr class="empty-row">
-                    <td colspan="4">
-                        <div class="empty-state">
-                            <i class="fas fa-calendar-times"></i>
-                            <p>No hay festivos registrados</p>
-                            <span>Haga clic en "Nuevo Festivo" para agregar el primero</span>
-                        </div>
-                    </td>
-                </tr>
-            <?php else: ?>
-                <?php foreach ($festivos as $f):
-                    $id_esc     = htmlspecialchars($f['id_festivo']);
-                    $fecha_fmt  = htmlspecialchars(date('d/m/Y', strtotime($f['fecha'])));
-                    $nombre_esc = htmlspecialchars($f['nom_festivo']);
-                ?>
-                <tr>
-                    <td data-sort="<?= (int)$f['id_festivo'] ?>"><strong>#<?= $id_esc ?></strong></td>
-                    <td data-sort="<?= htmlspecialchars(date('Y-m-d', strtotime($f['fecha']))) ?>"><?= $fecha_fmt ?></td>
-                    <td data-sort="<?= $nombre_esc ?>"><?= $nombre_esc ?></td>
-                    <td class="text-center">
-                        <button class="btn-icon-sm edit" onclick='openEditModal(<?= json_encode($f) ?>)'>
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        <button class="btn-icon-sm reject" onclick="eliminarFestivo('<?= $id_esc ?>', '<?= htmlspecialchars($f['nom_festivo'], ENT_QUOTES) ?>')">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            <?php endif; ?>
-            </tbody>
-        </table>
-      </div>
-
-        <!-- PAGINACIÓN -->
-        <div class="table-footer">
-            <div class="pagination-nav">
-                <span class="pagination-range" id="festivos-range">0 de 0</span>
-                <button type="button" id="festivos-prev" class="pagination-btn" disabled aria-label="Página anterior">
-                    <i class="fas fa-chevron-left"></i>
-                </button>
-                <button type="button" id="festivos-next" class="pagination-btn" disabled aria-label="Página siguiente">
-                    <i class="fas fa-chevron-right"></i>
-                </button>
-            </div>
+    <!-- Lista: la pinta festivos.js; el paginador agrega su pie -->
+    <div class="table-container" data-lista>
+        <div data-lista-scroll>
+            <table id="festivos-table" class="data-table" data-erp-movil data-erp-movil-titulo="3">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Fecha</th>
+                        <th>Nombre del festivo</th>
+                        <th class="col-acciones">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="festivos-tbody"></tbody>
+            </table>
         </div>
     </div>
 </div>
@@ -283,12 +232,12 @@ ob_start();
 <!-- MODAL: NUEVO FESTIVO -->
 <div id="modal-new-festivo" class="modal-overlay hidden">
     <div class="modal-box">
-        <div class="modal-header green">
+        <div class="modal-header">
             <div>
-                <h2>Nuevo Festivo</h2>
+                <h3>Nuevo festivo</h3>
                 <p>Registre un nuevo día festivo</p>
             </div>
-            <button class="modal-close btn-close-new-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-new-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="new-festivo-form" novalidate>
@@ -303,7 +252,7 @@ ob_start();
                     <span class="field-error" id="err-new-fecha"></span>
                 </div>
                 <div class="form-field">
-                    <label class="form-label">Nombre del Festivo <span class="required">*</span></label>
+                    <label class="form-label">Nombre del festivo <span class="required">*</span></label>
                     <input type="text" id="new-festivo-nombre" name="txt_nom_festivo" class="form-input" placeholder="Ej: Día de la Independencia" minlength="3" maxlength="50">
                     <span class="field-error" id="err-new-nombre"></span>
                 </div>
@@ -311,7 +260,7 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-new-modal">Cancelar</button>
-            <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Festivo</button>
+            <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
@@ -319,12 +268,12 @@ ob_start();
 <!-- MODAL: EDITAR FESTIVO -->
 <div id="modal-edit-festivo" class="modal-overlay hidden">
     <div class="modal-box">
-        <div class="modal-header blue">
+        <div class="modal-header">
             <div>
-                <h2>Editar Festivo</h2>
+                <h3>Editar festivo</h3>
                 <p>Modifique la información del festivo</p>
             </div>
-            <button class="modal-close btn-close-edit-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-edit-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="edit-festivo-form" novalidate>
@@ -340,7 +289,7 @@ ob_start();
                     <span class="field-error" id="err-edit-fecha"></span>
                 </div>
                 <div class="form-field">
-                    <label class="form-label">Nombre del Festivo <span class="required">*</span></label>
+                    <label class="form-label">Nombre del festivo <span class="required">*</span></label>
                     <input type="text" id="edit-festivo-nombre" name="txt_edit_nom_festivo" class="form-input" minlength="3" maxlength="50">
                     <span class="field-error" id="err-edit-nombre"></span>
                 </div>
@@ -348,20 +297,20 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-edit-modal">Cancelar</button>
-            <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Actualizar Festivo</button>
+            <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
 
-<!-- MODAL: CONFIRMAR ELIMINACIÓN (estilo módulo Compras) -->
+<!-- MODAL: CONFIRMAR ELIMINACIÓN (después de los formularios: queda encima) -->
 <div id="modal-confirm-eliminar" class="modal-overlay hidden">
     <div class="modal-box confirm-box">
         <div class="confirm-icon"><i class="fas fa-exclamation-triangle"></i></div>
         <h4 id="confirm-eliminar-title"></h4>
         <p id="confirm-eliminar-body"></p>
-        <div class="confirm-buttons">
-            <button type="button" class="btn-cancelar" id="confirm-eliminar-cancel-btn">Cancelar</button>
-            <button type="button" class="btn-eliminar" id="confirm-eliminar-ok-btn">Sí, eliminar</button>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="confirm-eliminar-cancel-btn">Cancelar</button>
+            <button type="button" class="btn btn-danger" id="confirm-eliminar-ok-btn">Eliminar</button>
         </div>
     </div>
 </div>
@@ -396,7 +345,7 @@ ob_start();
 </div>
 
 <!-- TOAST -->
-<div id="toast" class="hidden"><span id="toast-message"></span></div>
+<div id="toast" class="tcx-toast hidden" role="status" aria-live="polite"><span id="toast-message"></span></div>
 
 <!-- ============================================================
      DATOS PARA EL JS (variables globales)

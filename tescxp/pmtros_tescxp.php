@@ -5,9 +5,9 @@ $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Parámetros de Tesorería";
 $page_description = "Configuración general de días de pago y reembolsos de caja menor";
 $page_icon        = "bi-sliders";
-$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/pmtros_tescxp.css', 'modules/tescxp/css/cmp_modales.css'];
+$page_extra_css   = ['modules/tescxp/css/tcx_pantalla.css', 'modules/tescxp/css/pmtros_tescxp.css'];
 $page_extra_js    = ['modules/tescxp/js/pmtros_tescxp.js'];
-$page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
+$page_erp_ui      = ['botones'];   // GUIA_PANTALLAS_ERP §2: solo lo que usa (sin lista ni modales)
 $show_welcome     = false;
 // ==========================================
 
@@ -303,8 +303,8 @@ ob_start();
 
                 <div class="pmt-form-footer">
                     <div class="pmt-chg-ind" id="pmt-chg-ind">Cambios sin guardar</div>
-                    <button type="button" class="pmt-btn-secondary" id="btn-reset-pmtros">Restablecer</button>
-                    <button type="button" class="pmt-btn-primary" id="btn-guardar-pmtros" disabled>
+                    <button type="button" class="btn btn-secondary" id="btn-reset-pmtros">Restablecer</button>
+                    <button type="button" class="btn btn-primary" id="btn-guardar-pmtros" disabled>
                         <i class="fas fa-save"></i> Guardar cambios
                     </button>
                 </div>
@@ -319,7 +319,7 @@ ob_start();
 </div>
 
 <!-- TOAST -->
-<div id="toast" class="hidden">
+<div id="toast" class="tcx-toast hidden" role="status" aria-live="polite">
     <i class="fas fa-check-circle"></i>
     <span id="toast-message"></span>
 </div>

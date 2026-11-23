@@ -22,6 +22,7 @@
  *  12.  tab_bancos  (catálogo compartido con otros módulos)
  *  13.  Nómina: tab_det_archivo_nomina / tab_pagos_nomina     (Tablas 14 y 17)
  *  14.  Inversiones: tab_det_archivo_inversion / tab_pagos_inversion (Tablas 18 y 19)
+ *  15.  Consultas que estaban escritas en las páginas (22-nov-2026)
  *
  * ---------------------------------------------------------------------------
  * CONVENCIÓN DE ESTADOS DE PAGO (tab_pagos_cxp.estado_pago)
@@ -2014,6 +2015,37 @@ try {
            JOIN  tab_codigos_respuesta_banco c ON c.id_codigo        = p.id_codigo
                                               AND c.id_banco         = p.id_banco
           ORDER BY p.fec_pago DESC, p.id_pago_inversion DESC"
+    );
+
+    // =========================================================================
+    // 15. CONSULTAS QUE ESTABAN ESCRITAS EN LAS PÁGINAS  (22-nov-2026)
+    //     GUIA_PANTALLAS_ERP §7.5: el SQL va solo en el prepare del módulo.
+    // =========================================================================
+
+    // ---- ESTADO DE UN CRONOGRAMA (cronopagos.php: cronograma_pagado) ----
+    // Parámetros: :wid_cronograma. Devuelve ind_estado (TRUE = pagado/cerrado).
+    $get_estado_cronograma = $pdo->prepare(
+        "SELECT  ind_estado
+           FROM  tab_enc_cronopagos
+          WHERE  id_cronograma = :wid_cronograma"
+    );
+
+    // ---- ÚLTIMO CRONOGRAMA CREADO (cronopagos.php, al guardar uno nuevo) ----
+    // Sin parámetros. Se usa dentro de la misma transacción del INSERT.
+    $get_max_id_cronograma = $pdo->prepare(
+        "SELECT  MAX(id_cronograma) AS id_cronograma
+           FROM  tab_enc_cronopagos"
+    );
+
+    // ---- TOTAL YA FACTURADO CONTRA CADA ORDEN DE COMPRA (cuentasxpagar.php) ----
+    // Sin parámetros. Saldo disponible de la orden = val_total - val_facturado,
+    // la misma regla que valida fun_insert_cuentasxpagar.
+    $list_facturado_x_oc = $pdo->prepare(
+        "SELECT  id_ordencompra,
+                 COALESCE(SUM(val_factura), 0) AS val_facturado
+           FROM  tab_cuentasxpagar
+          WHERE  id_ordencompra IS NOT NULL
+          GROUP BY id_ordencompra"
     );
 
 } catch (PDOException $e) {

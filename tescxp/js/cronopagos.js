@@ -35,7 +35,7 @@ function showToast(message, type = 'success') {
     if (!toast || !span) return;
     const text = message && message.trim() ? message : (type === 'success' ? 'Operación exitosa' : 'Ocurrió un error');
     span.textContent = text;
-    toast.style.background = type === 'error' ? '#ef4444' : '#0f172a';
+    toast.classList.toggle('toast-error', type === 'error');
     toast.classList.remove('hidden');
     clearTimeout(toast._timer);
     toast._timer = setTimeout(() => toast.classList.add('hidden'), 3500);
@@ -341,6 +341,7 @@ function initSelectorFecha() {
 function switchView(view) {
     document.querySelectorAll('.view-toggle').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.view === view);
+        btn.setAttribute('aria-pressed', btn.dataset.view === view ? 'true' : 'false');
     });
     document.getElementById('view-tabla')?.classList.toggle('active', view === 'tabla');
     document.getElementById('view-calendario')?.classList.toggle('active', view === 'calendario');
@@ -348,11 +349,16 @@ function switchView(view) {
     // La barra de búsqueda y filtros solo aplica a la tabla
     document.getElementById('mod-cronograma')?.classList.toggle('vista-calendario', view === 'calendario');
 
+    // Lista fija (componente "lista_fija"): solo en la vista Tabla. En el calendario
+    // no hay lista ([data-lista]) y la página se desplaza normal.
+    const tabla = document.getElementById('view-tabla');
     if (view === 'calendario') {
+        tabla?.removeAttribute('data-lista');
         renderCalendar();
     } else {
-        ajustarAlturaTablaCronos();
+        tabla?.setAttribute('data-lista', '');
     }
+    if (window.ErpListaFija) ErpListaFija.ajustar();
 }
 
 // ============================================================
@@ -585,22 +591,22 @@ function openDayModal(fechaStr) {
     if (!list) return;
 
     if (cronosDia.length === 0) {
-        list.innerHTML = '<p style="font-size:12px;color:#94a3b8;text-align:center;padding:12px">No hay cronogramas programados este día.</p>';
+        list.innerHTML = '<p class="tcx-lista-msg">No hay cronogramas programados este día.</p>';
     } else {
         list.innerHTML = cronosDia.map(c => {
             const pagado = estaPagado(c);
             const rech   = Number(c.cant_rechazadas || 0);
             const badge = pagado
-                ? '<span class="badge badge-active">Pagado</span>'
-                : '<span class="badge badge-inactive" style="background:#fffbeb;color:#f59e0b">Pendiente</span>';
+                ? '<span class="badge ok">Pagado</span>'
+                : '<span class="badge warn">Pendiente</span>';
             return `
                 <div class="day-crono-row" data-id="${c.id_cronograma}">
                     <div class="day-crono-info">
                         <span class="day-crono-nombre">${escapeHtml(c.nom_cronograma)}</span>
-                        <span class="day-crono-total">${formatCurrency(c.total_a_pagar)}${rech > 0 ? ` · <b style="color:#b91c1c">${rech} rechazada${rech !== 1 ? 's' : ''}</b>` : ''}</span>
+                        <span class="day-crono-total">${formatCurrency(c.total_a_pagar)}${rech > 0 ? ` · <b class="tcx-rechazo">${rech} rechazada${rech !== 1 ? 's' : ''}</b>` : ''}</span>
                     </div>
                     ${badge}
-                    <i class="fas fa-chevron-right" style="color:#94a3b8;font-size:12px"></i>
+                    <i class="fas fa-chevron-right day-crono-ir" aria-hidden="true"></i>
                 </div>
             `;
         }).join('');
@@ -775,7 +781,6 @@ function closeEditModal() {
     hide('modal-edit-crono');
 }
 
-window.openEditModal = openEditModal;
 
 // ============================================================
 // 5. MODAL: DETALLE DE CRONOGRAMA
@@ -830,11 +835,11 @@ function renderCuotaDetalle(d, crono, pagado) {
     // Solo se puede quitar una cuota que todavía no ha ido al banco
     const puedeEliminar = !pagado && d.estado_cuota === 'SIN_ENVIAR';
     const accion = puedeEliminar
-        ? `<button class="btn-icon-sm reject btn-del-detalle"
+        ? `<button type="button" class="btn-icon-sm reject btn-del-detalle"
                 data-cronograma="${crono.id_cronograma}"
                 data-factura="${d.id_factura}"
                 data-cuota="${d.id_cuota}"
-                title="Eliminar cuota del cronograma">
+                title="Eliminar cuota del cronograma" aria-label="Quitar la cuota ${d.id_cuota} de la factura ${d.id_factura}">
                 <i class="fas fa-trash"></i>
            </button>`
         : '<span></span>';
@@ -843,7 +848,7 @@ function renderCuotaDetalle(d, crono, pagado) {
         <div class="cuota-row estado-${e.clase}">
             <span class="cuota-num">
                 ${escapeHtml(d.nom_tercero)}<br>
-                <small style="color:#94a3b8;font-weight:400">Factura #${d.id_factura}, Cuota ${d.id_cuota} · Vence ${formatDate(d.fec_vencimiento)}</small>
+                <small class="cuota-sub">Factura #${d.id_factura}, Cuota ${d.id_cuota} · Vence ${formatDate(d.fec_vencimiento)}</small>
                 ${respuesta}
             </span>
             <span class="cuota-estado ${e.clase}"><i class="fas ${e.icono}"></i> ${e.texto}</span>
@@ -908,11 +913,11 @@ function openDetailModal(crono) {
                     ));
                 });
             } else {
-                detalleList.innerHTML = '<p style="font-size:12px;color:#94a3b8;text-align:center;padding:12px">No se encontraron cuotas para este cronograma.</p>';
+                detalleList.innerHTML = '<p class="tcx-lista-msg">No se encontraron cuotas para este cronograma.</p>';
             }
         })
         .catch(() => {
-            if (detalleList) detalleList.innerHTML = '<p style="font-size:12px;color:#ef4444;text-align:center;padding:12px">Error al cargar el detalle.</p>';
+            if (detalleList) detalleList.innerHTML = '<p class="tcx-lista-msg error">Error al cargar el detalle.</p>';
         });
 }
 
@@ -920,7 +925,6 @@ function closeDetailModal() {
     hide('modal-detail');
 }
 
-window.openDetailModal = openDetailModal;
 
 // ============================================================
 // 5.1 MODAL DE CONFIRMACIÓN DE ELIMINACIÓN (estilo módulo Compras)
@@ -1016,163 +1020,125 @@ function ejecutarEliminarCronograma(id) {
 }
 
 // ============================================================
-// 7. FILTROS + PAGINACIÓN + ORDENAMIENTO (mismo sistema que Proveedores)
-// ------------------------------------------------------------
-// Solo aplica a la vista Tabla. En la vista Calendario la barra de
-// filtros (con el selector de filas por página) se oculta sola.
+// 7. LISTA: INDICADORES, FILTROS, ORDEN Y PAGINADOR (vista Tabla)
+// La tabla la pinta este archivo desde cronogramasData (PHP). Paginador y
+// orden: componentes compartidos del ERP (erp_ui.js) — GUIA_PANTALLAS_ERP §4-§5.
+// Sin botón de "ver": clic (o Enter/espacio) en la fila abre el detalle.
 // ============================================================
+let pag = null, orden = null;
+const normCro = t => (window.erpNormalizar ? erpNormalizar(t) : String(t ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
+const datosCro = () => (typeof cronogramasData !== 'undefined' && Array.isArray(cronogramasData) ? cronogramasData : []);
+const fechaCortaCro = v => String(v || '').slice(0, 10);
 
-// ---- ESTADO DE PAGINACIÓN ----
-let cronosPage     = 1;
-let cronosPageSize = 25; // debe coincidir con el <option selected> de #cronos-page-size
+function updateStats() {
+    const data = datosCro();
+    const pagados = data.filter(estaPagado);
+    const pendientes = data.filter(c => !estaPagado(c));
+    const conRechazo = pagados.filter(c => Number(c.cant_rechazadas || 0) > 0).length;
+    setText('stat-total', data.length);
+    setText('stat-pendientes', pendientes.length);
+    setText('stat-pagados', pagados.length);
+    setText('stat-pagados-hint', conRechazo ? `${conRechazo} con cuotas rechazadas` : 'El banco ya respondió');
+    setText('stat-programado', formatCurrency(pendientes.reduce((t, c) => t + (Number(c.total_a_pagar) || 0), 0)));
+    setText('cro-cnt-all', data.length);
+    setText('cro-cnt-pendiente', pendientes.length);
+    setText('cro-cnt-pagado', pagados.length);
+}
 
-// Filas que pasan la búsqueda y el filtro Todos/Pendientes/Pagados (sin tener en cuenta la página)
-function getFilteredCronoRows() {
-    const query  = val('crono-search').toLowerCase().trim();
-    const active = document.querySelector('#mod-cronograma .filter-toggle.active')?.dataset.filter ?? 'all';
-    const filas  = Array.from(document.querySelectorAll('#cronos-tbody tr:not(.empty-row)'));
-    return filas.filter(fila => {
-        const nombre = fila.children[0]?.textContent.toLowerCase() ?? '';
-        const pasaTexto  = !query || nombre.includes(query);
-        const pasaEstado = active === 'all' || fila.dataset.estado === active;
-        return pasaTexto && pasaEstado;
+function prepararLista() {
+    if (!pag && window.ErpPaginador) {
+        pag = ErpPaginador.crear({ lista: document.getElementById('cronos-tbody'), onCambio: renderCronos, tam: 25 });
+    }
+    if (!orden && window.ErpOrden) {
+        orden = ErpOrden.crear({
+            tabla: document.getElementById('cronos-table'),
+            columnas: {
+                'Cronograma':       { valor: c => c.nom_cronograma },
+                'Fecha programada': { valor: c => fechaCortaCro(c.fec_programacion), tipo: 'fecha' },
+                'Total a pagar':    { valor: c => Number(c.total_a_pagar) || 0, tipo: 'numero' },
+                'Estado':           { valor: c => (estaPagado(c) ? 1 : 0), tipo: 'numero' },
+            },
+            onCambio: () => { if (pag) pag.inicio(); renderCronos(); },
+        });
+    }
+}
+
+function hayFiltros() {
+    return val('crono-search').trim() !== '' || (val('crono-filtro-estado') || 'all') !== 'all';
+}
+
+function getFilteredCronos() {
+    const q = normCro(val('crono-search'));
+    const estado = val('crono-filtro-estado') || 'all';
+    return datosCro().filter(c => {
+        const pagado = estaPagado(c);
+        if (estado === 'pendiente' && pagado) return false;
+        if (estado === 'pagado' && !pagado) return false;
+        if (q && !normCro(`${c.id_cronograma} ${c.nom_cronograma} ${formatDate(fechaCortaCro(c.fec_programacion))}`).includes(q)) return false;
+        return true;
     });
 }
 
-// Aplica búsqueda/estado y vuelve a la primera página
 function applyFilters() {
-    cronosPage = 1;
-    renderCronosPage();
-
-    const query    = val('crono-search').trim();
-    const active   = document.querySelector('#mod-cronograma .filter-toggle.active')?.dataset.filter ?? 'all';
-    const clearBtn = document.getElementById('btn-clear-filters');
-    if (clearBtn) clearBtn.style.display = (query || active !== 'all') ? 'flex' : 'none';
+    if (pag) pag.inicio();
+    renderCronos();
 }
 
 function clearFilters() {
     setVal('crono-search', '');
-    document.querySelectorAll('#mod-cronograma .filter-toggle').forEach(btn => btn.classList.remove('active'));
-    document.querySelector('#mod-cronograma .filter-toggle[data-filter="all"]')?.classList.add('active');
+    setVal('crono-filtro-estado', 'all');
+    if (window.ErpFiltros) ErpFiltros.sincronizar();
     applyFilters();
 }
 
-// Muestra solo las filas que pasan el filtro Y caen en la página actual
-function renderCronosPage() {
-    const todas     = Array.from(document.querySelectorAll('#cronos-tbody tr:not(.empty-row)'));
-    const coinciden = getFilteredCronoRows();
-    todas.forEach(fila => { fila.style.display = 'none'; });
-
-    const total        = coinciden.length;
-    const esTodos      = cronosPageSize === 'all';
-    const size         = esTodos ? total : cronosPageSize;
-    const totalPaginas = size > 0 ? Math.max(1, Math.ceil(total / size)) : 1;
-    if (cronosPage > totalPaginas) cronosPage = totalPaginas;
-    if (cronosPage < 1) cronosPage = 1;
-
-    const start = esTodos ? 0 : (cronosPage - 1) * size;
-    const end   = esTodos ? total : Math.min(start + size, total);
-    coinciden.slice(start, end).forEach(fila => { fila.style.display = ''; });
-
-    setText('cronos-count', `${total} resultado${total !== 1 ? 's' : ''}`);
-
-    const rangeEl = document.getElementById('cronos-range');
-    if (rangeEl) {
-        rangeEl.textContent = total === 0 ? '0 de 0' : `${start + 1}–${end} de ${total}`;
+function badgeCrono(c) {
+    const pagado = estaPagado(c);
+    let html = pagado ? '<span class="badge ok">Pagado</span>' : '<span class="badge warn">Pendiente</span>';
+    // Resumen bajo el estado: cuántas cuotas pagó el banco y cuántas rechazó
+    const total = Number(c.cant_cuotas || 0), pag_ = Number(c.cant_pagadas || 0), rech = Number(c.cant_rechazadas || 0);
+    if (pag_ > 0 || rech > 0) {
+        html += `<span class="crono-resumen-pago">${pag_}/${total} pagada${pag_ !== 1 ? 's' : ''}${rech > 0 ? ` · <b>${rech} rechazada${rech !== 1 ? 's' : ''}</b>` : ''}</span>`;
     }
-
-    const btnPrev = document.getElementById('cronos-prev');
-    const btnNext = document.getElementById('cronos-next');
-    if (btnPrev) btnPrev.disabled = cronosPage <= 1;
-    if (btnNext) btnNext.disabled = esTodos || cronosPage >= totalPaginas;
+    return html;
 }
 
-function initCronosPagination() {
-    document.getElementById('cronos-page-size')?.addEventListener('change', function() {
-        cronosPageSize = this.value === 'all' ? 'all' : parseInt(this.value, 10);
-        cronosPage = 1;
-        renderCronosPage();
-    });
-    document.getElementById('cronos-prev')?.addEventListener('click', () => {
-        cronosPage--;
-        renderCronosPage();
-    });
-    document.getElementById('cronos-next')?.addEventListener('click', () => {
-        cronosPage++;
-        renderCronosPage();
-    });
-}
+// Lista: filtrar → contar → ordenar → paginar → pintar
+function renderCronos() {
+    prepararLista();
+    let filas = getFilteredCronos();
+    setText('cronos-count', `${filas.length} resultado${filas.length !== 1 ? 's' : ''}`);
+    const btnClear = document.getElementById('btn-clear-filters');
+    if (btnClear) btnClear.hidden = !hayFiltros();
 
-// ---- ORDENAMIENTO ASC / DESC ----
-// Cada celda ordenable trae su valor "crudo" en data-sort: el nombre,
-// la fecha en 'YYYY-MM-DD' y el total como número (no "$1.500.000").
-let cronosSortKey = null; // índice de columna, coincide con data-sort-key del <th>
-let cronosSortDir = 'asc';
-
-function sortCronoRows(key, type) {
     const tbody = document.getElementById('cronos-tbody');
     if (!tbody) return;
-    const filas = Array.from(tbody.querySelectorAll('tr:not(.empty-row)'));
-    if (filas.length === 0) return;
-
-    cronosSortDir = (cronosSortKey === key && cronosSortDir === 'asc') ? 'desc' : 'asc';
-    cronosSortKey = key;
-
-    const getValor = fila => {
-        const celda = fila.cells[Number(key)];
-        const crudo = celda?.dataset.sort;
-        const base  = crudo !== undefined ? crudo : (celda?.textContent.trim() ?? '');
-        return type === 'number' ? (parseFloat(base) || 0) : base.toLowerCase();
-    };
-
-    filas.sort((a, b) => {
-        const va  = getValor(a);
-        const vb  = getValor(b);
-        const cmp = type === 'number' ? (va - vb) : va.localeCompare(vb, 'es', { numeric: true });
-        return cronosSortDir === 'asc' ? cmp : -cmp;
-    });
-    filas.forEach(fila => tbody.appendChild(fila));
-
-    document.querySelectorAll('#mod-cronograma .data-table th.sortable').forEach(th => {
-        const icon   = th.querySelector('.sort-icon');
-        const activo = th.dataset.sortKey === key;
-        th.classList.toggle('sort-active', activo);
-        if (icon) {
-            icon.className = activo
-                ? `fas sort-icon ${cronosSortDir === 'asc' ? 'fa-caret-up' : 'fa-caret-down'}`
-                : 'fas fa-caret-down sort-icon';
-        }
-    });
-
-    cronosPage = 1;
-    renderCronosPage();
-}
-
-function initCronosSorting() {
-    document.querySelectorAll('#mod-cronograma .data-table th.sortable').forEach(th => {
-        th.addEventListener('click', () => sortCronoRows(th.dataset.sortKey, th.dataset.sortType));
-    });
-}
-
-// ---- ALTO DINÁMICO DE LA TABLA (evita el doble scroll) ----
-// Si la vista Tabla está oculta (se está viendo el Calendario) no se mide:
-// se vuelve a calcular al regresar a la tabla (ver switchView).
-function ajustarAlturaTablaCronos() {
-    const scrollBox = document.getElementById('cronos-table-scroll');
-    if (!scrollBox || scrollBox.offsetParent === null) return;
-    const footer = document.querySelector('#mod-cronograma .table-footer');
-    const top = scrollBox.getBoundingClientRect().top;
-    const alturaFooter = footer ? footer.offsetHeight : 0;
-
-    let margenInferior = 16;
-    const contentCard = scrollBox.closest('.content-card') || document.querySelector('.content-card');
-    if (contentCard) {
-        const cs = getComputedStyle(contentCard);
-        margenInferior += (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.marginBottom) || 0);
+    if (filas.length === 0) {
+        const hayDatos = datosCro().length > 0;
+        tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">
+            <i class="fas ${hayDatos ? 'fa-search' : 'fa-calendar-alt'}"></i>
+            <p>${hayDatos ? 'Ningún cronograma coincide con los filtros' : 'No hay cronogramas para mostrar'}</p>
+            <span>${hayDatos ? 'Cambie la búsqueda o use «Limpiar»' : 'Use «Nuevo cronograma» para registrar el primero'}</span>
+        </div></td></tr>`;
+        if (pag) pag.paginar([]);
+        return;
     }
-
-    const disponible = window.innerHeight - top - alturaFooter - margenInferior;
-    scrollBox.style.maxHeight = Math.max(220, disponible) + 'px';
+    if (orden) filas = orden.ordenar(filas);
+    const pagina = pag ? pag.paginar(filas) : filas;
+    tbody.innerHTML = pagina.map(c => {
+        const id = escapeHtml(c.id_cronograma);
+        const nombre = escapeHtml(c.nom_cronograma);
+        const acciones = estaPagado(c)
+            ? `<span class="accion-bloqueada" title="Cronograma pagado (el banco ya respondió): no se puede editar ni eliminar"><i class="fas fa-lock" aria-hidden="true"></i></span>`
+            : `<button type="button" class="btn-icon-sm edit" data-cro-accion="editar" title="Editar cronograma" aria-label="Editar ${nombre}"><i class="fas fa-pen"></i></button>
+               <button type="button" class="btn-icon-sm reject" data-cro-accion="eliminar" title="Eliminar cronograma" aria-label="Eliminar ${nombre}"><i class="fas fa-trash"></i></button>`;
+        return `<tr data-fila-abre data-id="${id}" tabindex="0" aria-label="Ver el cronograma ${nombre}">
+            <td><span class="tcx-fuerte">${nombre}</span><span class="tcx-sub">#${id}</span></td>
+            <td class="tcx-num">${escapeHtml(formatDate(fechaCortaCro(c.fec_programacion)))}</td>
+            <td class="text-right tcx-num">${formatCurrency(c.total_a_pagar)}</td>
+            <td><div class="crono-estado">${badgeCrono(c)}</div></td>
+            <td class="col-acciones"><div class="actions-cell">${acciones}</div></td>
+        </tr>`;
+    }).join('');
 }
 
 // ============================================================
@@ -1183,12 +1149,10 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initCronoModule() {
-    // Mover modales, calendario y toast al <body> para que el overlay cubra
-    // también la barra superior (escapan del contexto de apilamiento del layout).
-    // El orden importa: las confirmaciones van al final para quedar encima del
-    // modal que las abre (detalle → eliminar cuota, nuevo → cuotas vencidas).
-    ['modal-day', 'modal-new-crono', 'modal-edit-crono', 'modal-detail',
-     'modal-confirm-eliminar', 'modal-confirm-vencidas', 'dp-pop', 'toast'].forEach(id => {
+    // Los modales los mueve a <body> el componente "modales" (erp_ui.js); en el HTML
+    // las confirmaciones van después del modal que las abre, para quedar encima.
+    // El calendario y el aviso se mueven aquí: así no los tapa el difuminado.
+    ['dp-pop', 'toast'].forEach(id => {
         const el = document.getElementById(id);
         if (el && el.parentElement !== document.body) document.body.appendChild(el);
     });
@@ -1196,22 +1160,52 @@ function initCronoModule() {
     document.getElementById('btn-add-crono')?.addEventListener('click', openNewModal);
 
     document.getElementById('crono-search')?.addEventListener('input', applyFilters);
+    document.getElementById('crono-filtro-estado')?.addEventListener('change', applyFilters);
     document.getElementById('btn-clear-filters')?.addEventListener('click', clearFilters);
 
-    document.querySelectorAll('#mod-cronograma .filter-toggle').forEach(btn => {
-        btn.addEventListener('click', function() {
-            document.querySelectorAll('#mod-cronograma .filter-toggle').forEach(b => b.classList.remove('active'));
-            this.classList.add('active');
-            applyFilters();
-        });
+    // Clic (o Enter/espacio) en la fila abre el detalle; los botones hacen lo suyo
+    const tbody = document.getElementById('cronos-tbody');
+    const cronoDe = tr => datosCro().find(x => String(x.id_cronograma) === tr.dataset.id);
+    tbody?.addEventListener('click', e => {
+        const tr = e.target.closest('tr[data-fila-abre]');
+        if (!tr) return;
+        const crono = cronoDe(tr);
+        if (!crono) return;
+        const b = e.target.closest('[data-cro-accion]');
+        if (b) {
+            if (b.dataset.croAccion === 'editar') openEditModal(crono);
+            if (b.dataset.croAccion === 'eliminar') window.eliminarCronograma(crono.id_cronograma, crono.nom_cronograma);
+            return;
+        }
+        if (e.target.closest('button, a, input, select, textarea')) return;
+        openDetailModal(crono);
+    });
+    tbody?.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const tr = e.target.closest('tr[data-fila-abre]');
+        if (!tr || e.target !== tr) return;
+        e.preventDefault();
+        const crono = cronoDe(tr);
+        if (crono) openDetailModal(crono);
     });
 
-    // ---------- PAGINACIÓN Y ORDENAMIENTO (vista Tabla) ----------
-    initCronosPagination();
-    initCronosSorting();
-    renderCronosPage();
-    ajustarAlturaTablaCronos();
-    window.addEventListener('resize', ajustarAlturaTablaCronos);
+    // ---------- LISTA (vista Tabla) ----------
+    updateStats();
+    renderCronos();
+    if (window.ErpListaFija) ErpListaFija.ajustar();
+    const mod = document.getElementById('mod-cronograma');
+    requestAnimationFrame(() => requestAnimationFrame(() => mod?.classList.add('is-listo')));
+
+    // Esc cierra solo las ventanas de lectura y confirmación (la de más arriba primero).
+    // Los formularios (nuevo / editar) se cierran solo con la X o Cancelar.
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape' || selectorFechaAbierto()) return;
+        const abierto = id => { const m = document.getElementById(id); return m && !m.classList.contains('hidden'); };
+        if (abierto('modal-confirm-vencidas')) cerrarConfirmVencidas();
+        else if (abierto('modal-confirm-eliminar')) cerrarConfirmEliminar();
+        else if (abierto('modal-detail')) closeDetailModal();
+        else if (abierto('modal-day')) closeDayModal();
+    });
 
     // ---------- TOGGLE TABLA / CALENDARIO ----------
     document.querySelectorAll('.view-toggle').forEach(btn => {

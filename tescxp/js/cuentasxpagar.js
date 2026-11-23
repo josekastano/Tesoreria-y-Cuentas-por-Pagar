@@ -35,7 +35,7 @@ function showToast(message, type = 'success') {
     if (!toast || !span) return;
     const text = message && message.trim() ? message : (type === 'success' ? 'Operación exitosa' : 'Ocurrió un error');
     span.textContent = text;
-    toast.style.background = type === 'error' ? '#ef4444' : '#0f172a';
+    toast.classList.toggle('toast-error', type === 'error');
     toast.classList.remove('hidden');
     clearTimeout(toast._timer);
     toast._timer = setTimeout(() => toast.classList.add('hidden'), 3500);
@@ -839,7 +839,7 @@ function openDetailModal(idFactura) {
 
             // Error del servidor: se muestra el mensaje real en vez de "no hay cuotas"
             if (!result.success) {
-                cuotasList.innerHTML = `<p style="font-size:12px;color:#ef4444;text-align:center;padding:12px">${escapeHtml(result.message || 'Error al cargar las cuotas.')}</p>`;
+                cuotasList.innerHTML = `<p class="tcx-lista-msg error">${escapeHtml(result.message || 'Error al cargar las cuotas.')}</p>`;
                 return;
             }
 
@@ -851,17 +851,17 @@ function openDetailModal(idFactura) {
                             <span class="cuota-num">Cuota ${escapeHtml(c.id_cuota)}</span>
                             <span class="cuota-fecha">${formatDate(c.fec_vencimiento)}</span>
                             <span class="cuota-valor">${formatCurrency(c.val_cuota)}</span>
-                            <span class="badge ${pagadaCuota ? 'badge-active' : 'badge-inactive'}">${pagadaCuota ? 'Pagada' : 'Pendiente'}</span>
+                            <span class="badge ${pagadaCuota ? 'ok' : 'warn'}">${pagadaCuota ? 'Pagada' : 'Pendiente'}</span>
                         </div>
                     `;
                 }).join('');
             } else {
-                cuotasList.innerHTML = '<p style="font-size:12px;color:#94a3b8;text-align:center;padding:12px">No se encontraron cuotas para esta factura.</p>';
+                cuotasList.innerHTML = '<p class="tcx-lista-msg">No se encontraron cuotas para esta factura.</p>';
             }
         })
         .catch(() => {
             const cuotasList = document.getElementById('cuotas-list');
-            if (cuotasList) cuotasList.innerHTML = '<p style="font-size:12px;color:#ef4444;text-align:center;padding:12px">Error al cargar las cuotas.</p>';
+            if (cuotasList) cuotasList.innerHTML = '<p class="tcx-lista-msg error">Error al cargar las cuotas.</p>';
         });
 }
 
@@ -869,164 +869,140 @@ function closeDetailModal() {
     hide('modal-detail');
 }
 
-window.openDetailModal = openDetailModal;
 
 // ============================================================
-// 5. FILTROS + PAGINACIÓN + ORDENAMIENTO (mismo sistema que Proveedores)
+// 5. LISTA: INDICADORES, FILTROS, ORDEN Y PAGINADOR
+// La tabla la pinta este archivo desde facturasData (PHP). Paginador y
+// orden: componentes compartidos del ERP (erp_ui.js) — GUIA_PANTALLAS_ERP §4-§5.
+// Sin botón de "ver": clic (o Enter/espacio) en la fila abre el detalle.
 // ============================================================
+let pag = null, orden = null;
+const normFac = t => (window.erpNormalizar ? erpNormalizar(t) : String(t ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
+const datosFac = () => (typeof facturasData !== 'undefined' && Array.isArray(facturasData) ? facturasData : []);
+const facturaPagada = f => f.ind_estado === 't' || f.ind_estado === true;
+const fechaCorta = v => String(v || '').slice(0, 10);
 
-// ---- ESTADO DE PAGINACIÓN ----
-let facturasPage     = 1;
-let facturasPageSize = 25; // debe coincidir con el <option selected> de #facturas-page-size
+// 'pagada' | 'vencida' | 'pendiente'
+function estadoFactura(f) {
+    if (facturaPagada(f)) return 'pagada';
+    return fechaCorta(f.fec_vencimiento) < hoyLocal() ? 'vencida' : 'pendiente';
+}
 
-// Filas que pasan la búsqueda y el filtro de estado (sin tener en cuenta la página).
-// Se busca en Factura, Orden de Compra y Proveedor (antes no se miraba la
-// columna Proveedor, aunque el buscador dice "Buscar por proveedor...").
-function getFilteredFacturaRows() {
-    const query  = val('factura-search').toLowerCase().trim();
-    const active = document.querySelector('#mod-cuentasxpagar .filter-toggle.active')?.dataset.filter ?? 'all';
-    const filas  = Array.from(document.querySelectorAll('#facturas-tbody tr:not(.empty-row)'));
-    return filas.filter(fila => {
-        const texto = [0, 1, 2].map(i => fila.children[i]?.textContent.toLowerCase() ?? '').join(' ');
-        const pasaTexto  = !query || texto.includes(query);
-        const pasaEstado = active === 'all' || fila.dataset.estado === active;
-        return pasaTexto && pasaEstado;
+function updateStats() {
+    const data = datosFac();
+    const cuenta = { pagada: 0, vencida: 0, pendiente: 0 };
+    let saldo = 0;
+    data.forEach(f => {
+        const e = estadoFactura(f);
+        cuenta[e]++;
+        if (e !== 'pagada') saldo += Number(f.val_saldo) || 0;
+    });
+    const enDeuda = cuenta.pendiente + cuenta.vencida;
+    setText('stat-total', data.length);
+    setText('stat-pendientes', enDeuda);
+    setText('stat-vencidas', cuenta.vencida);
+    setText('stat-saldo', formatCurrency(saldo));
+    setText('stat-saldo-hint', `De ${enDeuda} factura${enDeuda === 1 ? '' : 's'} en deuda`);
+    setText('fac-cnt-all', data.length);
+    setText('fac-cnt-pendiente', enDeuda);
+    setText('fac-cnt-vencida', cuenta.vencida);
+    setText('fac-cnt-pagada', cuenta.pagada);
+}
+
+function prepararLista() {
+    if (!pag && window.ErpPaginador) {
+        pag = ErpPaginador.crear({ lista: document.getElementById('facturas-tbody'), onCambio: renderFacturas, tam: 25 });
+    }
+    if (!orden && window.ErpOrden) {
+        orden = ErpOrden.crear({
+            tabla: document.getElementById('facturas-table'),
+            columnas: {
+                'Factura':         { valor: f => Number(f.id_factura), tipo: 'numero' },
+                'Orden de compra': { valor: f => (f.id_ordencompra ? Number(f.id_ordencompra) : null), tipo: 'numero' },
+                'Proveedor':       { valor: f => f.nom_tercero },
+                'Emisión':         { valor: f => fechaCorta(f.fec_emision), tipo: 'fecha' },
+                'Vencimiento':     { valor: f => fechaCorta(f.fec_vencimiento), tipo: 'fecha' },
+                'Valor':           { valor: f => Number(f.val_factura) || 0, tipo: 'numero' },
+                'Saldo':           { valor: f => Number(f.val_saldo) || 0, tipo: 'numero' },
+                'Cuotas':          { valor: f => Number(f.num_cuotas) || 0, tipo: 'numero' },
+                'Estado':          { valor: f => ({ vencida: 0, pendiente: 1, pagada: 2 })[estadoFactura(f)], tipo: 'numero' },
+            },
+            onCambio: () => { if (pag) pag.inicio(); renderFacturas(); },
+        });
+    }
+}
+
+function hayFiltros() {
+    return val('factura-search').trim() !== '' || (val('factura-filtro-estado') || 'all') !== 'all';
+}
+
+function getFilteredFacturas() {
+    const q = normFac(val('factura-search'));
+    const filtro = val('factura-filtro-estado') || 'all';
+    return datosFac().filter(f => {
+        const e = estadoFactura(f);
+        if (filtro === 'pendiente' && e === 'pagada') return false;   // "En deuda" incluye las vencidas
+        if (filtro === 'vencida' && e !== 'vencida') return false;
+        if (filtro === 'pagada' && e !== 'pagada') return false;
+        if (q && !normFac(`${f.id_factura} ${f.id_ordencompra ? 'OC ' + f.id_ordencompra : 'compra directa'} ${f.nom_tercero} ${f.id_proveedor}`).includes(q)) return false;
+        return true;
     });
 }
 
-// Aplica búsqueda/estado y vuelve a la primera página
 function applyFilters() {
-    facturasPage = 1;
-    renderFacturasPage();
-
-    const query    = val('factura-search').trim();
-    const active   = document.querySelector('#mod-cuentasxpagar .filter-toggle.active')?.dataset.filter ?? 'all';
-    const clearBtn = document.getElementById('btn-clear-filters');
-    if (clearBtn) clearBtn.style.display = (query || active !== 'all') ? 'flex' : 'none';
+    if (pag) pag.inicio();
+    renderFacturas();
 }
 
 function clearFilters() {
     setVal('factura-search', '');
-    document.querySelectorAll('#mod-cuentasxpagar .filter-toggle').forEach(btn => btn.classList.remove('active'));
-    document.querySelector('#mod-cuentasxpagar .filter-toggle[data-filter="all"]')?.classList.add('active');
+    setVal('factura-filtro-estado', 'all');
+    if (window.ErpFiltros) ErpFiltros.sincronizar();
     applyFilters();
 }
 
-// Muestra solo las filas que pasan el filtro Y caen en la página actual
-function renderFacturasPage() {
-    const todas     = Array.from(document.querySelectorAll('#facturas-tbody tr:not(.empty-row)'));
-    const coinciden = getFilteredFacturaRows();
-    todas.forEach(fila => { fila.style.display = 'none'; });
+const BADGE_FACTURA = {
+    pagada:    '<span class="badge ok">Pagada</span>',
+    vencida:   '<span class="badge bad">Vencida</span>',
+    pendiente: '<span class="badge warn">En deuda</span>',
+};
 
-    const total        = coinciden.length;
-    const esTodos      = facturasPageSize === 'all';
-    const size         = esTodos ? total : facturasPageSize;
-    const totalPaginas = size > 0 ? Math.max(1, Math.ceil(total / size)) : 1;
-    if (facturasPage > totalPaginas) facturasPage = totalPaginas;
-    if (facturasPage < 1) facturasPage = 1;
+// Lista: filtrar → contar → ordenar → paginar → pintar
+function renderFacturas() {
+    prepararLista();
+    let filas = getFilteredFacturas();
+    setText('facturas-count', `${filas.length} resultado${filas.length !== 1 ? 's' : ''}`);
+    const btnClear = document.getElementById('btn-clear-filters');
+    if (btnClear) btnClear.hidden = !hayFiltros();
 
-    const start = esTodos ? 0 : (facturasPage - 1) * size;
-    const end   = esTodos ? total : Math.min(start + size, total);
-    coinciden.slice(start, end).forEach(fila => { fila.style.display = ''; });
-
-    setText('facturas-count', `${total} resultado${total !== 1 ? 's' : ''}`);
-
-    const rangeEl = document.getElementById('facturas-range');
-    if (rangeEl) {
-        rangeEl.textContent = total === 0 ? '0 de 0' : `${start + 1}–${end} de ${total}`;
-    }
-
-    const btnPrev = document.getElementById('facturas-prev');
-    const btnNext = document.getElementById('facturas-next');
-    if (btnPrev) btnPrev.disabled = facturasPage <= 1;
-    if (btnNext) btnNext.disabled = esTodos || facturasPage >= totalPaginas;
-}
-
-function initFacturasPagination() {
-    document.getElementById('facturas-page-size')?.addEventListener('change', function() {
-        facturasPageSize = this.value === 'all' ? 'all' : parseInt(this.value, 10);
-        facturasPage = 1;
-        renderFacturasPage();
-    });
-    document.getElementById('facturas-prev')?.addEventListener('click', () => {
-        facturasPage--;
-        renderFacturasPage();
-    });
-    document.getElementById('facturas-next')?.addEventListener('click', () => {
-        facturasPage++;
-        renderFacturasPage();
-    });
-}
-
-// ---- ORDENAMIENTO ASC / DESC ----
-// Cada celda ordenable trae su valor "crudo" en data-sort: números sin "$"
-// ni puntos, fechas en 'YYYY-MM-DD' y 0 para "Compra directa" (sin orden),
-// así esas quedan juntas al principio (asc) o al final (desc).
-let facturasSortKey = null; // índice de columna, coincide con data-sort-key del <th>
-let facturasSortDir = 'asc';
-
-function sortFacturaRows(key, type) {
     const tbody = document.getElementById('facturas-tbody');
     if (!tbody) return;
-    const filas = Array.from(tbody.querySelectorAll('tr:not(.empty-row)'));
-    if (filas.length === 0) return;
-
-    facturasSortDir = (facturasSortKey === key && facturasSortDir === 'asc') ? 'desc' : 'asc';
-    facturasSortKey = key;
-
-    const getValor = fila => {
-        const celda = fila.cells[Number(key)];
-        const crudo = celda?.dataset.sort;
-        const base  = crudo !== undefined ? crudo : (celda?.textContent.trim() ?? '');
-        return type === 'number' ? (parseFloat(base) || 0) : base.toLowerCase();
-    };
-
-    filas.sort((a, b) => {
-        const va  = getValor(a);
-        const vb  = getValor(b);
-        const cmp = type === 'number' ? (va - vb) : va.localeCompare(vb, 'es', { numeric: true });
-        return facturasSortDir === 'asc' ? cmp : -cmp;
-    });
-    filas.forEach(fila => tbody.appendChild(fila));
-
-    document.querySelectorAll('#mod-cuentasxpagar .data-table th.sortable').forEach(th => {
-        const icon   = th.querySelector('.sort-icon');
-        const activo = th.dataset.sortKey === key;
-        th.classList.toggle('sort-active', activo);
-        if (icon) {
-            icon.className = activo
-                ? `fas sort-icon ${facturasSortDir === 'asc' ? 'fa-caret-up' : 'fa-caret-down'}`
-                : 'fas fa-caret-down sort-icon';
-        }
-    });
-
-    facturasPage = 1;
-    renderFacturasPage();
-}
-
-function initFacturasSorting() {
-    document.querySelectorAll('#mod-cuentasxpagar .data-table th.sortable').forEach(th => {
-        th.addEventListener('click', () => sortFacturaRows(th.dataset.sortKey, th.dataset.sortType));
-    });
-}
-
-// ---- ALTO DINÁMICO DE LA TABLA (evita el doble scroll) ----
-function ajustarAlturaTablaFacturas() {
-    const scrollBox = document.getElementById('facturas-table-scroll');
-    if (!scrollBox) return;
-    const footer = document.querySelector('#mod-cuentasxpagar .table-footer');
-    const top = scrollBox.getBoundingClientRect().top;
-    const alturaFooter = footer ? footer.offsetHeight : 0;
-
-    let margenInferior = 16;
-    const contentCard = scrollBox.closest('.content-card') || document.querySelector('.content-card');
-    if (contentCard) {
-        const cs = getComputedStyle(contentCard);
-        margenInferior += (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.marginBottom) || 0);
+    if (filas.length === 0) {
+        const hayDatos = datosFac().length > 0;
+        tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state">
+            <i class="fas ${hayDatos ? 'fa-search' : 'fa-file-invoice'}"></i>
+            <p>${hayDatos ? 'Ninguna factura coincide con los filtros' : 'No hay facturas para mostrar'}</p>
+            <span>${hayDatos ? 'Cambie la búsqueda o use «Limpiar»' : 'Use «Nueva factura» para registrar la primera'}</span>
+        </div></td></tr>`;
+        if (pag) pag.paginar([]);
+        return;
     }
-
-    const disponible = window.innerHeight - top - alturaFooter - margenInferior;
-    scrollBox.style.maxHeight = Math.max(220, disponible) + 'px';
+    if (orden) filas = orden.ordenar(filas);
+    const pagina = pag ? pag.paginar(filas) : filas;
+    tbody.innerHTML = pagina.map(f => {
+        const id = escapeHtml(f.id_factura);
+        return `<tr data-fila-abre data-id="${id}" tabindex="0" aria-label="Ver la factura ${id}">
+            <td class="tcx-num"><span class="tcx-fuerte">#${id}</span></td>
+            <td>${f.id_ordencompra ? `<span class="oc-tag">OC #${escapeHtml(f.id_ordencompra)}</span>` : '<span class="oc-directa">Compra directa</span>'}</td>
+            <td><span class="tcx-fuerte">${escapeHtml(f.nom_tercero)}</span><span class="tcx-sub">${escapeHtml(f.id_proveedor)}</span></td>
+            <td class="tcx-num">${escapeHtml(formatDate(fechaCorta(f.fec_emision)))}</td>
+            <td class="tcx-num">${escapeHtml(formatDate(fechaCorta(f.fec_vencimiento)))}</td>
+            <td class="text-right tcx-num">${formatCurrency(f.val_factura)}</td>
+            <td class="text-right tcx-num">${formatCurrency(f.val_saldo)}</td>
+            <td class="text-center tcx-num">${escapeHtml(f.num_cuotas)}</td>
+            <td>${BADGE_FACTURA[estadoFactura(f)]}</td>
+        </tr>`;
+    }).join('');
 }
 
 // ============================================================
@@ -1037,10 +1013,9 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initFacturaModule() {
-    // Mover modales, calendario y toast al <body> para que el overlay cubra
-    // también la barra superior (escapan del contexto de apilamiento del layout).
-    // El orden importa: el selector de OC va después de Nueva Factura para quedar encima.
-    ['modal-new-factura', 'modal-oc', 'modal-detail', 'dp-pop', 'toast'].forEach(id => {
+    // Los modales los mueve a <body> el componente "modales" (erp_ui.js).
+    // El calendario y el aviso se mueven aquí: así no los tapa el difuminado.
+    ['dp-pop', 'toast'].forEach(id => {
         const el = document.getElementById(id);
         if (el && el.parentElement !== document.body) document.body.appendChild(el);
     });
@@ -1077,22 +1052,37 @@ function initFacturaModule() {
     });
 
     document.getElementById('factura-search')?.addEventListener('input', applyFilters);
+    document.getElementById('factura-filtro-estado')?.addEventListener('change', applyFilters);
     document.getElementById('btn-clear-filters')?.addEventListener('click', clearFilters);
 
-    document.querySelectorAll('#mod-cuentasxpagar .filter-toggle').forEach(btn => {
-        btn.addEventListener('click', function() {
-            document.querySelectorAll('#mod-cuentasxpagar .filter-toggle').forEach(b => b.classList.remove('active'));
-            this.classList.add('active');
-            applyFilters();
-        });
+    // Clic (o Enter/espacio) en la fila abre el detalle
+    const tbody = document.getElementById('facturas-tbody');
+    tbody?.addEventListener('click', e => {
+        const tr = e.target.closest('tr[data-fila-abre]');
+        if (!tr || e.target.closest('button, a, input, select, textarea')) return;
+        openDetailModal(parseInt(tr.dataset.id, 10));
+    });
+    tbody?.addEventListener('keydown', e => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        const tr = e.target.closest('tr[data-fila-abre]');
+        if (!tr || e.target !== tr) return;
+        e.preventDefault();
+        openDetailModal(parseInt(tr.dataset.id, 10));
     });
 
-    // ---------- PAGINACIÓN Y ORDENAMIENTO ----------
-    initFacturasPagination();
-    initFacturasSorting();
-    renderFacturasPage();
-    ajustarAlturaTablaFacturas();
-    window.addEventListener('resize', ajustarAlturaTablaFacturas);
+    // ---------- LISTA ----------
+    updateStats();
+    renderFacturas();
+    if (window.ErpListaFija) ErpListaFija.ajustar();
+    const mod = document.getElementById('mod-cuentasxpagar');
+    requestAnimationFrame(() => requestAnimationFrame(() => mod?.classList.add('is-listo')));
+
+    // El detalle es de solo lectura: Esc lo cierra (los formularios, solo con la X o Cancelar)
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape' || selectorFechaAbierto()) return;
+        const m = document.getElementById('modal-detail');
+        if (m && !m.classList.contains('hidden')) closeDetailModal();
+    });
 
     document.querySelectorAll('.btn-close-new-modal, .btn-cancel-new-modal')
         .forEach(btn => btn.addEventListener('click', closeNewModal));

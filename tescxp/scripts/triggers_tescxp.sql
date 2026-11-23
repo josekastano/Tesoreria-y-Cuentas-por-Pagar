@@ -156,11 +156,11 @@ EXECUTE FUNCTION fun_saldo_factura();
 CREATE OR REPLACE FUNCTION fun_generar_cuotas_factura() RETURNS TRIGGER AS
 $BODY$
 DECLARE
-    v_valor_base   DECIMAL(10,0);
-    v_suma_parcial DECIMAL(10,0) := 0;
+    wwvalor_base   tab_cuotasxfactura.val_cuota%TYPE;          -- (cálculo) valor de cada cuota
+    wwsuma_parcial tab_cuotasxfactura.val_cuota%TYPE := 0;     -- (cálculo) suma de las cuotas ya creadas
     i              INT;
 BEGIN
-    v_valor_base := TRUNC(NEW.val_factura / NEW.num_cuotas);
+    wwvalor_base := TRUNC(NEW.val_factura / NEW.num_cuotas);
 
     FOR i IN 1..NEW.num_cuotas LOOP
         IF i < NEW.num_cuotas THEN
@@ -169,9 +169,9 @@ BEGIN
                 NEW.id_factura,
                 i,
                 NEW.fec_vencimiento + ((i - 1) * INTERVAL '1 month'),
-                v_valor_base
+                wwvalor_base
             );
-            v_suma_parcial := v_suma_parcial + v_valor_base;
+            wwsuma_parcial := wwsuma_parcial + wwvalor_base;
         ELSE
             -- última cuota: se ajusta para que la suma total sea exacta
             INSERT INTO tab_cuotasxfactura(id_factura, id_cuota, fec_vencimiento, val_cuota)
@@ -179,7 +179,7 @@ BEGIN
                 NEW.id_factura,
                 i,
                 NEW.fec_vencimiento + ((i - 1) * INTERVAL '1 month'),
-                NEW.val_factura - v_suma_parcial
+                NEW.val_factura - wwsuma_parcial
             );
         END IF;
     END LOOP;
@@ -210,17 +210,17 @@ EXECUTE FUNCTION fun_generar_cuotas_factura();
 CREATE OR REPLACE FUNCTION fun_calcular_total_cronograma() RETURNS TRIGGER AS
 $BODY$
 DECLARE
-    v_id_cronograma DECIMAL(10,0);
+    wwid_cronograma tab_enc_cronopagos.id_cronograma%TYPE;
 BEGIN
-    v_id_cronograma := COALESCE(NEW.id_cronograma, OLD.id_cronograma);
+    wwid_cronograma := COALESCE(NEW.id_cronograma, OLD.id_cronograma);
 
     UPDATE tab_enc_cronopagos
     SET total_a_pagar = (
         SELECT COALESCE(SUM(val_a_pagar), 0)
         FROM tab_det_cronopagos
-        WHERE id_cronograma = v_id_cronograma
+        WHERE id_cronograma = wwid_cronograma
     )
-    WHERE id_cronograma = v_id_cronograma;
+    WHERE id_cronograma = wwid_cronograma;
 
     RETURN NULL; -- trigger AFTER, el valor de retorno se ignora
 END;
@@ -438,7 +438,7 @@ CREATE OR REPLACE FUNCTION fun_actualizar_saldo_proveedor()
 RETURNS TRIGGER AS
 $BODY$
 DECLARE
-    wresta DECIMAL(10,0);
+    wresta tab_cuentasxpagar.val_saldo%TYPE;   -- (cálculo) cuánto bajó el saldo
 BEGIN
 
     -- Determinar cuánto disminuyó el saldo de la cuenta

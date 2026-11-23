@@ -5,7 +5,7 @@ $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Archivo Plano";
 $page_description = "Archivos planos de pago al banco: proveedores, nómina e inversiones";
 $page_icon        = "bi-file-earmark-spreadsheet";
-$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/archivo_plano.css', 'modules/tescxp/css/cmp_modales.css'];
+$page_extra_css   = ['modules/tescxp/css/tcx_pantalla.css', 'modules/tescxp/css/tcx_modales.css', 'modules/tescxp/css/archivo_plano.css'];
 $page_extra_js    = ['modules/tescxp/js/archivo_plano.js'];
 $page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
@@ -1053,9 +1053,9 @@ function stats_externos(array $lista): array {
 $st_nom = stats_externos($arch_nom);
 $st_inv = stats_externos($arch_inv);
 
-// Datos que usa el JS (detalle, editar, devolver, descargar)
-function datos_fila_archivo(array $a): string {
-    $datos = [
+// Datos que usa el JS para pintar la lista (y para detalle, editar, devolver, descargar)
+function datos_archivo(array $a): array {
+    return [
         'id_archivo_plano' => $a['id_archivo_plano'],
         'nom_archivo'      => $a['nom_archivo'],
         'id_empresa'       => $a['id_empresa'],
@@ -1074,8 +1074,19 @@ function datos_fila_archivo(array $a): string {
         'modulo_origen'    => modulo_origen($a),
         'periodo_nomina'   => descripcion_origen($a),   // descripción del origen (nómina o inversiones)
         'cta_combo'        => $a['id_empresa'] . ':' . $a['cta_empresa'],
+        // Para la lista
+        'total'            => (float)$a['total'],
+        'cant_lineas'      => (int)$a['cant_lineas'],
+        'nom_aprobados'    => (int)($a['nom_aprobados'] ?? 0),
+        'nom_rechazados'   => (int)($a['nom_rechazados'] ?? 0),
+        'ano_nomina'       => $a['ano_nomina'] ?? null,
+        'mes_nomina'       => $a['mes_nomina'] ?? null,
+        'val_periodo'      => $a['val_periodo'] ?? null,
+        'cant_inversores'  => (int)($a['cant_inversores'] ?? 0),
+        'cant_proyectos'   => (int)($a['cant_proyectos'] ?? 0),
+        'max_vencimiento'  => $a['max_vencimiento'] ?? null,
+        'estado'           => es_externo($a) ? estado_archivo_externo($a) : (es_verdadero($a['ind_generado']) ? 'generado' : 'por_generar'),
     ];
-    return htmlspecialchars(json_encode($datos, JSON_UNESCAPED_UNICODE), ENT_QUOTES);
 }
 
 function ap_fecha_corta($iso): string {
@@ -1095,34 +1106,33 @@ $fecha_sugerida = proxima_fecha_valida($dias_pago, $festivos);
 ob_start();
 ?>
 
-<link rel="stylesheet" href="modules/tescxp/css/archivo_plano.css?v=<?= $v_ap_css ?>">
-<div id="mod-archivo-plano" class="app-view active">
+<div id="mod-archivo-plano" class="app-view active tcx-pantalla" data-lista-fija>
 
     <!-- ENCABEZADO -->
     <div class="module-header">
         <div class="module-header-text">
-            <h1>Archivo Plano</h1>
-            <p>Archivos de pago para enviar al banco: los de proveedores se arman aquí; los de nómina los envía Gestión Humana y los de inversiones el área Financiera</p>
+            <h1>Archivo plano</h1>
+            <p>Archivos de pago para el banco: proveedores (se arman aquí), nómina e inversiones (los envían otros módulos).</p>
         </div>
-        <button id="btn-add-archivo" class="btn btn-primary" data-seccion="proveedores">
-            <i class="fas fa-plus"></i> Nuevo Archivo Plano
-        </button>
+        <div class="module-header-acciones">
+            <button type="button" id="btn-add-archivo" class="btn btn-primary"><i class="fas fa-plus"></i> Nuevo archivo plano</button>
+        </div>
     </div>
 
     <!-- SECCIONES -->
-    <div class="ap-tabs" role="tablist">
-        <button type="button" class="ap-tab active" role="tab" data-tab="proveedores">
+    <div class="ap-tabs" role="tablist" aria-label="Tipo de archivo">
+        <button type="button" class="ap-tab active" role="tab" aria-selected="true" data-tab="proveedores">
             <i class="fas fa-truck"></i> Proveedores
             <span class="ap-tab-count"><?= $st_prov['total'] ?></span>
         </button>
-        <button type="button" class="ap-tab" role="tab" data-tab="nomina">
+        <button type="button" class="ap-tab" role="tab" aria-selected="false" data-tab="nomina">
             <i class="fas fa-users"></i> Nómina
             <span class="ap-tab-count"><?= $st_nom['total'] ?></span>
             <?php if ($st_nom['por_generar'] > 0): ?>
                 <span class="ap-tab-alerta" title="Archivos enviados por Gestión Humana que aún no se han descargado"><?= $st_nom['por_generar'] ?> por generar</span>
             <?php endif; ?>
         </button>
-        <button type="button" class="ap-tab" role="tab" data-tab="inversiones">
+        <button type="button" class="ap-tab" role="tab" aria-selected="false" data-tab="inversiones">
             <i class="fas fa-hand-holding-dollar"></i> Inversiones
             <span class="ap-tab-count"><?= $st_inv['total'] ?></span>
             <?php if ($st_inv['por_generar'] > 0): ?>
@@ -1131,437 +1141,122 @@ ob_start();
         </button>
     </div>
 
-    <!-- STATS: PROVEEDORES -->
-    <div class="stats-grid" data-seccion="proveedores">
-        <div class="stat-card">
-            <div class="stat-icon blue"><i class="fas fa-file-invoice"></i></div>
+    <!-- Indicadores de la sección activa: los calcula archivo_plano.js sobre todos sus archivos -->
+    <div class="stats-grid">
+        <div class="stat-card" style="--i:0">
+            <div class="stat-icon blue"><i class="fas fa-file-invoice" id="stat-1-icono"></i></div>
             <div class="stat-info">
-                <div class="stat-label">Total archivos</div>
-                <div class="stat-value"><?= $st_prov['total'] ?></div>
+                <div class="stat-label" id="stat-1-label">Total archivos</div>
+                <div class="stat-value" id="stat-1">0</div>
+                <div class="stat-hint" id="stat-1-hint"></div>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon green"><i class="fas fa-check-circle"></i></div>
-            <div class="stat-info">
-                <div class="stat-label">Generados</div>
-                <div class="stat-value"><?= $st_prov['generados'] ?></div>
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon yellow"><i class="fas fa-clock"></i></div>
+        <div class="stat-card" style="--i:1">
+            <div class="stat-icon amber"><i class="fas fa-clock"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Por generar</div>
-                <div class="stat-value"><?= $st_prov['pendientes'] ?></div>
+                <div class="stat-value" id="stat-2">0</div>
+                <div class="stat-hint">Falta descargar el CSV</div>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon purple"><i class="fas fa-coins"></i></div>
+        <div class="stat-card" style="--i:2">
+            <div class="stat-icon green"><i class="fas fa-check-circle" id="stat-3-icono"></i></div>
             <div class="stat-info">
-                <div class="stat-label">Valor por generar</div>
-                <div class="stat-value stat-money"><?= ap_pesos($st_prov['valor_pend']) ?></div>
+                <div class="stat-label" id="stat-3-label">Generados</div>
+                <div class="stat-value" id="stat-3">0</div>
+                <div class="stat-hint" id="stat-3-hint"></div>
             </div>
         </div>
-    </div>
-
-    <!-- STATS: NÓMINA -->
-    <div class="stats-grid" data-seccion="nomina" style="display:none">
-        <div class="stat-card">
-            <div class="stat-icon blue"><i class="fas fa-inbox"></i></div>
+        <div class="stat-card" style="--i:3">
+            <div class="stat-icon rose"><i class="fas fa-coins" id="stat-4-icono"></i></div>
             <div class="stat-info">
-                <div class="stat-label">Recibidos de Nómina</div>
-                <div class="stat-value"><?= $st_nom['total'] ?></div>
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon yellow"><i class="fas fa-clock"></i></div>
-            <div class="stat-info">
-                <div class="stat-label">Por generar</div>
-                <div class="stat-value"><?= $st_nom['por_generar'] ?></div>
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon purple"><i class="fas fa-building-columns"></i></div>
-            <div class="stat-info">
-                <div class="stat-label">Esperando al banco</div>
-                <div class="stat-value"><?= $st_nom['esperando'] ?></div>
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon red"><i class="fas fa-circle-exclamation"></i></div>
-            <div class="stat-info">
-                <div class="stat-label">Con rechazos</div>
-                <div class="stat-value"><?= $st_nom['rechazos'] ?></div>
-            </div>
-        </div>
-    </div>
-
-    <!-- STATS: INVERSIONES -->
-    <div class="stats-grid" data-seccion="inversiones" style="display:none">
-        <div class="stat-card">
-            <div class="stat-icon blue"><i class="fas fa-inbox"></i></div>
-            <div class="stat-info">
-                <div class="stat-label">Recibidos de Financiero</div>
-                <div class="stat-value"><?= $st_inv['total'] ?></div>
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon yellow"><i class="fas fa-clock"></i></div>
-            <div class="stat-info">
-                <div class="stat-label">Por generar</div>
-                <div class="stat-value"><?= $st_inv['por_generar'] ?></div>
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon purple"><i class="fas fa-building-columns"></i></div>
-            <div class="stat-info">
-                <div class="stat-label">Esperando al banco</div>
-                <div class="stat-value"><?= $st_inv['esperando'] ?></div>
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-icon red"><i class="fas fa-circle-exclamation"></i></div>
-            <div class="stat-info">
-                <div class="stat-label">Con rechazos</div>
-                <div class="stat-value"><?= $st_inv['rechazos'] ?></div>
+                <div class="stat-label" id="stat-4-label">Valor por generar</div>
+                <div class="stat-value" id="stat-4">0</div>
+                <div class="stat-hint" id="stat-4-hint"></div>
             </div>
         </div>
     </div>
 
     <!-- Avisos de las secciones Nómina e Inversiones -->
-    <p class="config-hint ap-hint-seccion" data-seccion="nomina" style="display:none">
+    <p class="config-hint ap-hint-seccion" data-seccion="nomina" hidden>
         <i class="fas fa-info-circle"></i>
         <span>Gestión Humana envía estos archivos con «Enviar a Tesorería». Antes de descargarlos puede
-        cambiar la cuenta de origen y la fecha (<i class="fas fa-edit"></i>) o devolverlos a Nómina
+        cambiar la cuenta de origen y la fecha (<i class="fas fa-pen"></i>) o devolverlos a Nómina
         (<i class="fas fa-rotate-left"></i>). La respuesta del banco se carga en Historial de Pagos.</span>
     </p>
-    <p class="config-hint ap-hint-seccion" data-seccion="inversiones" style="display:none">
+    <p class="config-hint ap-hint-seccion" data-seccion="inversiones" hidden>
         <i class="fas fa-info-circle"></i>
         <span>El área Financiera envía aquí las cuotas aprobadas de las inversiones (dividendos, rendimientos y
         devolución de capital). Antes de descargarlos puede cambiar la cuenta de origen y la fecha
-        (<i class="fas fa-edit"></i>) o devolverlos a Financiero (<i class="fas fa-rotate-left"></i>).
+        (<i class="fas fa-pen"></i>) o devolverlos a Financiero (<i class="fas fa-rotate-left"></i>).
         La respuesta del banco se carga en Historial de Pagos.</span>
     </p>
 
-    <!-- FILTROS (aplican a la sección activa) -->
+    <!-- Filtros (componente "filtros": píldoras con conteo). Aplican a la sección activa -->
     <div class="filter-bar">
-        <div class="search-wrapper">
-            <span class="search-icon"><i class="fas fa-search"></i></span>
-            <input type="text" id="archivo-search" class="search-input" placeholder="Buscar por nombre, banco o cuenta...">
+        <div class="filter-row">
+            <div class="search-wrapper">
+                <span class="search-icon"><i class="fas fa-search"></i></span>
+                <input type="search" id="archivo-search" class="search-input" maxlength="60" autocomplete="off" placeholder="Buscar por nombre, banco o cuenta...">
+            </div>
+            <div class="filter-toggle-group" role="group" aria-label="Estado" data-para="archivo-filtro-estado">
+                <button type="button" class="filter-toggle active" data-valor="all" aria-pressed="true">Todos <span class="count" id="arc-cnt-all"></span></button>
+                <button type="button" class="filter-toggle" data-valor="generado" aria-pressed="false">Generados <span class="count" id="arc-cnt-generado"></span></button>
+                <button type="button" class="filter-toggle" data-valor="pendiente" aria-pressed="false">Por generar <span class="count" id="arc-cnt-pendiente"></span></button>
+            </div>
+            <input type="hidden" id="archivo-filtro-estado" value="all">
+            <button type="button" id="btn-clear-filters" class="btn-clear-filter" hidden><i class="fas fa-eraser"></i> Limpiar</button>
         </div>
-        <div class="filter-toggle-group">
-            <button class="filter-toggle active" data-filter="all">Todos</button>
-            <button class="filter-toggle" data-filter="generado">Generados</button>
-            <button class="filter-toggle" data-filter="pendiente">Por generar</button>
-        </div>
-        <button id="btn-clear-filters" class="btn-clear-filter" style="display:none">
-            <i class="fas fa-times"></i> Limpiar
-        </button>
-        <div class="pagination-size">
-            <label for="archivos-page-size">Filas por página</label>
-            <select id="archivos-page-size">
-                <option value="10">10</option>
-                <option value="25" selected>25</option>
-                <option value="50">50</option>
-                <option value="all">Todos</option>
-            </select>
-        </div>
-        <span class="filter-info" id="archivos-count"><?= $st_prov['total'] ?> resultado<?= $st_prov['total'] !== 1 ? 's' : '' ?></span>
+        <div class="filter-info" id="archivos-count" aria-live="polite">0 resultados</div>
     </div>
 
-    <!-- TABLAS -->
-    <div class="table-container">
-      <div class="table-scroll" id="archivos-table-scroll">
-
-        <!-- ===== PROVEEDORES ===== -->
-        <table class="data-table" id="tabla-proveedores" data-seccion="proveedores">
-            <!-- Anchos fijos: las columnas no se mueven al ordenar o cambiar de página -->
-            <colgroup>
-                <col class="col-archivo">
-                <col class="col-origen">
-                <col class="col-pagos">
-                <col class="col-aplicacion">
-                <col class="col-generacion">
-                <col class="col-estado">
-                <col class="col-acciones">
-            </colgroup>
-            <thead>
-                <tr>
-                    <th class="sortable" data-sort-key="0" data-sort-type="text">Archivo <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="1" data-sort-type="text">Cuenta de Origen <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable text-right" data-sort-key="2" data-sort-type="number">Pagos <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="3" data-sort-type="text">Aplicación <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="4" data-sort-type="text">Generación <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-center">Estado</th>
-                    <th class="text-center">Acciones</th>
-                </tr>
-            </thead>
-            <tbody id="tbody-proveedores" class="tbody-archivos">
-            <?php if (empty($arch_prov)): ?>
-                <tr class="empty-row">
-                    <td colspan="7">
-                        <div class="empty-state">
-                            <i class="fas fa-file-invoice"></i>
-                            <p>No hay archivos planos de proveedores</p>
-                            <span>Haga clic en "Nuevo Archivo Plano" para crear el primero a partir de un cronograma</span>
-                        </div>
-                    </td>
-                </tr>
-            <?php endif; ?>
-            <?php foreach ($arch_prov as $a):
-                $generado = es_verdadero($a['ind_generado']);
-            ?>
-                <tr data-estado="<?= $generado ? 'generado' : 'pendiente' ?>" data-archivo="<?= datos_fila_archivo($a) ?>">
-                    <td data-sort="<?= htmlspecialchars($a['nom_archivo']) ?>">
-                        <strong><?= htmlspecialchars($a['nom_archivo']) ?></strong><br>
-                        <small class="cell-sub">#<?= htmlspecialchars($a['id_archivo_plano']) ?></small>
-                    </td>
-                    <td data-sort="<?= htmlspecialchars($a['nom_banco'] . ' ' . $a['cta_empresa']) ?>">
-                        <?= htmlspecialchars($a['nom_banco']) ?><br>
-                        <small class="cell-sub"><?= htmlspecialchars($a['cta_empresa']) ?> · <?= tipo_cuenta_txt($a['ind_tipocuenta']) ?></small>
-                    </td>
-                    <td class="text-right" data-sort="<?= (float)$a['total'] ?>">
-                        <strong><?= ap_pesos($a['total']) ?></strong><br>
-                        <small class="cell-sub"><?= (int)$a['cant_lineas'] ?> pago<?= (int)$a['cant_lineas'] !== 1 ? 's' : '' ?></small>
-                    </td>
-                    <td data-sort="<?= htmlspecialchars((string)$a['fecha_aplicacion']) ?>"><?= ap_fecha_corta($a['fecha_aplicacion']) ?></td>
-                    <td data-sort="<?= htmlspecialchars((string)$a['fec_generacion']) ?>"><?= ap_fecha_corta($a['fec_generacion']) ?></td>
-                    <td class="text-center">
-                        <?php if ($generado): ?>
-                            <span class="badge badge-active">Generado</span>
-                        <?php else: ?>
-                            <span class="badge badge-pending">Por generar</span>
-                        <?php endif; ?>
-                    </td>
-                    <td class="text-center">
-                        <button class="btn-icon-sm view" data-action="descargar" title="Descargar CSV">
-                            <i class="fas fa-download"></i>
-                        </button>
-                        <?php if (!$generado): ?>
-                            <!-- Solo se edita mientras el archivo no se haya generado -->
-                            <button class="btn-icon-sm edit" data-action="editar" title="Editar nombre">
-                                <i class="fas fa-edit"></i>
-                            </button>
-                        <?php else: ?>
-                            <span class="accion-bloqueada" title="Archivo generado: no se puede editar">
-                                <i class="fas fa-lock"></i>
-                            </span>
-                        <?php endif; ?>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-
-        <!-- ===== NÓMINA ===== -->
-        <table class="data-table" id="tabla-nomina" data-seccion="nomina" style="display:none">
-            <colgroup>
-                <col class="col-archivo">
-                <col class="col-periodo">
-                <col class="col-origen">
-                <col class="col-pagos">
-                <col class="col-aplicacion">
-                <col class="col-generacion">
-                <col class="col-estado">
-                <col class="col-acciones">
-            </colgroup>
-            <thead>
-                <tr>
-                    <th class="sortable" data-sort-key="0" data-sort-type="text">Archivo <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="1" data-sort-type="text">Periodo <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="2" data-sort-type="text">Cuenta de Origen <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable text-right" data-sort-key="3" data-sort-type="number">Empleados <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="4" data-sort-type="text">Aplicación <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="5" data-sort-type="text">Generación <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-center">Estado</th>
-                    <th class="text-center">Acciones</th>
-                </tr>
-            </thead>
-            <tbody id="tbody-nomina" class="tbody-archivos">
-            <?php if (empty($arch_nom)): ?>
-                <tr class="empty-row">
-                    <td colspan="8">
-                        <div class="empty-state">
-                            <i class="fas fa-users"></i>
-                            <p>No hay archivos de nómina</p>
-                            <span>Aparecen aquí cuando Gestión Humana pulsa «Enviar a Tesorería» en Liquidar Nómina</span>
-                        </div>
-                    </td>
-                </tr>
-            <?php endif; ?>
-            <?php foreach ($arch_nom as $a):
-                $generado = es_verdadero($a['ind_generado']);
-                $estado   = estado_archivo_externo($a);
-                $cant     = (int)$a['cant_lineas'];
-                $apr      = (int)$a['nom_aprobados'];
-                $rec      = (int)$a['nom_rechazados'];
-                $periodo  = (int)$a['ano_nomina'] . '-' . str_pad((string)(int)$a['mes_nomina'], 2, '0', STR_PAD_LEFT);
-            ?>
-                <tr data-estado="<?= $generado ? 'generado' : 'pendiente' ?>" data-archivo="<?= datos_fila_archivo($a) ?>">
-                    <td data-sort="<?= htmlspecialchars($a['nom_archivo']) ?>">
-                        <strong><?= htmlspecialchars($a['nom_archivo']) ?></strong><br>
-                        <small class="cell-sub">#<?= htmlspecialchars($a['id_archivo_plano']) ?></small>
-                    </td>
-                    <td data-sort="<?= htmlspecialchars($periodo . '-' . (int)$a['val_periodo']) ?>">
-                        <strong><?= htmlspecialchars($periodo) ?></strong><br>
-                        <small class="cell-sub">Periodo <?= (int)$a['val_periodo'] ?></small>
-                    </td>
-                    <td data-sort="<?= htmlspecialchars($a['nom_banco'] . ' ' . $a['cta_empresa']) ?>">
-                        <?= htmlspecialchars($a['nom_banco']) ?><br>
-                        <small class="cell-sub"><?= htmlspecialchars($a['cta_empresa']) ?> · <?= tipo_cuenta_txt($a['ind_tipocuenta']) ?></small>
-                    </td>
-                    <td class="text-right" data-sort="<?= (float)$a['total'] ?>">
-                        <strong><?= ap_pesos($a['total']) ?></strong><br>
-                        <small class="cell-sub"><?= $cant ?> empleado<?= $cant !== 1 ? 's' : '' ?></small>
-                    </td>
-                    <td data-sort="<?= htmlspecialchars((string)$a['fecha_aplicacion']) ?>"><?= ap_fecha_corta($a['fecha_aplicacion']) ?></td>
-                    <td data-sort="<?= htmlspecialchars((string)$a['fec_generacion']) ?>"><?= ap_fecha_corta($a['fec_generacion']) ?></td>
-                    <td class="text-center">
-                        <?php if ($estado === 'por_generar'): ?>
-                            <span class="badge badge-pending">Por generar</span>
-                        <?php elseif ($estado === 'esperando'): ?>
-                            <span class="badge badge-banco">Esperando banco</span>
-                            <br><small class="cell-sub"><?= $apr + $rec ?> de <?= $cant ?> con respuesta</small>
-                        <?php elseif ($estado === 'pagado'): ?>
-                            <span class="badge badge-active">Pagado</span>
-                        <?php else: ?>
-                            <span class="badge badge-inactive">Con rechazos</span>
-                            <br><small class="cell-sub"><?= $rec ?> rechazado<?= $rec !== 1 ? 's' : '' ?> · <?= $apr ?> pagado<?= $apr !== 1 ? 's' : '' ?></small>
-                        <?php endif; ?>
-                    </td>
-                    <td class="text-center">
-                        <button class="btn-icon-sm view" data-action="descargar" title="Descargar CSV">
-                            <i class="fas fa-download"></i>
-                        </button>
-                        <?php if (!$generado): ?>
-                            <button class="btn-icon-sm edit" data-action="editar" title="Editar nombre, cuenta de origen y fecha">
-                                <i class="fas fa-edit"></i>
-                            </button>
-                            <button class="btn-icon-sm reject" data-action="devolver" title="Devolver a Nómina">
-                                <i class="fas fa-rotate-left"></i>
-                            </button>
-                        <?php else: ?>
-                            <span class="accion-bloqueada" title="Archivo generado: no se puede editar ni devolver">
-                                <i class="fas fa-lock"></i>
-                            </span>
-                        <?php endif; ?>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-
-        <!-- ===== INVERSIONES ===== -->
-        <table class="data-table" id="tabla-inversiones" data-seccion="inversiones" style="display:none">
-            <colgroup>
-                <col class="col-archivo">
-                <col class="col-periodo">
-                <col class="col-origen">
-                <col class="col-pagos">
-                <col class="col-aplicacion">
-                <col class="col-generacion">
-                <col class="col-estado">
-                <col class="col-acciones">
-            </colgroup>
-            <thead>
-                <tr>
-                    <th class="sortable" data-sort-key="0" data-sort-type="text">Archivo <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="1" data-sort-type="text">Inversores <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="2" data-sort-type="text">Cuenta de Origen <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable text-right" data-sort-key="3" data-sort-type="number">Cuotas <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="4" data-sort-type="text">Aplicación <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="5" data-sort-type="text">Generación <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-center">Estado</th>
-                    <th class="text-center">Acciones</th>
-                </tr>
-            </thead>
-            <tbody id="tbody-inversiones" class="tbody-archivos">
-            <?php if (empty($arch_inv)): ?>
-                <tr class="empty-row">
-                    <td colspan="8">
-                        <div class="empty-state">
-                            <i class="fas fa-hand-holding-dollar"></i>
-                            <p>No hay archivos de inversiones</p>
-                            <span>Aparecen aquí cuando el área Financiera envía las cuotas aprobadas a Tesorería</span>
-                        </div>
-                    </td>
-                </tr>
-            <?php endif; ?>
-            <?php foreach ($arch_inv as $a):
-                $generado = es_verdadero($a['ind_generado']);
-                $estado   = estado_archivo_externo($a);
-                $cant     = (int)$a['cant_lineas'];
-                $apr      = (int)$a['nom_aprobados'];
-                $rec      = (int)$a['nom_rechazados'];
-                $n_inv    = (int)($a['cant_inversores'] ?? 0);
-                $n_pry    = (int)($a['cant_proyectos'] ?? 0);
-            ?>
-                <tr data-estado="<?= $generado ? 'generado' : 'pendiente' ?>" data-archivo="<?= datos_fila_archivo($a) ?>">
-                    <td data-sort="<?= htmlspecialchars($a['nom_archivo']) ?>">
-                        <strong><?= htmlspecialchars($a['nom_archivo']) ?></strong><br>
-                        <small class="cell-sub">#<?= htmlspecialchars($a['id_archivo_plano']) ?></small>
-                    </td>
-                    <td data-sort="<?= htmlspecialchars((string)($a['max_vencimiento'] ?? '')) ?>">
-                        <strong><?= $n_inv ?> inversor<?= $n_inv !== 1 ? 'es' : '' ?></strong>
-                        <small class="cell-sub">· <?= $n_pry ?> proyecto<?= $n_pry !== 1 ? 's' : '' ?></small><br>
-                        <small class="cell-sub">Vencen hasta <?= ap_fecha_corta($a['max_vencimiento'] ?? null) ?></small>
-                    </td>
-                    <td data-sort="<?= htmlspecialchars($a['nom_banco'] . ' ' . $a['cta_empresa']) ?>">
-                        <?= htmlspecialchars($a['nom_banco']) ?><br>
-                        <small class="cell-sub"><?= htmlspecialchars($a['cta_empresa']) ?> · <?= tipo_cuenta_txt($a['ind_tipocuenta']) ?></small>
-                    </td>
-                    <td class="text-right" data-sort="<?= (float)$a['total'] ?>">
-                        <strong><?= ap_pesos($a['total']) ?></strong><br>
-                        <small class="cell-sub"><?= $cant ?> cuota<?= $cant !== 1 ? 's' : '' ?></small>
-                    </td>
-                    <td data-sort="<?= htmlspecialchars((string)$a['fecha_aplicacion']) ?>"><?= ap_fecha_corta($a['fecha_aplicacion']) ?></td>
-                    <td data-sort="<?= htmlspecialchars((string)$a['fec_generacion']) ?>"><?= ap_fecha_corta($a['fec_generacion']) ?></td>
-                    <td class="text-center">
-                        <?php if ($estado === 'por_generar'): ?>
-                            <span class="badge badge-pending">Por generar</span>
-                        <?php elseif ($estado === 'esperando'): ?>
-                            <span class="badge badge-banco">Esperando banco</span>
-                            <br><small class="cell-sub"><?= $apr + $rec ?> de <?= $cant ?> con respuesta</small>
-                        <?php elseif ($estado === 'pagado'): ?>
-                            <span class="badge badge-active">Pagado</span>
-                        <?php else: ?>
-                            <span class="badge badge-inactive">Con rechazos</span>
-                            <br><small class="cell-sub"><?= $rec ?> rechazada<?= $rec !== 1 ? 's' : '' ?> · <?= $apr ?> pagada<?= $apr !== 1 ? 's' : '' ?></small>
-                        <?php endif; ?>
-                    </td>
-                    <td class="text-center">
-                        <button class="btn-icon-sm view" data-action="descargar" title="Descargar CSV">
-                            <i class="fas fa-download"></i>
-                        </button>
-                        <?php if (!$generado): ?>
-                            <button class="btn-icon-sm edit" data-action="editar" title="Editar nombre, cuenta de origen y fecha">
-                                <i class="fas fa-edit"></i>
-                            </button>
-                            <button class="btn-icon-sm reject" data-action="devolver" title="Devolver a Financiero">
-                                <i class="fas fa-rotate-left"></i>
-                            </button>
-                        <?php else: ?>
-                            <span class="accion-bloqueada" title="Archivo generado: no se puede editar ni devolver">
-                                <i class="fas fa-lock"></i>
-                            </span>
-                        <?php endif; ?>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-      </div>
-
-        <!-- PAGINACIÓN -->
-        <div class="table-footer">
-            <div class="pagination-nav">
-                <span class="pagination-range" id="archivos-range">0 de 0</span>
-                <button type="button" id="archivos-prev" class="pagination-btn" disabled aria-label="Página anterior">
-                    <i class="fas fa-chevron-left"></i>
-                </button>
-                <button type="button" id="archivos-next" class="pagination-btn" disabled aria-label="Página siguiente">
-                    <i class="fas fa-chevron-right"></i>
-                </button>
-            </div>
+    <!-- Listas (una por sección): las pinta archivo_plano.js; clic en la fila abre el detalle -->
+    <div class="table-container" data-lista>
+        <div data-lista-scroll>
+            <table class="data-table" id="tabla-proveedores" data-erp-movil data-erp-movil-titulo="1">
+                <thead>
+                    <tr>
+                        <th>Archivo</th>
+                        <th>Cuenta de origen</th>
+                        <th class="text-right">Pagos</th>
+                        <th>Aplicación</th>
+                        <th>Generación</th>
+                        <th>Estado</th>
+                        <th class="col-acciones">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody-proveedores"></tbody>
+            </table>
+            <table class="data-table" id="tabla-nomina" data-erp-movil data-erp-movil-titulo="1" hidden>
+                <thead>
+                    <tr>
+                        <th>Archivo</th>
+                        <th>Periodo</th>
+                        <th>Cuenta de origen</th>
+                        <th class="text-right">Empleados</th>
+                        <th>Aplicación</th>
+                        <th>Generación</th>
+                        <th>Estado</th>
+                        <th class="col-acciones">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody-nomina"></tbody>
+            </table>
+            <table class="data-table" id="tabla-inversiones" data-erp-movil data-erp-movil-titulo="1" hidden>
+                <thead>
+                    <tr>
+                        <th>Archivo</th>
+                        <th>Inversores</th>
+                        <th>Cuenta de origen</th>
+                        <th class="text-right">Cuotas</th>
+                        <th>Aplicación</th>
+                        <th>Generación</th>
+                        <th>Estado</th>
+                        <th class="col-acciones">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody-inversiones"></tbody>
+            </table>
         </div>
     </div>
 </div>
@@ -1571,12 +1266,12 @@ ob_start();
      en pantalla sin scroll. La lista de proveedores tiene su propio scroll. -->
 <div id="modal-new-archivo" class="modal-overlay hidden">
     <div class="modal-box modal-box-xl">
-        <div class="modal-header green">
+        <div class="modal-header">
             <div>
-                <h2>Nuevo Archivo Plano</h2>
+                <h3>Nuevo archivo plano</h3>
                 <p>Arme el archivo de pagos a partir de un cronograma</p>
             </div>
-            <button class="modal-close btn-close-new-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-new-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="new-archivo-form" class="ap-layout" novalidate>
@@ -1592,7 +1287,7 @@ ob_start();
                                 <i class="fas fa-plus"></i> Nueva cuenta
                             </button>
                         </div>
-                        <select id="new-cta-empresa" name="sel_cta_empresa" class="form-select" title="El archivo se envía al banco de esta cuenta, y de ella sale el dinero">
+                        <select id="new-cta-empresa" name="sel_cta_empresa" class="form-input" title="El archivo se envía al banco de esta cuenta, y de ella sale el dinero">
                             <option value=""><?= empty($ctas_empresa_disp) ? 'No hay cuentas registradas' : 'Seleccione...' ?></option>
                             <?php foreach ($ctas_empresa_disp as $ce): ?>
                                 <option value="<?= htmlspecialchars($ce['id_empresa']) ?>:<?= htmlspecialchars($ce['cta_empresa']) ?>"
@@ -1639,7 +1334,7 @@ ob_start();
                 <div class="ap-col ap-col-pagos">
                     <div class="form-field">
                         <label class="form-label">Cronograma Pendiente <span class="required">*</span></label>
-                        <select id="new-id-cronograma" class="form-select" name="sel_id_cronograma">
+                        <select id="new-id-cronograma" class="form-input" name="sel_id_cronograma">
                             <option value="">Seleccione...</option>
                             <?php foreach ($cronogramas_pend as $cr): ?>
                                 <option value="<?= htmlspecialchars($cr['id_cronograma']) ?>">
@@ -1671,12 +1366,12 @@ ob_start();
 <!-- MODAL RÁPIDO: NUEVA CUENTA DE ORIGEN (EMPRESA) SIN SALIR DEL ARCHIVO -->
 <div id="modal-ctaemp-rapida" class="modal-overlay modal-nested hidden">
     <div class="modal-box modal-box-sm">
-        <div class="modal-header green">
+        <div class="modal-header">
             <div>
-                <h2>Nueva Cuenta de la Empresa</h2>
+                <h3>Nueva cuenta de la empresa</h3>
                 <p>Queda seleccionada como cuenta de origen</p>
             </div>
-            <button type="button" class="modal-close btn-close-ctaemp-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-ctaemp-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="ctaemp-rapida-form" novalidate>
@@ -1688,7 +1383,7 @@ ob_start();
                             <i class="fas fa-plus"></i> Nuevo banco
                         </button>
                     </div>
-                    <select id="ctaemp-banco" name="sel_ctaemp_banco" class="form-select select-banco">
+                    <select id="ctaemp-banco" name="sel_ctaemp_banco" class="form-input select-banco">
                         <option value=""><?= empty($bancos) ? 'No hay bancos registrados' : 'Seleccione...' ?></option>
                         <?php foreach ($bancos as $b): ?>
                             <option value="<?= htmlspecialchars($b['id_banco']) ?>"><?= htmlspecialchars($b['nom_banco']) ?></option>
@@ -1703,7 +1398,7 @@ ob_start();
                 </div>
                 <div class="form-field">
                     <label class="form-label" for="ctaemp-tipocuenta">Tipo de Cuenta</label>
-                    <select id="ctaemp-tipocuenta" name="sel_ctaemp_tipocuenta" class="form-select">
+                    <select id="ctaemp-tipocuenta" name="sel_ctaemp_tipocuenta" class="form-input">
                         <option value="false">Ahorros</option>
                         <option value="true">Corriente</option>
                     </select>
@@ -1713,7 +1408,7 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-ctaemp-modal">Cancelar</button>
-            <button type="button" id="ctaemp-rapida-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Cuenta</button>
+            <button type="button" id="ctaemp-rapida-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
@@ -1721,12 +1416,12 @@ ob_start();
 <!-- MODAL RÁPIDO: NUEVA CUENTA DE UN PROVEEDOR DEL CRONOGRAMA -->
 <div id="modal-ctaprov-rapida" class="modal-overlay modal-nested hidden">
     <div class="modal-box modal-box-sm">
-        <div class="modal-header green">
+        <div class="modal-header">
             <div>
-                <h2>Nueva Cuenta del Proveedor</h2>
+                <h3>Nueva cuenta del proveedor</h3>
                 <p>Se agrega a sus cuentas y queda elegida en este archivo</p>
             </div>
-            <button type="button" class="modal-close btn-close-ctaprov-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-ctaprov-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="ctaprov-rapida-form" novalidate>
@@ -1743,7 +1438,7 @@ ob_start();
                             <i class="fas fa-plus"></i> Nuevo banco
                         </button>
                     </div>
-                    <select id="ctaprov-banco" name="sel_ctaprov_banco" class="form-select select-banco">
+                    <select id="ctaprov-banco" name="sel_ctaprov_banco" class="form-input select-banco">
                         <option value=""><?= empty($bancos) ? 'No hay bancos registrados' : 'Seleccione...' ?></option>
                         <?php foreach ($bancos as $b): ?>
                             <option value="<?= htmlspecialchars($b['id_banco']) ?>"><?= htmlspecialchars($b['nom_banco']) ?></option>
@@ -1758,7 +1453,7 @@ ob_start();
                 </div>
                 <div class="form-field">
                     <label class="form-label" for="ctaprov-tipocuenta">Tipo de Cuenta</label>
-                    <select id="ctaprov-tipocuenta" name="sel_ctaprov_tipocuenta" class="form-select">
+                    <select id="ctaprov-tipocuenta" name="sel_ctaprov_tipocuenta" class="form-input">
                         <option value="false">Ahorros</option>
                         <option value="true">Corriente</option>
                     </select>
@@ -1767,7 +1462,7 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-ctaprov-modal">Cancelar</button>
-            <button type="button" id="ctaprov-rapida-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Cuenta</button>
+            <button type="button" id="ctaprov-rapida-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
@@ -1775,12 +1470,12 @@ ob_start();
 <!-- MODAL ANIDADO: NUEVO BANCO (lo abren los dos modales de cuenta) -->
 <div id="modal-banco-rapido" class="modal-overlay modal-nested modal-nested-2 hidden">
     <div class="modal-box modal-box-sm">
-        <div class="modal-header green">
+        <div class="modal-header">
             <div>
-                <h2>Nuevo Banco</h2>
+                <h3>Nuevo banco</h3>
                 <p>Se agregará a la lista sin salir de la cuenta</p>
             </div>
-            <button type="button" class="modal-close btn-close-banco-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-banco-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="banco-rapido-form" novalidate>
@@ -1800,7 +1495,7 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-banco-modal">Cancelar</button>
-            <button type="button" id="banco-rapido-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Banco</button>
+            <button type="button" id="banco-rapido-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
@@ -1808,12 +1503,12 @@ ob_start();
 <!-- MODAL: EDITAR ARCHIVO PLANO -->
 <div id="modal-edit-archivo" class="modal-overlay hidden">
     <div class="modal-box">
-        <div class="modal-header blue">
+        <div class="modal-header">
             <div>
-                <h2>Editar Archivo Plano</h2>
+                <h3>Editar archivo plano</h3>
                 <p id="edit-subtitulo">Solo se puede cambiar el nombre mientras no se haya generado</p>
             </div>
-            <button class="modal-close btn-close-edit-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-edit-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="edit-archivo-form" novalidate>
@@ -1830,7 +1525,7 @@ ob_start();
                     <p class="config-hint" id="edit-nomina-periodo"></p>
                     <div class="form-field">
                         <label class="form-label" for="edit-cta-empresa">Cuenta de Origen (Empresa) <span class="required">*</span></label>
-                        <select id="edit-cta-empresa" name="sel_edit_cta_empresa" class="form-select" disabled>
+                        <select id="edit-cta-empresa" name="sel_edit_cta_empresa" class="form-input" disabled>
                             <option value=""><?= empty($ctas_empresa_disp) ? 'No hay cuentas registradas' : 'Seleccione...' ?></option>
                             <?php foreach ($ctas_empresa_disp as $ce): ?>
                                 <option value="<?= htmlspecialchars($ce['id_empresa']) ?>:<?= htmlspecialchars($ce['cta_empresa']) ?>">
@@ -1861,7 +1556,7 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-edit-modal">Cancelar</button>
-            <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Actualizar Archivo</button>
+            <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
@@ -1869,12 +1564,12 @@ ob_start();
 <!-- MODAL: DEVOLVER ARCHIVO A NÓMINA O A FINANCIERO -->
 <div id="modal-devolver-nomina" class="modal-overlay hidden">
     <div class="modal-box modal-box-sm">
-        <div class="modal-header blue">
+        <div class="modal-header">
             <div>
-                <h2 id="devolver-titulo">Devolver a Nómina</h2>
-                <p id="devolver-subtitulo"></p>
+                <h3 id="devolver-titulo">Devolver a Nómina</h3>
+                <p id="devolver-subtitulo">El archivo vuelve al módulo que lo envió</p>
             </div>
-            <button type="button" class="modal-close" id="close-devolver-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close" id="close-devolver-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <p class="config-hint">
@@ -1893,9 +1588,9 @@ ob_start();
 <!-- MODAL: DETALLE DE ARCHIVO PLANO -->
 <div id="modal-detail" class="modal-overlay hidden">
     <div class="modal-box modal-box-lg">
-        <div class="modal-header blue">
-            <div><h2 id="detail-title">Detalle de Archivo Plano</h2><p id="detail-subtitle"></p></div>
-            <button class="modal-close" id="close-detail-modal"><i class="fas fa-times"></i></button>
+        <div class="modal-header">
+            <div><h3 id="detail-title">Detalle de archivo plano</h3><p id="detail-subtitle">Pagos incluidos y respuesta del banco</p></div>
+            <button type="button" class="modal-close" id="close-detail-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <div id="detail-content"></div>
@@ -1905,14 +1600,14 @@ ob_start();
             </div>
         </div>
         <div class="modal-footer">
-            <button class="btn btn-secondary" id="close-detail-btn">Cerrar</button>
+            <button type="button" class="btn btn-secondary" id="close-detail-btn">Cerrar</button>
             <button type="button" id="detail-btn-download" class="btn btn-primary"><i class="fas fa-download"></i> Descargar CSV</button>
         </div>
     </div>
 </div>
 
 <!-- TOAST -->
-<div id="toast" class="hidden"><span id="toast-message"></span></div>
+<div id="toast" class="tcx-toast hidden" role="status" aria-live="polite"><span id="toast-message"></span></div>
 
 <!-- CALENDARIO FLOTANTE (mismo estilo que Festivos). Solo deja elegir los días
      de pago de Parámetros de Tesorería que no sean festivo — lo arma archivo_plano.js -->
@@ -1945,6 +1640,13 @@ ob_start();
 </div>
 
 <!-- Días de pago y festivos para el calendario (los usa el JS) -->
+<script>
+const archivosData = <?= json_encode([
+    'proveedores' => array_map('datos_archivo', $arch_prov),
+    'nomina'      => array_map('datos_archivo', $arch_nom),
+    'inversiones' => array_map('datos_archivo', $arch_inv),
+], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+</script>
 <script type="application/json" id="calendario-pagos-json"><?= json_encode([
     'dias_pago' => $dias_pago,
     'festivos'  => (object)$festivos,

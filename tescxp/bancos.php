@@ -5,7 +5,7 @@ $activeModule     = 'tescxp'; // Ajustar si "Bancos" vive bajo otro módulo del 
 $page_title       = "ADSOERP | Bancos";
 $page_description = "Catálogo de bancos disponibles en el sistema";
 $page_icon        = "bi-bank2";
-$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/bancos.css', 'modules/bancos/css/cmp_modales.css'];
+$page_extra_css   = ['modules/tescxp/css/tcx_pantalla.css', 'modules/tescxp/css/tcx_modales.css', 'modules/tescxp/css/bancos.css'];
 $page_extra_js    = ['modules/tescxp/js/bancos.js'];
 $page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
@@ -168,12 +168,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $list_bancos_full->execute();
 $bancos = $list_bancos_full->fetchAll(PDO::FETCH_ASSOC);
 
+// Uso de cada banco: cuántas cuentas (de la empresa y de proveedores) lo usan.
+// Columna "Cuentas" de la tabla maestra (GUIA_PANTALLAS_ERP §10, modelo: Cargos).
+$uso_bancos = [];
+$list_ctas_empresa->execute();
+foreach ($list_ctas_empresa->fetchAll(PDO::FETCH_ASSOC) as $c) {
+    $uso_bancos[$c['id_banco']] = ($uso_bancos[$c['id_banco']] ?? 0) + 1;
+}
+$list_bancoxprov->execute();
+foreach ($list_bancoxprov->fetchAll(PDO::FETCH_ASSOC) as $c) {
+    $uso_bancos[$c['id_banco']] = ($uso_bancos[$c['id_banco']] ?? 0) + 1;
+}
+foreach ($bancos as &$b_uso) {
+    $b_uso['num_cuentas'] = (int)($uso_bancos[$b_uso['id_banco']] ?? 0);
+}
+unset($b_uso);
+
 // ============================================================
 // INICIO DEL HTML
 // ============================================================
 ob_start();
 ?>
-<div id="mod-bancos" class="app-view active">
+<div id="mod-bancos" class="app-view active tcx-pantalla" data-lista-fija>
 
     <!-- ENCABEZADO -->
     <div class="module-header">
@@ -181,141 +197,80 @@ ob_start();
             <h1>Bancos</h1>
             <p>Catálogo de bancos disponibles en el sistema</p>
         </div>
-        <button id="btn-add-banco" class="btn btn-primary">
-            <i class="fas fa-plus"></i> Nuevo Banco
-        </button>
+        <div class="module-header-acciones">
+            <button type="button" id="btn-add-banco" class="btn btn-primary"><i class="fas fa-plus"></i> Nuevo banco</button>
+        </div>
     </div>
 
-    <!-- STATS -->
+    <!-- Indicadores: los calcula bancos.js sobre todos los bancos -->
     <div class="stats-grid">
-        <?php
-        $total     = count($bancos);
-        $activos   = count(array_filter($bancos, fn($b) => $b['ind_estado'] === 't' || $b['ind_estado'] === true));
-        $inactivos = $total - $activos;
-        ?>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:0">
             <div class="stat-icon blue"><i class="fas fa-university"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Total bancos</div>
-                <div class="stat-value" id="stat-total"><?= $total ?></div>
+                <div class="stat-value" id="stat-total">0</div>
+                <div class="stat-hint">En el catálogo</div>
             </div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:1">
             <div class="stat-icon green"><i class="fas fa-check-circle"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Activos</div>
-                <div class="stat-value" id="stat-activos"><?= $activos ?></div>
+                <div class="stat-value" id="stat-activos">0</div>
+                <div class="stat-hint">Se pueden usar en cuentas</div>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon yellow"><i class="fas fa-ban"></i></div>
+        <div class="stat-card" style="--i:2">
+            <div class="stat-icon rose"><i class="fas fa-ban"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Inactivos</div>
-                <div class="stat-value" id="stat-inactivos"><?= $inactivos ?></div>
+                <div class="stat-value" id="stat-inactivos">0</div>
+                <div class="stat-hint">No aparecen en las listas</div>
+            </div>
+        </div>
+        <div class="stat-card" style="--i:3">
+            <div class="stat-icon amber"><i class="fas fa-link"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Con cuentas</div>
+                <div class="stat-value" id="stat-uso">0</div>
+                <div class="stat-hint" id="stat-uso-hint">De la empresa o de proveedores</div>
             </div>
         </div>
     </div>
 
-    <!-- FILTROS -->
+    <!-- Filtros (componente "filtros": píldoras con conteo) -->
     <div class="filter-bar">
-        <div class="search-wrapper">
-            <span class="search-icon"><i class="fas fa-search"></i></span>
-            <input type="text" id="banco-search" class="search-input" placeholder="Buscar por código o nombre...">
+        <div class="filter-row">
+            <div class="search-wrapper">
+                <span class="search-icon"><i class="fas fa-search"></i></span>
+                <input type="search" id="banco-search" class="search-input" maxlength="60" autocomplete="off" placeholder="Buscar por código o nombre...">
+            </div>
+            <div class="filter-toggle-group" role="group" aria-label="Estado" data-para="banco-filtro-estado">
+                <button type="button" class="filter-toggle active" data-valor="all" aria-pressed="true">Todos <span class="count" id="ban-cnt-all"></span></button>
+                <button type="button" class="filter-toggle" data-valor="activo" aria-pressed="false">Activos <span class="count" id="ban-cnt-activo"></span></button>
+                <button type="button" class="filter-toggle" data-valor="inactivo" aria-pressed="false">Inactivos <span class="count" id="ban-cnt-inactivo"></span></button>
+            </div>
+            <input type="hidden" id="banco-filtro-estado" value="all">
+            <button type="button" id="btn-clear-filters" class="btn-clear-filter" hidden><i class="fas fa-eraser"></i> Limpiar</button>
         </div>
-        <div class="filter-toggle-group">
-            <button class="filter-toggle active" data-filter="all">Todos</button>
-            <button class="filter-toggle" data-filter="activo">Activos</button>
-            <button class="filter-toggle" data-filter="inactivo">Inactivos</button>
-        </div>
-        <button id="btn-clear-filters" class="btn-clear-filter" style="display:none">
-            <i class="fas fa-times"></i> Limpiar
-        </button>
-        <div class="pagination-size">
-            <label for="bancos-page-size">Filas por página</label>
-            <select id="bancos-page-size">
-                <option value="10">10</option>
-                <option value="25" selected>25</option>
-                <option value="50">50</option>
-                <option value="all">Todos</option>
-            </select>
-        </div>
-        <span class="filter-info" id="bancos-count"><?= $total ?> resultado<?= $total !== 1 ? 's' : '' ?></span>
+        <div class="filter-info" id="bancos-count" aria-live="polite">0 resultados</div>
     </div>
 
-    <!-- TABLA -->
-    <div class="table-container">
-      <div class="table-scroll" id="bancos-table-scroll">
-        <table class="data-table">
-            <!-- Anchos fijos: las columnas no se mueven al ordenar o cambiar de página -->
-            <colgroup>
-                <col class="col-codigo">
-                <col class="col-nombre">
-                <col class="col-estado">
-                <col class="col-acciones">
-            </colgroup>
-            <thead>
-                <tr>
-                    <th class="sortable" data-sort-key="0" data-sort-type="text">Código <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="1" data-sort-type="text">Nombre del Banco <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-center">Estado</th>
-                    <th class="text-center">Acciones</th>
-                </tr>
-            </thead>
-            <tbody id="bancos-tbody">
-            <?php if (empty($bancos)): ?>
-                <tr class="empty-row">
-                    <td colspan="4">
-                        <div class="empty-state">
-                            <i class="fas fa-university"></i>
-                            <p>No hay bancos registrados</p>
-                            <span>Haga clic en "Nuevo Banco" para agregar el primero</span>
-                        </div>
-                    </td>
-                </tr>
-            <?php else: ?>
-                <?php foreach ($bancos as $b):
-                    $es_activo  = ($b['ind_estado'] === 't' || $b['ind_estado'] === true);
-                    $badge_tipo = $es_activo
-                        ? '<span class="badge badge-active">Activo</span>'
-                        : '<span class="badge badge-inactive">Inactivo</span>';
-                    $id_esc  = htmlspecialchars($b['id_banco']);
-                    $nom_esc = htmlspecialchars($b['nom_banco']);
-                    $filtro  = $es_activo ? 'activo' : 'inactivo';
-                ?>
-                <tr data-tipo="<?= $filtro ?>">
-                    <td data-sort="<?= $id_esc ?>"><strong><?= $id_esc ?></strong></td>
-                    <td data-sort="<?= $nom_esc ?>"><?= $nom_esc ?></td>
-                    <td class="text-center"><?= $badge_tipo ?></td>
-                    <td class="text-center">
-                        <button class="btn-icon-sm toggle" title="<?= $es_activo ? 'Desactivar' : 'Activar' ?>"
-                                onclick="toggleEstadoBanco('<?= $id_esc ?>', <?= $es_activo ? 'false' : 'true' ?>)">
-                            <i class="fas fa-power-off"></i>
-                        </button>
-                        <button class="btn-icon-sm edit" onclick='openEditModal(<?= json_encode($b) ?>)'>
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        <button class="btn-icon-sm reject" onclick="eliminarBanco('<?= $id_esc ?>', '<?= htmlspecialchars($b['nom_banco'], ENT_QUOTES) ?>')">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            <?php endif; ?>
-            </tbody>
-        </table>
-      </div>
-
-        <!-- PAGINACIÓN -->
-        <div class="table-footer">
-            <div class="pagination-nav">
-                <span class="pagination-range" id="bancos-range">0 de 0</span>
-                <button type="button" id="bancos-prev" class="pagination-btn" disabled aria-label="Página anterior">
-                    <i class="fas fa-chevron-left"></i>
-                </button>
-                <button type="button" id="bancos-next" class="pagination-btn" disabled aria-label="Página siguiente">
-                    <i class="fas fa-chevron-right"></i>
-                </button>
-            </div>
+    <!-- Lista: la pinta bancos.js; el paginador agrega su pie -->
+    <div class="table-container" data-lista>
+        <div data-lista-scroll>
+            <table id="bancos-table" class="data-table" data-erp-movil data-erp-movil-titulo="2">
+                <thead>
+                    <tr>
+                        <th>Código</th>
+                        <th>Nombre del banco</th>
+                        <th class="text-center">Cuentas</th>
+                        <th>Estado</th>
+                        <th class="col-acciones">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="bancos-tbody"></tbody>
+            </table>
         </div>
     </div>
 </div>
@@ -323,29 +278,29 @@ ob_start();
 <!-- MODAL: NUEVO BANCO -->
 <div id="modal-new-banco" class="modal-overlay hidden">
     <div class="modal-box">
-        <div class="modal-header green">
+        <div class="modal-header">
             <div>
-                <h2>Nuevo Banco</h2>
+                <h3>Nuevo banco</h3>
                 <p>Registre un banco en el catálogo del sistema</p>
             </div>
-            <button class="modal-close btn-close-new-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-new-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="new-banco-form" novalidate>
                 <input type="hidden" name="btn_nuevo" value="1">
                 <div class="form-field">
-                    <label class="form-label">Código del Banco <span class="required">*</span></label>
+                    <label class="form-label">Código del banco <span class="required">*</span></label>
                     <input type="text" id="new-id-banco" name="txt_id_banco" class="form-input" placeholder="Ej: 0001234" minlength="6" maxlength="10">
                     <span class="field-error" id="err-new-id"></span>
                 </div>
                 <div class="form-field">
-                    <label class="form-label">Nombre del Banco <span class="required">*</span></label>
+                    <label class="form-label">Nombre del banco <span class="required">*</span></label>
                     <input type="text" id="new-nom-banco" name="txt_nom_banco" class="form-input" placeholder="Ej: Bancolombia" minlength="4" maxlength="50">
                     <span class="field-error" id="err-new-nombre"></span>
                 </div>
                 <div class="form-field">
                     <label class="form-label">Estado</label>
-                    <select id="new-estado" name="sel_estado" class="form-select">
+                    <select id="new-estado" name="sel_estado" class="form-input">
                         <option value="true">Activo</option>
                         <option value="false">Inactivo</option>
                     </select>
@@ -354,7 +309,7 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-new-modal">Cancelar</button>
-            <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Banco</button>
+            <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
@@ -362,29 +317,29 @@ ob_start();
 <!-- MODAL: EDITAR BANCO -->
 <div id="modal-edit-banco" class="modal-overlay hidden">
     <div class="modal-box">
-        <div class="modal-header blue">
+        <div class="modal-header">
             <div>
-                <h2>Editar Banco</h2>
+                <h3>Editar banco</h3>
                 <p>Modifique el nombre o el estado del banco</p>
             </div>
-            <button class="modal-close btn-close-edit-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-edit-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="edit-banco-form" novalidate>
                 <input type="hidden" name="btn_editar" value="1">
                 <input type="hidden" name="hid_edit_id_banco" id="edit-id-banco-hid" value="">
                 <div class="form-field">
-                    <label class="form-label">Código del Banco</label>
+                    <label class="form-label">Código del banco</label>
                     <input type="text" id="edit-id-banco-display" class="form-input" disabled>
                 </div>
                 <div class="form-field">
-                    <label class="form-label">Nombre del Banco <span class="required">*</span></label>
+                    <label class="form-label">Nombre del banco <span class="required">*</span></label>
                     <input type="text" id="edit-nom-banco" name="txt_edit_nom_banco" class="form-input" minlength="4" maxlength="50">
                     <span class="field-error" id="err-edit-nombre"></span>
                 </div>
                 <div class="form-field">
                     <label class="form-label">Estado</label>
-                    <select id="edit-estado" name="sel_edit_estado" class="form-select">
+                    <select id="edit-estado" name="sel_edit_estado" class="form-input">
                         <option value="true">Activo</option>
                         <option value="false">Inactivo</option>
                     </select>
@@ -393,28 +348,31 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-edit-modal">Cancelar</button>
-            <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Actualizar Banco</button>
+            <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
 
-<!-- MODAL: CONFIRMAR ELIMINACIÓN (estilo módulo Compras) -->
+<!-- MODAL: CONFIRMAR ELIMINACIÓN (después de los formularios: queda encima) -->
 <div id="modal-confirm-eliminar" class="modal-overlay hidden">
     <div class="modal-box confirm-box">
         <div class="confirm-icon"><i class="fas fa-exclamation-triangle"></i></div>
         <h4 id="confirm-eliminar-title"></h4>
         <p id="confirm-eliminar-body"></p>
-        <div class="confirm-buttons">
-            <button type="button" class="btn-cancelar" id="confirm-eliminar-cancel-btn">Cancelar</button>
-            <button type="button" class="btn-eliminar" id="confirm-eliminar-ok-btn">Sí, eliminar</button>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="confirm-eliminar-cancel-btn">Cancelar</button>
+            <button type="button" class="btn btn-danger" id="confirm-eliminar-ok-btn">Eliminar</button>
         </div>
     </div>
 </div>
 
 <!-- TOAST -->
-<div id="toast" class="hidden"><span id="toast-message"></span></div>
+<div id="toast" class="tcx-toast hidden" role="status" aria-live="polite"><span id="toast-message"></span></div>
 
-
+<!-- DATOS PARA EL JS -->
+<script>
+const bancosData = <?= json_encode(array_values($bancos), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+</script>
 
 <?php
 $moduleContent = ob_get_clean();

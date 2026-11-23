@@ -5,7 +5,7 @@ $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Cronograma de Pagos";
 $page_description = "Programación de pagos agrupando cuotas pendientes de facturas";
 $page_icon        = "bi-calendar2-check";
-$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/cronopagos.css', 'modules/tescxp/css/cmp_modales.css'];
+$page_extra_css   = ['modules/tescxp/css/tcx_pantalla.css', 'modules/tescxp/css/tcx_modales.css', 'modules/tescxp/css/cronopagos.css'];
 $page_extra_js    = ['modules/tescxp/js/cronopagos.js'];
 $page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
@@ -82,10 +82,9 @@ function validar_fecha_pago(string $fecha, array $dias_pago, array $festivos_map
  * hayan sido rechazadas (ver fun_cerrar_cronograma_procesado).
  * Un cronograma pagado no se puede editar ni eliminar.
  */
-function cronograma_pagado(PDO $pdo, int $id_cronograma): bool {
-    $stmt = $pdo->prepare("SELECT ind_estado FROM tab_enc_cronopagos WHERE id_cronograma = :id");
-    $stmt->execute([':id' => $id_cronograma]);
-    $estado = $stmt->fetchColumn();
+function cronograma_pagado(PDOStatement $get_estado_cronograma, int $id_cronograma): bool {
+    $get_estado_cronograma->execute([':wid_cronograma' => $id_cronograma]);   // prepare_tescxp.php §15
+    $estado = $get_estado_cronograma->fetchColumn();
     return $estado === 't' || $estado === true;
 }
 
@@ -162,7 +161,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
 
             // Recuperar el id del cronograma recién creado
-            $id_nuevo = (int)$pdo->query("SELECT MAX(id_cronograma) FROM tab_enc_cronopagos")->fetchColumn();
+            $get_max_id_cronograma->execute();   // prepare_tescxp.php §15
+            $id_nuevo = (int)$get_max_id_cronograma->fetchColumn();
 
             foreach ($cuotas_seleccionadas as [$idFactura, $idCuota]) {
                 $ins_det_cronopagos->execute([
@@ -194,7 +194,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             // Un cronograma ya pagado no se puede editar
-            if ($id_cronograma > 0 && cronograma_pagado($pdo, $id_cronograma)) {
+            if ($id_cronograma > 0 && cronograma_pagado($get_estado_cronograma, $id_cronograma)) {
                 $respuesta['message'] = 'El cronograma ya fue pagado y no se puede editar.';
                 echo json_encode($respuesta);
                 exit;
@@ -241,7 +241,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             // Un cronograma ya pagado no se puede eliminar
-            if (cronograma_pagado($pdo, $id_cronograma)) {
+            if (cronograma_pagado($get_estado_cronograma, $id_cronograma)) {
                 throw new Exception('El cronograma ya fue pagado y no se puede eliminar.');
             }
 
@@ -264,7 +264,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             // No se quitan cuotas de un cronograma que ya fue pagado
-            if (cronograma_pagado($pdo, $id_cronograma)) {
+            if (cronograma_pagado($get_estado_cronograma, $id_cronograma)) {
                 throw new Exception('El cronograma ya fue pagado y no se pueden quitar cuotas.');
             }
 
@@ -312,185 +312,97 @@ $cuotas_pendientes = $list_cuotas_pendientes->fetchAll(PDO::FETCH_ASSOC);
 ob_start();
 ?>
 
-<div id="mod-cronograma" class="app-view active">
+<div id="mod-cronograma" class="app-view active tcx-pantalla" data-lista-fija>
 
     <!-- ENCABEZADO -->
     <div class="module-header">
         <div class="module-header-text">
-            <h1>Cronograma de Pagos</h1>
-            <p>Agrupe cuotas pendientes de facturas para programar su pago</p>
+            <h1>Cronograma de pagos</h1>
+            <p>Agrupe cuotas pendientes de facturas para programar su pago. Haga clic en un cronograma para ver sus cuotas.</p>
         </div>
-        <button id="btn-add-crono" class="btn btn-primary">
-            <i class="fas fa-plus"></i> Nuevo Cronograma
-        </button>
+        <div class="module-header-acciones">
+            <button type="button" id="btn-add-crono" class="btn btn-primary"><i class="fas fa-plus"></i> Nuevo cronograma</button>
+        </div>
     </div>
 
-    <!-- STATS -->
+    <!-- Indicadores: los calcula cronopagos.js sobre todos los cronogramas -->
     <div class="stats-grid">
-        <?php
-        $total      = count($cronogramas);
-        $pendientes = count(array_filter($cronogramas, fn($c) => !($c['ind_estado'] === 't' || $c['ind_estado'] === true)));
-        $pagados    = $total - $pendientes;
-        $total_programado = array_sum(array_column($cronogramas, 'total_a_pagar'));
-        ?>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:0">
             <div class="stat-icon blue"><i class="fas fa-calendar-alt"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Total cronogramas</div>
-                <div class="stat-value" id="stat-total"><?= $total ?></div>
+                <div class="stat-value" id="stat-total">0</div>
+                <div class="stat-hint">Programados</div>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon yellow"><i class="fas fa-clock"></i></div>
+        <div class="stat-card" style="--i:1">
+            <div class="stat-icon amber"><i class="fas fa-clock"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Pendientes</div>
-                <div class="stat-value" id="stat-pendientes"><?= $pendientes ?></div>
+                <div class="stat-value" id="stat-pendientes">0</div>
+                <div class="stat-hint">Esperan la respuesta del banco</div>
             </div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:2">
             <div class="stat-icon green"><i class="fas fa-check-circle"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Pagados</div>
-                <div class="stat-value" id="stat-pagados"><?= $pagados ?></div>
+                <div class="stat-value" id="stat-pagados">0</div>
+                <div class="stat-hint" id="stat-pagados-hint">El banco ya respondió</div>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon blue"><i class="fas fa-coins"></i></div>
+        <div class="stat-card" style="--i:3">
+            <div class="stat-icon rose"><i class="fas fa-coins"></i></div>
             <div class="stat-info">
-                <div class="stat-label">Total programado</div>
-                <div class="stat-value" id="stat-programado" style="font-size:16px">$<?= number_format($total_programado, 0, ',', '.') ?></div>
+                <div class="stat-label">Por pagar</div>
+                <div class="stat-value" id="stat-programado">$0</div>
+                <div class="stat-hint">De los cronogramas pendientes</div>
             </div>
         </div>
     </div>
 
-    <!-- FILTROS -->
+    <!-- Filtros (componente "filtros": píldoras con conteo). Solo aplican a la vista Tabla -->
     <div class="filter-bar">
-        <div class="search-wrapper">
-            <span class="search-icon"><i class="fas fa-search"></i></span>
-            <input type="text" id="crono-search" class="search-input" placeholder="Buscar por nombre de cronograma...">
+        <div class="filter-row">
+            <div class="search-wrapper">
+                <span class="search-icon"><i class="fas fa-search"></i></span>
+                <input type="search" id="crono-search" class="search-input" maxlength="60" autocomplete="off" placeholder="Buscar por nombre o número de cronograma...">
+            </div>
+            <div class="filter-toggle-group" role="group" aria-label="Estado" data-para="crono-filtro-estado">
+                <button type="button" class="filter-toggle active" data-valor="all" aria-pressed="true">Todos <span class="count" id="cro-cnt-all"></span></button>
+                <button type="button" class="filter-toggle" data-valor="pendiente" aria-pressed="false">Pendientes <span class="count" id="cro-cnt-pendiente"></span></button>
+                <button type="button" class="filter-toggle" data-valor="pagado" aria-pressed="false">Pagados <span class="count" id="cro-cnt-pagado"></span></button>
+            </div>
+            <input type="hidden" id="crono-filtro-estado" value="all">
+            <button type="button" id="btn-clear-filters" class="btn-clear-filter" hidden><i class="fas fa-eraser"></i> Limpiar</button>
         </div>
-        <div class="filter-toggle-group">
-            <button class="filter-toggle active" data-filter="all">Todos</button>
-            <button class="filter-toggle" data-filter="pendiente">Pendientes</button>
-            <button class="filter-toggle" data-filter="pagado">Pagados</button>
-        </div>
-        <button id="btn-clear-filters" class="btn-clear-filter" style="display:none">
-            <i class="fas fa-times"></i> Limpiar
-        </button>
-        <div class="pagination-size">
-            <label for="cronos-page-size">Filas por página</label>
-            <select id="cronos-page-size">
-                <option value="10">10</option>
-                <option value="25" selected>25</option>
-                <option value="50">50</option>
-                <option value="all">Todos</option>
-            </select>
-        </div>
-        <span class="filter-info" id="cronos-count"><?= $total ?> resultado<?= $total !== 1 ? 's' : '' ?></span>
+        <div class="filter-info" id="cronos-count" aria-live="polite">0 resultados</div>
     </div>
 
     <!-- TOGGLE DE VISTA -->
-    <div class="view-toggle-group">
-        <button class="view-toggle active" data-view="tabla"><i class="fas fa-table"></i> Tabla</button>
-        <button class="view-toggle" data-view="calendario"><i class="fas fa-calendar-days"></i> Calendario</button>
+    <div class="view-toggle-group" role="group" aria-label="Vista">
+        <button type="button" class="view-toggle active" data-view="tabla" aria-pressed="true"><i class="fas fa-table"></i> Tabla</button>
+        <button type="button" class="view-toggle" data-view="calendario" aria-pressed="false"><i class="fas fa-calendar-days"></i> Calendario</button>
     </div>
 
-    <!-- VISTA: TABLA -->
-    <div id="view-tabla" class="view-pane active">
-
-    <!-- TABLA -->
-    <div class="table-container">
-      <div class="table-scroll" id="cronos-table-scroll">
-        <table class="data-table">
-            <!-- Anchos fijos: las columnas no se mueven al ordenar o cambiar de página -->
-            <colgroup>
-                <col class="col-cronograma">
-                <col class="col-fecha">
-                <col class="col-total">
-                <col class="col-estado">
-                <col class="col-acciones">
-            </colgroup>
-            <thead>
-                <tr>
-                    <th class="sortable" data-sort-key="0" data-sort-type="text">Cronograma <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="1" data-sort-type="text">Fecha Programada <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-right sortable" data-sort-key="2" data-sort-type="number">Total a Pagar <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-center">Estado</th>
-                    <th class="text-center">Acciones</th>
-                </tr>
-            </thead>
-            <tbody id="cronos-tbody">
-            <?php if (empty($cronogramas)): ?>
-                <tr class="empty-row">
-                    <td colspan="5">
-                        <div class="empty-state">
-                            <i class="fas fa-calendar-alt"></i>
-                            <p>No hay cronogramas registrados</p>
-                            <span>Haga clic en "Nuevo Cronograma" para agregar el primero</span>
-                        </div>
-                    </td>
-                </tr>
-            <?php else: ?>
-                <?php foreach ($cronogramas as $c):
-                    $pagado      = ($c['ind_estado'] === 't' || $c['ind_estado'] === true);
-                    $cant_cuotas = (int)($c['cant_cuotas'] ?? 0);
-                    $cant_pag    = (int)($c['cant_pagadas'] ?? 0);
-                    $cant_rech   = (int)($c['cant_rechazadas'] ?? 0);
-                    $badge       = $pagado
-                        ? '<span class="badge badge-active">Pagado</span>'
-                        : '<span class="badge badge-inactive" style="background:#fffbeb;color:#f59e0b">Pendiente</span>';
-                    // Resumen bajo el badge: cuántas cuotas pagó el banco y cuántas rechazó
-                    if ($cant_pag > 0 || $cant_rech > 0) {
-                        $badge .= '<span class="crono-resumen-pago">' . $cant_pag . '/' . $cant_cuotas . ' pagada' . ($cant_pag !== 1 ? 's' : '')
-                                . ($cant_rech > 0 ? ' · <b>' . $cant_rech . ' rechazada' . ($cant_rech !== 1 ? 's' : '') . '</b>' : '')
-                                . '</span>';
-                    }
-                    $filtro      = $pagado ? 'pagado' : 'pendiente';
-                    $id_esc      = htmlspecialchars($c['id_cronograma']);
-                ?>
-                <tr data-estado="<?= $filtro ?>" onclick='openDetailModal(<?= json_encode($c) ?>)'>
-                    <td data-sort="<?= htmlspecialchars($c['nom_cronograma']) ?>">
-                        <strong><?= htmlspecialchars($c['nom_cronograma']) ?></strong><br>
-                        <small style="color:#94a3b8;font-size:11px">#<?= $id_esc ?></small>
-                    </td>
-                    <td data-sort="<?= htmlspecialchars(date('Y-m-d', strtotime($c['fec_programacion']))) ?>"><?= htmlspecialchars(date('d/m/Y', strtotime($c['fec_programacion']))) ?></td>
-                    <td class="text-right" data-sort="<?= (float)$c['total_a_pagar'] ?>">$<?= number_format((float)$c['total_a_pagar'], 0, ',', '.') ?></td>
-                    <td class="text-center"><?= $badge ?></td>
-                    <td class="text-center" onclick="event.stopPropagation()">
-                        <?php if (!$pagado): ?>
-                            <!-- Solo los cronogramas pendientes se pueden editar o eliminar -->
-                            <button class="btn-icon-sm edit" onclick='openEditModal(<?= json_encode($c) ?>)' title="Editar cronograma">
-                                <i class="fas fa-edit"></i>
-                            </button>
-                            <button class="btn-icon-sm reject" onclick="eliminarCronograma(<?= $id_esc ?>, '<?= htmlspecialchars($c['nom_cronograma'], ENT_QUOTES) ?>')" title="Eliminar cronograma">
-                                <i class="fas fa-trash"></i>
-                            </button>
-                        <?php else: ?>
-                            <span class="accion-bloqueada" title="Cronograma pagado (el banco ya respondió): no se puede editar ni eliminar">
-                                <i class="fas fa-lock"></i>
-                            </span>
-                        <?php endif; ?>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            <?php endif; ?>
-            </tbody>
-        </table>
-      </div>
-
-        <!-- PAGINACIÓN -->
-        <div class="table-footer">
-            <div class="pagination-nav">
-                <span class="pagination-range" id="cronos-range">0 de 0</span>
-                <button type="button" id="cronos-prev" class="pagination-btn" disabled aria-label="Página anterior">
-                    <i class="fas fa-chevron-left"></i>
-                </button>
-                <button type="button" id="cronos-next" class="pagination-btn" disabled aria-label="Página siguiente">
-                    <i class="fas fa-chevron-right"></i>
-                </button>
+    <!-- VISTA: TABLA (la pinta cronopagos.js; clic en la fila abre el detalle; el paginador agrega su pie) -->
+    <div id="view-tabla" class="view-pane active" data-lista>
+        <div class="table-container" data-lista-flex>
+            <div data-lista-scroll>
+                <table id="cronos-table" class="data-table" data-erp-movil data-erp-movil-titulo="1">
+                    <thead>
+                        <tr>
+                            <th>Cronograma</th>
+                            <th>Fecha programada</th>
+                            <th class="text-right">Total a pagar</th>
+                            <th>Estado</th>
+                            <th class="col-acciones">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="cronos-tbody"></tbody>
+                </table>
             </div>
         </div>
-    </div>
     </div>
     <!-- /VISTA: TABLA -->
 
@@ -555,29 +467,29 @@ const festivosMap        = <?= json_encode((object)$festivos_map, JSON_HEX_TAG |
 
 <!-- MODAL: CRONOGRAMAS DE UN DÍA -->
 <div id="modal-day" class="modal-overlay hidden">
-    <div class="modal-box" style="max-width:480px">
-        <div class="modal-header blue">
-            <div><h2 id="day-modal-title">Cronogramas del día</h2><p id="day-modal-subtitle"></p></div>
-            <button class="modal-close" id="close-day-modal"><i class="fas fa-times"></i></button>
+    <div class="modal-box">
+        <div class="modal-header">
+            <div><h3 id="day-modal-title">Cronogramas del día</h3><p id="day-modal-subtitle">Cronogramas programados para esta fecha</p></div>
+            <button type="button" class="modal-close" id="close-day-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <div id="day-modal-list"></div>
         </div>
         <div class="modal-footer">
-            <button class="btn btn-secondary" id="close-day-btn">Cerrar</button>
+            <button type="button" class="btn btn-secondary" id="close-day-btn">Cerrar</button>
         </div>
     </div>
 </div>
 
 <!-- MODAL: NUEVO CRONOGRAMA -->
 <div id="modal-new-crono" class="modal-overlay hidden">
-    <div class="modal-box" style="max-width:600px">
-        <div class="modal-header green">
+    <div class="modal-box">
+        <div class="modal-header">
             <div>
-                <h2>Nuevo Cronograma de Pagos</h2>
+                <h3>Nuevo cronograma de pagos</h3>
                 <p>Seleccione las cuotas pendientes a incluir</p>
             </div>
-            <button class="modal-close btn-close-new-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-new-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="new-crono-form" novalidate>
@@ -613,7 +525,7 @@ const festivosMap        = <?= json_encode((object)$festivos_map, JSON_HEX_TAG |
                 <span class="field-hint" id="cuotas-vencen-antes-info"></span>
                 <div id="cuotas-pendientes-list" class="cuota-picker-list">
                     <?php if (empty($cuotas_pendientes)): ?>
-                        <p style="font-size:12px;color:#94a3b8;text-align:center;padding:12px">No hay cuotas pendientes disponibles para programar.</p>
+                        <p class="tcx-lista-msg">No hay cuotas pendientes disponibles para programar.</p>
                     <?php else: ?>
                         <?php foreach ($cuotas_pendientes as $cu):
                             $clave = $cu['id_factura'] . ':' . $cu['id_cuota'];
@@ -641,7 +553,7 @@ const festivosMap        = <?= json_encode((object)$festivos_map, JSON_HEX_TAG |
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-new-modal">Cancelar</button>
-            <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Cronograma</button>
+            <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
@@ -649,12 +561,12 @@ const festivosMap        = <?= json_encode((object)$festivos_map, JSON_HEX_TAG |
 <!-- MODAL: EDITAR CRONOGRAMA -->
 <div id="modal-edit-crono" class="modal-overlay hidden">
     <div class="modal-box">
-        <div class="modal-header blue">
+        <div class="modal-header">
             <div>
-                <h2>Editar Cronograma</h2>
+                <h3>Editar cronograma</h3>
                 <p>Modifique el nombre o la fecha programada</p>
             </div>
-            <button class="modal-close btn-close-edit-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-edit-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="edit-crono-form" novalidate>
@@ -679,17 +591,17 @@ const festivosMap        = <?= json_encode((object)$festivos_map, JSON_HEX_TAG |
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-edit-modal">Cancelar</button>
-            <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Actualizar Cronograma</button>
+            <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
 
 <!-- MODAL: DETALLE DE CRONOGRAMA -->
 <div id="modal-detail" class="modal-overlay hidden">
-    <div class="modal-box" style="max-width:560px">
-        <div class="modal-header blue">
-            <div><h2 id="detail-title">Detalle de Cronograma</h2><p id="detail-subtitle"></p></div>
-            <button class="modal-close" id="close-detail-modal"><i class="fas fa-times"></i></button>
+    <div class="modal-box">
+        <div class="modal-header">
+            <div><h3 id="detail-title">Detalle de cronograma</h3><p id="detail-subtitle">Cuotas incluidas y respuesta del banco</p></div>
+            <button type="button" class="modal-close" id="close-detail-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <div id="detail-content"></div>
@@ -699,20 +611,20 @@ const festivosMap        = <?= json_encode((object)$festivos_map, JSON_HEX_TAG |
             </div>
         </div>
         <div class="modal-footer">
-            <button class="btn btn-secondary" id="close-detail-btn">Cerrar</button>
+            <button type="button" class="btn btn-secondary" id="close-detail-btn">Cerrar</button>
         </div>
     </div>
 </div>
 
-<!-- MODAL: CONFIRMAR ELIMINACIÓN (estilo módulo Compras) -->
+<!-- MODAL: CONFIRMAR ELIMINACIÓN (después del detalle: queda encima) -->
 <div id="modal-confirm-eliminar" class="modal-overlay hidden">
     <div class="modal-box confirm-box">
         <div class="confirm-icon"><i class="fas fa-exclamation-triangle"></i></div>
         <h4 id="confirm-eliminar-title"></h4>
         <p id="confirm-eliminar-body"></p>
-        <div class="confirm-buttons">
-            <button type="button" class="btn-cancelar" id="confirm-eliminar-cancel-btn">Cancelar</button>
-            <button type="button" class="btn-eliminar" id="confirm-eliminar-ok-btn">Sí, eliminar</button>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="confirm-eliminar-cancel-btn">Cancelar</button>
+            <button type="button" class="btn btn-danger" id="confirm-eliminar-ok-btn">Eliminar</button>
         </div>
     </div>
 </div>
@@ -725,9 +637,9 @@ const festivosMap        = <?= json_encode((object)$festivos_map, JSON_HEX_TAG |
         <p id="confirm-vencidas-body"></p>
         <ul id="confirm-vencidas-list" class="confirm-vencidas-list"></ul>
         <p class="confirm-vencidas-pregunta">¿Desea guardar el cronograma de todas formas?</p>
-        <div class="confirm-buttons">
-            <button type="button" class="btn-cancelar" id="confirm-vencidas-cancel-btn">Revisar cuotas</button>
-            <button type="button" class="btn-eliminar" id="confirm-vencidas-ok-btn">Sí, guardar</button>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="confirm-vencidas-cancel-btn">Revisar cuotas</button>
+            <button type="button" class="btn btn-primary" id="confirm-vencidas-ok-btn">Guardar de todas formas</button>
         </div>
     </div>
 </div>
@@ -753,7 +665,7 @@ const festivosMap        = <?= json_encode((object)$festivos_map, JSON_HEX_TAG |
 </div>
 
 <!-- TOAST -->
-<div id="toast" class="hidden"><span id="toast-message"></span></div>
+<div id="toast" class="tcx-toast hidden" role="status" aria-live="polite"><span id="toast-message"></span></div>
 
 <?php
 $moduleContent = ob_get_clean();

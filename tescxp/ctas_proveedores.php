@@ -5,7 +5,7 @@ $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Bancos por Proveedor";
 $page_description = "Gestión de cuentas bancarias de proveedores para el pago de facturas";
 $page_icon        = "bi-bank2";
-$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/ctas_proveedores.css', 'modules/tescxp/css/cmp_modales.css'];
+$page_extra_css   = ['modules/tescxp/css/tcx_pantalla.css', 'modules/tescxp/css/tcx_modales.css', 'modules/tescxp/css/ctas_proveedores.css'];
 $page_extra_js    = ['modules/tescxp/js/ctas_proveedores.js'];
 $page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
@@ -211,159 +211,91 @@ $bancoxprov = $list_bancoxprov->fetchAll(PDO::FETCH_ASSOC);
 ob_start();
 ?>
 
-<div id="mod-bancoxprov" class="app-view active">
+<div id="mod-bancoxprov" class="app-view active tcx-pantalla" data-lista-fija>
 
     <!-- ENCABEZADO -->
     <div class="module-header">
         <div class="module-header-text">
-            <h1>Bancos por Proveedor</h1>
+            <h1>Bancos por proveedor</h1>
             <p>Cuentas bancarias registradas para el pago de facturas a proveedores</p>
         </div>
-        <button id="btn-add-cuenta" class="btn btn-primary">
-            <i class="fas fa-plus"></i> Nueva Cuenta
-        </button>
+        <div class="module-header-acciones">
+            <button type="button" id="btn-add-cuenta" class="btn btn-primary"><i class="fas fa-plus"></i> Nueva cuenta</button>
+        </div>
     </div>
 
-    <!-- STATS -->
+    <!-- Indicadores: los calcula ctas_proveedores.js sobre todas las cuentas -->
     <div class="stats-grid">
-        <?php
-        $total      = count($bancoxprov);
-        $corrientes = count(array_filter($bancoxprov, fn($c) => $c['ind_tipocuenta'] === 't' || $c['ind_tipocuenta'] === true));
-        $ahorros    = $total - $corrientes;
-        $prov_unicos   = count(array_unique(array_column($bancoxprov, 'id_proveedor')));
-        ?>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:0">
             <div class="stat-icon blue"><i class="fas fa-university"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Total cuentas</div>
-                <div class="stat-value" id="stat-total"><?= $total ?></div>
+                <div class="stat-value" id="stat-total">0</div>
+                <div class="stat-hint">Registradas</div>
             </div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:1">
             <div class="stat-icon green"><i class="fas fa-money-check-alt"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Corrientes</div>
-                <div class="stat-value" id="stat-corrientes"><?= $corrientes ?></div>
+                <div class="stat-value" id="stat-corrientes">0</div>
+                <div class="stat-hint">Cuentas corrientes</div>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon yellow"><i class="fas fa-piggy-bank"></i></div>
+        <div class="stat-card" style="--i:2">
+            <div class="stat-icon amber"><i class="fas fa-piggy-bank"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Ahorros</div>
-                <div class="stat-value" id="stat-ahorros"><?= $ahorros ?></div>
+                <div class="stat-value" id="stat-ahorros">0</div>
+                <div class="stat-hint">Cuentas de ahorros</div>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon blue"><i class="fas fa-handshake"></i></div>
+        <div class="stat-card" style="--i:3">
+            <div class="stat-icon rose"><i class="fas fa-handshake"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Proveedores con cuenta</div>
-                <div class="stat-value" id="stat-proveedores"><?= $prov_unicos ?></div>
+                <div class="stat-value" id="stat-proveedores">0</div>
+                <div class="stat-hint">Se les puede pagar por archivo plano</div>
             </div>
         </div>
     </div>
 
-    <!-- FILTROS -->
+    <!-- Filtros (componente "filtros": píldoras con conteo) -->
     <div class="filter-bar">
-        <div class="search-wrapper">
-            <span class="search-icon"><i class="fas fa-search"></i></span>
-            <input type="text" id="cuenta-search" class="search-input" placeholder="Buscar por proveedor, cuenta o banco...">
-        </div>
-        <div class="filter-toggle-group">
-            <button class="filter-toggle active" data-filter="all">Todas</button>
-            <button class="filter-toggle" data-filter="corriente">Corrientes</button>
-            <button class="filter-toggle" data-filter="ahorros">Ahorros</button>
-        </div>
-        <button id="btn-clear-filters" class="btn-clear-filter" style="display:none">
-            <i class="fas fa-times"></i> Limpiar
-        </button>
-        <div class="pagination-size">
-            <label for="cuentas-page-size">Filas por página</label>
-            <select id="cuentas-page-size">
-                <option value="10">10</option>
-                <option value="25" selected>25</option>
-                <option value="50">50</option>
-                <option value="all">Todos</option>
+        <div class="filter-row">
+            <div class="search-wrapper">
+                <span class="search-icon"><i class="fas fa-search"></i></span>
+                <input type="search" id="cuenta-search" class="search-input" maxlength="60" autocomplete="off" placeholder="Buscar por proveedor, cuenta o banco...">
+            </div>
+            <select id="cuenta-banco-filter" class="filter-select" aria-label="Filtrar por banco">
+                <option value="">Todos los bancos</option>
             </select>
+            <div class="filter-toggle-group" role="group" aria-label="Tipo de cuenta" data-para="cuenta-filtro-tipo">
+                <button type="button" class="filter-toggle active" data-valor="all" aria-pressed="true">Todas <span class="count" id="cta-cnt-all"></span></button>
+                <button type="button" class="filter-toggle" data-valor="corriente" aria-pressed="false">Corrientes <span class="count" id="cta-cnt-corriente"></span></button>
+                <button type="button" class="filter-toggle" data-valor="ahorros" aria-pressed="false">Ahorros <span class="count" id="cta-cnt-ahorros"></span></button>
+            </div>
+            <input type="hidden" id="cuenta-filtro-tipo" value="all">
+            <button type="button" id="btn-clear-filters" class="btn-clear-filter" hidden><i class="fas fa-eraser"></i> Limpiar</button>
         </div>
-        <span class="filter-info" id="cuentas-count"><?= $total ?> resultado<?= $total !== 1 ? 's' : '' ?></span>
+        <div class="filter-info" id="cuentas-count" aria-live="polite">0 resultados</div>
     </div>
 
-    <!-- TABLA -->
-    <div class="table-container">
-      <div class="table-scroll" id="cuentas-table-scroll">
-        <table class="data-table">
-            <!-- Anchos fijos: las columnas no se mueven al ordenar o cambiar de página -->
-            <colgroup>
-                <col class="col-proveedor">
-                <col class="col-banco">
-                <col class="col-cuenta">
-                <col class="col-tipo">
-                <col class="col-acciones">
-            </colgroup>
-            <thead>
-                <tr>
-                    <th class="sortable" data-sort-key="0" data-sort-type="text">Proveedor <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="1" data-sort-type="text">Banco <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="2" data-sort-type="text">Número de Cuenta <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-center">Tipo</th>
-                    <th class="text-center">Acciones</th>
-                </tr>
-            </thead>
-            <tbody id="cuentas-tbody">
-            <?php if (empty($bancoxprov)): ?>
-                <tr class="empty-row">
-                    <td colspan="5">
-                        <div class="empty-state">
-                            <i class="fas fa-university"></i>
-                            <p>No hay cuentas de proveedores registradas</p>
-                            <span>Haga clic en "Nueva Cuenta" para agregar la primera</span>
-                        </div>
-                    </td>
-                </tr>
-            <?php else: ?>
-                <?php foreach ($bancoxprov as $c):
-                    $es_corriente = ($c['ind_tipocuenta'] === 't' || $c['ind_tipocuenta'] === true);
-                    $badge_tipo   = $es_corriente
-                        ? '<span class="badge badge-active">Corriente</span>'
-                        : '<span class="badge badge-inactive" style="background:#fffbeb;color:#f59e0b">Ahorros</span>';
-                    $id_prov_esc  = htmlspecialchars($c['id_proveedor']);
-                    $cta_esc      = htmlspecialchars($c['cta_proveedor']);
-                    $filtro_tipo  = $es_corriente ? 'corriente' : 'ahorros';
-                ?>
-                <tr data-tipo="<?= $filtro_tipo ?>">
-                    <td data-sort="<?= htmlspecialchars($c['nom_tercero']) ?>">
-                        <strong><?= htmlspecialchars($c['nom_tercero']) ?></strong><br>
-                        <small style="color:#94a3b8;font-size:11px"><?= $id_prov_esc ?></small>
-                    </td>
-                    <td data-sort="<?= htmlspecialchars($c['nom_banco']) ?>"><?= htmlspecialchars($c['nom_banco']) ?></td>
-                    <td data-sort="<?= $cta_esc ?>"><?= $cta_esc ?></td>
-                    <td class="text-center"><?= $badge_tipo ?></td>
-                    <td class="text-center">
-                        <button class="btn-icon-sm edit" onclick='openEditModal(<?= json_encode($c) ?>)'>
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        <button class="btn-icon-sm reject" onclick="eliminarCuenta('<?= $id_prov_esc ?>', '<?= $cta_esc ?>', '<?= htmlspecialchars($c['nom_tercero'], ENT_QUOTES) ?>')">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            <?php endif; ?>
-            </tbody>
-        </table>
-      </div>
-
-        <!-- PAGINACIÓN -->
-        <div class="table-footer">
-            <div class="pagination-nav">
-                <span class="pagination-range" id="cuentas-range">0 de 0</span>
-                <button type="button" id="cuentas-prev" class="pagination-btn" disabled aria-label="Página anterior">
-                    <i class="fas fa-chevron-left"></i>
-                </button>
-                <button type="button" id="cuentas-next" class="pagination-btn" disabled aria-label="Página siguiente">
-                    <i class="fas fa-chevron-right"></i>
-                </button>
-            </div>
+    <!-- Lista: la pinta ctas_proveedores.js; el paginador agrega su pie -->
+    <div class="table-container" data-lista>
+        <div data-lista-scroll>
+            <table id="cuentas-table" class="data-table" data-erp-movil data-erp-movil-titulo="1">
+                <thead>
+                    <tr>
+                        <th>Proveedor</th>
+                        <th>Banco</th>
+                        <th>Número de cuenta</th>
+                        <th>Tipo</th>
+                        <th class="col-acciones">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="cuentas-tbody"></tbody>
+            </table>
         </div>
     </div>
 </div>
@@ -371,19 +303,19 @@ ob_start();
 <!-- MODAL: NUEVA CUENTA -->
 <div id="modal-new-cuenta" class="modal-overlay hidden">
     <div class="modal-box">
-        <div class="modal-header green">
+        <div class="modal-header">
             <div>
-                <h2>Nueva Cuenta de Proveedor</h2>
+                <h3>Nueva Cuenta de Proveedor</h3>
                 <p>Registre la cuenta bancaria de un proveedor</p>
             </div>
-            <button class="modal-close btn-close-new-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-new-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="new-cuenta-form" novalidate>
                 <input type="hidden" name="btn_nuevo" value="1">
                 <div class="form-field">
                     <label class="form-label">Proveedor <span class="required">*</span></label>
-                    <select id="new-id-proveedor" name="sel_id_proveedor" class="form-select">
+                    <select id="new-id-proveedor" name="sel_id_proveedor" class="form-input">
                         <option value="">Seleccione...</option>
                         <?php foreach ($proveedores_select as $p): ?>
                             <option value="<?= htmlspecialchars($p['id_proveedor']) ?>">
@@ -400,7 +332,7 @@ ob_start();
                             <i class="fas fa-plus"></i> Nuevo banco
                         </button>
                     </div>
-                    <select id="new-id-banco" name="sel_id_banco" class="form-select">
+                    <select id="new-id-banco" name="sel_id_banco" class="form-input">
                         <option value=""><?= empty($bancos) ? 'No hay bancos registrados' : 'Seleccione...' ?></option>
                         <?php foreach ($bancos as $b): ?>
                             <option value="<?= htmlspecialchars($b['id_banco']) ?>"><?= htmlspecialchars($b['nom_banco']) ?></option>
@@ -420,7 +352,7 @@ ob_start();
                 </div>
                 <div class="form-field">
                     <label class="form-label">Tipo de Cuenta</label>
-                    <select id="new-tipocuenta" name="sel_tipocuenta" class="form-select">
+                    <select id="new-tipocuenta" name="sel_tipocuenta" class="form-input">
                         <option value="false">Ahorros</option>
                         <option value="true">Corriente</option>
                     </select>
@@ -429,7 +361,7 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-new-modal">Cancelar</button>
-            <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Cuenta</button>
+            <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
@@ -437,12 +369,12 @@ ob_start();
 <!-- MODAL ANIDADO: CREAR BANCO SIN SALIR DE "NUEVA CUENTA" -->
 <div id="modal-banco-rapido" class="modal-overlay modal-nested hidden">
     <div class="modal-box modal-box-sm">
-        <div class="modal-header green">
+        <div class="modal-header">
             <div>
-                <h2>Nuevo Banco</h2>
+                <h3>Nuevo Banco</h3>
                 <p>Se agregará a la lista sin salir de la cuenta</p>
             </div>
-            <button type="button" class="modal-close btn-close-banco-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-banco-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="banco-rapido-form" novalidate>
@@ -462,7 +394,7 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-banco-modal">Cancelar</button>
-            <button type="button" id="banco-rapido-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Banco</button>
+            <button type="button" id="banco-rapido-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
@@ -470,12 +402,12 @@ ob_start();
 <!-- MODAL: EDITAR CUENTA -->
 <div id="modal-edit-cuenta" class="modal-overlay hidden">
     <div class="modal-box">
-        <div class="modal-header blue">
+        <div class="modal-header">
             <div>
-                <h2>Editar Cuenta de Proveedor</h2>
+                <h3>Editar Cuenta de Proveedor</h3>
                 <p>Modifique el banco o el tipo de cuenta</p>
             </div>
-            <button class="modal-close btn-close-edit-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-edit-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="edit-cuenta-form" novalidate>
@@ -492,7 +424,7 @@ ob_start();
                 </div>
                 <div class="form-field">
                     <label class="form-label">Banco <span class="required">*</span></label>
-                    <select id="edit-id-banco" name="sel_edit_id_banco" class="form-select">
+                    <select id="edit-id-banco" name="sel_edit_id_banco" class="form-input">
                         <option value="">Seleccione...</option>
                         <?php foreach ($bancos as $b): ?>
                             <option value="<?= htmlspecialchars($b['id_banco']) ?>"><?= htmlspecialchars($b['nom_banco']) ?></option>
@@ -502,7 +434,7 @@ ob_start();
                 </div>
                 <div class="form-field">
                     <label class="form-label">Tipo de Cuenta</label>
-                    <select id="edit-tipocuenta" name="sel_edit_tipocuenta" class="form-select">
+                    <select id="edit-tipocuenta" name="sel_edit_tipocuenta" class="form-input">
                         <option value="false">Ahorros</option>
                         <option value="true">Corriente</option>
                     </select>
@@ -511,26 +443,32 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-edit-modal">Cancelar</button>
-            <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Actualizar Cuenta</button>
+            <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
 
-<!-- MODAL: CONFIRMAR ELIMINACIÓN (estilo módulo Compras) -->
+<!-- MODAL: CONFIRMAR ELIMINACIÓN (después de los formularios: queda encima) -->
 <div id="modal-confirm-eliminar" class="modal-overlay hidden">
     <div class="modal-box confirm-box">
         <div class="confirm-icon"><i class="fas fa-exclamation-triangle"></i></div>
         <h4 id="confirm-eliminar-title"></h4>
         <p id="confirm-eliminar-body"></p>
-        <div class="confirm-buttons">
-            <button type="button" class="btn-cancelar" id="confirm-eliminar-cancel-btn">Cancelar</button>
-            <button type="button" class="btn-eliminar" id="confirm-eliminar-ok-btn">Sí, eliminar</button>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="confirm-eliminar-cancel-btn">Cancelar</button>
+            <button type="button" class="btn btn-danger" id="confirm-eliminar-ok-btn">Eliminar</button>
         </div>
     </div>
 </div>
 
 <!-- TOAST -->
-<div id="toast" class="hidden"><span id="toast-message"></span></div>
+<div id="toast" class="tcx-toast hidden" role="status" aria-live="polite"><span id="toast-message"></span></div>
+
+<!-- DATOS PARA EL JS -->
+<script>
+const ctasData = <?= json_encode(array_values($bancoxprov), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+</script>
+
 
 <?php
 $moduleContent = ob_get_clean();

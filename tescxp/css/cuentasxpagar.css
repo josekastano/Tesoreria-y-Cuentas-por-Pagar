@@ -1,819 +1,40 @@
+@import url('../../../css/erp_base.css?v=20261118');
 /* ============================================================
-   cuentasxpagar.css — Cuentas por Pagar
+   cuentasxpagar.css — Cuentas por pagar
    Página: cuentasxpagar.php   ·   Contenedor: #mod-cuentasxpagar
-   Estilo unificado con Proveedores / Dashboard.
-   Hoja autocontenida: solo contiene estilos usados por esta página.
+   (22-nov-2026) Adaptada a docs/GUIA_PANTALLAS_ERP.md: lo común está en
+   tcx_pantalla.css; los modales, en erp_ui.css (componente "modales") y
+   tcx_modales.css (campos, calendario, detalle). Aquí queda solo lo propio.
+   Las reglas de los modales van con .erp-modal o el id del modal, nunca
+   con #mod-cuentasxpagar delante (el modal vive en <body>).
+   Colores: solo variables --erp-* de src/css/erp_base.css.
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+/* ---- Ventanas: anchos ---- */
+#modal-oc .modal-box     { max-width: 820px; }
+#modal-detail .modal-box { max-width: 560px; }
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
-
-:root {
-    --dash-bg:           #ffffff;
-    --dash-card:         #ffffff;
-    --dash-border:       #e9edf2;
-    --dash-shadow-sm:    0 1px 2px rgba(0,0,0,0.03), 0 1px 2px rgba(0,0,0,0.05);
-    --dash-shadow-md:    0 4px 12px rgba(0,0,0,0.06);
-    --dash-text-head:    #0a0c1a;
-    --dash-text-body:    #1e293b;
-    --dash-text-sub:     #475569;
-    --dash-text-muted:   #94a3b8;
-    --dash-blue:         var(--color-primary, #3b82f6);
-    --dash-blue-light:   color-mix(in srgb, var(--dash-blue) 12%, white);
-    --dash-blue-dark:    color-mix(in srgb, var(--dash-blue) 80%, black);
-    --dash-blue-border:  color-mix(in srgb, var(--dash-blue) 30%, white);
-    --dash-green-dark:   #059669;
-    --dash-green-light:  #ecfdf5;
-    --dash-red:          #ef4444;
-    --dash-red-light:    #fef2f2;
-    --dash-amber:        #f59e0b;
-    --dash-amber-light:  #fffbeb;
-    --dash-rose:         #f43f5e;
-    --dash-rose-light:   #fff1f2;
-    --dash-radius:       16px;
-    --dash-radius-sm:    10px;
-    --dash-font:         'DM Sans', system-ui, sans-serif;
-
-    font-family: var(--dash-font);
-    background: var(--dash-bg);
-    min-height: 100vh;
-    padding: 0;
-}
-
-/* ---- ENCABEZADO ---- */
-#mod-cuentasxpagar .module-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 28px;
-    flex-wrap: wrap;
-    gap: 16px;
-}
-
-#mod-cuentasxpagar .module-header-text h1 {
-    font-size: 32px;
-    font-weight: 700;
-    color: var(--dash-text-head);
-    letter-spacing: -0.4px;
-    margin: 0 0 6px;
-}
-
-#mod-cuentasxpagar .module-header-text p {
-    font-size: 14px;
-    font-weight: 400;
-    color: var(--dash-text-sub);
-    margin: 0;
-}
-
-/* ---- BOTÓN NUEVO ---- */
-#mod-cuentasxpagar #btn-add-factura {
-    background: var(--dash-blue);
-    border: none;
-    padding: 10px 20px;
-    border-radius: 30px;
-    color: white;
-    font-weight: 600;
-    font-size: 13px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-family: var(--dash-font);
-}
-
-#mod-cuentasxpagar #btn-add-factura:hover {
-    background: var(--dash-blue-dark);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 8px color-mix(in srgb, var(--dash-blue) 20%, transparent);
-}
-
-/* ---- STATS ---- */
-#mod-cuentasxpagar .stats-grid {
+/* ---- Cuotas (lista dentro del detalle) ---- */
+.erp-modal .cuota-row {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 20px;
-    margin-bottom: 28px;
-}
-
-#mod-cuentasxpagar .stat-card {
-    background: var(--dash-card);
-    border: 1px solid var(--dash-border);
-    border-radius: var(--dash-radius);
-    padding: 20px 24px;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    transition: all 0.2s;
-    box-shadow: var(--dash-shadow-sm);
-}
-
-#mod-cuentasxpagar .stat-card:hover {
-    box-shadow: var(--dash-shadow-md);
-    transform: translateY(-2px);
-}
-
-#mod-cuentasxpagar .stat-icon {
-    width: 48px; height: 48px;
-    border-radius: var(--dash-radius-sm);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 22px; flex-shrink: 0;
-}
-
-#mod-cuentasxpagar .stat-icon.blue   { background: var(--dash-blue-light);  color: var(--dash-blue); }
-#mod-cuentasxpagar .stat-icon.green  { background: var(--dash-green-light); color: var(--dash-green-dark); }
-#mod-cuentasxpagar .stat-icon.red    { background: var(--dash-red-light);   color: var(--dash-red); }
-#mod-cuentasxpagar .stat-icon.yellow { background: var(--dash-amber-light); color: var(--dash-amber); }
-
-#mod-cuentasxpagar .stat-info {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    overflow: hidden;
-}
-
-#mod-cuentasxpagar .stat-label {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.8px;
-    text-transform: uppercase;
-    color: var(--dash-text-muted);
-    margin-bottom: 4px;
-}
-
-#mod-cuentasxpagar .stat-value {
-    font-size: 28px;
-    font-weight: 800;
-    color: var(--dash-text-head);
-    line-height: 1;
-}
-
-/* ---- FILTROS ---- */
-#mod-cuentasxpagar .filter-bar {
-    background: var(--dash-card);
-    border: 1px solid var(--dash-border);
-    border-radius: var(--dash-radius-sm);
-    padding: 8px 16px;
-    margin-bottom: 28px;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 12px;
-}
-
-#mod-cuentasxpagar .search-wrapper {
-    position: relative;
-    flex: 2;
-    min-width: 220px;
-}
-
-#mod-cuentasxpagar .search-icon {
-    position: absolute;
-    left: 12px; top: 50%;
-    transform: translateY(-50%);
-    color: var(--dash-text-muted);
-    font-size: 13px;
-}
-
-#mod-cuentasxpagar .search-input {
-    width: 100%;
-    padding: 10px 12px 10px 36px;
-    border: 1px solid var(--dash-border);
-    border-radius: 30px;
-    font-family: var(--dash-font);
-    font-size: 13px;
-    outline: none;
-    background: var(--dash-bg);
-    color: var(--dash-text-body);
-    transition: all 0.2s;
-}
-
-#mod-cuentasxpagar .search-input:focus {
-    border-color: var(--dash-blue);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--dash-blue) 10%, transparent);
-}
-
-#mod-cuentasxpagar .filter-toggle-group { display: flex; gap: 6px; }
-
-#mod-cuentasxpagar .filter-toggle {
-    padding: 6px 14px;
-    border-radius: 30px;
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    background: #f8fafc;
-    border: 1px solid var(--dash-border);
-    cursor: pointer;
-    transition: all 0.2s;
-    font-family: var(--dash-font);
-    color: var(--dash-text-sub);
-}
-
-#mod-cuentasxpagar .filter-toggle:hover { border-color: var(--dash-blue); }
-
-#mod-cuentasxpagar .filter-toggle.active {
-    background: var(--dash-blue);
-    border-color: var(--dash-blue);
-    color: white;
-}
-
-#mod-cuentasxpagar .btn-clear-filter {
-    background: none; border: none;
-    font-size: 11px; font-weight: 600;
-    color: var(--dash-rose); cursor: pointer;
-    padding: 6px 12px; border-radius: 30px;
-    display: flex; align-items: center; gap: 6px;
-    font-family: var(--dash-font);
-}
-
-#mod-cuentasxpagar .btn-clear-filter:hover { background: var(--dash-rose-light); }
-
-#mod-cuentasxpagar .filter-info {
-    font-size: 11px; font-weight: 500;
-    color: var(--dash-text-muted);
-    white-space: nowrap;
-}
-
-/* ---- TABLA ---- */
-#mod-cuentasxpagar .table-container {
-    background: var(--dash-card);
-    border: 1px solid var(--dash-border);
-    border-radius: var(--dash-radius);
-    overflow: hidden;
-}
-
-/* Scroll interno: la tarjeta no crece con cada fila y el encabezado
-   queda fijo arriba. El alto real lo calcula JS (ajustarAlturaTablaFacturas);
-   este valor es solo el respaldo mientras carga el JS. */
-#mod-cuentasxpagar .table-scroll {
-    max-height: 460px;
-    overflow-y: auto;
-    overflow-x: auto;
-}
-
-#mod-cuentasxpagar .data-table thead th {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-}
-
-#mod-cuentasxpagar .table-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
-#mod-cuentasxpagar .table-scroll::-webkit-scrollbar-track { background: transparent; }
-#mod-cuentasxpagar .table-scroll::-webkit-scrollbar-thumb {
-    background: #d7dce3;
-    border-radius: 30px;
-}
-#mod-cuentasxpagar .table-scroll::-webkit-scrollbar-thumb:hover { background: #b9c1cc; }
-
-#mod-cuentasxpagar .data-table {
-    width: 100%; border-collapse: collapse; font-size: 13px;
-    /* Anchos fijos por columna (definidos en el <colgroup>): la tabla no
-       recalcula los anchos según las filas visibles, así las columnas no
-       se mueven al ordenar, filtrar o cambiar de página. */
-    table-layout: fixed;
-    min-width: 1080px;
-}
-
-/* Reparto proporcional del ancho (suma 100%) */
-#mod-cuentasxpagar .data-table col.col-factura      { width: 8%; }
-#mod-cuentasxpagar .data-table col.col-oc           { width: 14%; }
-#mod-cuentasxpagar .data-table col.col-proveedor    { width: 17%; }
-#mod-cuentasxpagar .data-table col.col-emision      { width: 10%; }
-#mod-cuentasxpagar .data-table col.col-vencimiento  { width: 11%; }
-#mod-cuentasxpagar .data-table col.col-valor        { width: 10%; }
-#mod-cuentasxpagar .data-table col.col-saldo        { width: 10%; }
-#mod-cuentasxpagar .data-table col.col-cuotas       { width: 9%; }
-#mod-cuentasxpagar .data-table col.col-estado       { width: 11%; }
-
-#mod-cuentasxpagar .data-table th {
-    text-align: left; padding: 14px 12px;
-    background: #f9fafb; font-weight: 700;
-    font-size: 11px; text-transform: uppercase;
-    letter-spacing: 0.05em; color: var(--dash-text-sub);
-    border-bottom: 1px solid var(--dash-border);
-    white-space: nowrap;
-}
-
-/* Los encabezados respetan la alineación de su columna */
-#mod-cuentasxpagar .data-table th.text-center { text-align: center; }
-#mod-cuentasxpagar .data-table th.text-right  { text-align: right; }
-
-/* ---- ORDENAMIENTO DE COLUMNAS ---- */
-#mod-cuentasxpagar .data-table th.sortable {
-    cursor: pointer;
-    user-select: none;
-    transition: color 0.15s;
-}
-
-#mod-cuentasxpagar .data-table th.sortable:hover { color: var(--dash-blue); }
-
-#mod-cuentasxpagar .data-table th.sortable .sort-icon {
-    display: inline-block;
-    width: 12px;
-    text-align: center;
-    font-size: 13px;
-    margin-left: 5px;
-    color: var(--dash-text-muted);
-    opacity: 0.5;
-    vertical-align: -1px;
-}
-
-#mod-cuentasxpagar .data-table th.sortable:hover .sort-icon { color: var(--dash-blue); opacity: 1; }
-
-#mod-cuentasxpagar .data-table th.sortable.sort-active { color: var(--dash-blue); }
-
-#mod-cuentasxpagar .data-table th.sortable.sort-active .sort-icon {
-    font-size: 16px;
-    color: var(--dash-blue);
-    opacity: 1;
-}
-
-#mod-cuentasxpagar .data-table td {
-    padding: 12px 12px;
-    border-bottom: 1px solid var(--dash-border);
-    color: var(--dash-text-body); vertical-align: middle;
-    overflow-wrap: anywhere; /* textos largos bajan de línea sin empujar otras columnas */
-}
-
-/* ---- PAGINACIÓN ---- */
-#mod-cuentasxpagar .table-footer {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 12px;
-    padding: 10px 16px;
-    background: #f9fafb;
-    border-top: 1px solid var(--dash-border);
-}
-
-#mod-cuentasxpagar .pagination-size {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    color: var(--dash-text-sub);
-    margin-left: auto;
-}
-
-#mod-cuentasxpagar .pagination-size select {
-    padding: 6px 28px 6px 12px;
-    border: 1px solid var(--dash-border);
-    border-radius: 30px;
-    font-family: var(--dash-font);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--dash-text-body);
-    background: var(--dash-card);
-    cursor: pointer;
-    outline: none;
-    appearance: none;
-    -webkit-appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%2394a3b8' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
-    transition: border-color 0.2s;
-}
-
-#mod-cuentasxpagar .pagination-size select:focus {
-    border-color: var(--dash-blue);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--dash-blue) 10%, transparent);
-}
-
-#mod-cuentasxpagar .pagination-nav {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-}
-
-#mod-cuentasxpagar .pagination-range {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--dash-text-muted);
-}
-
-#mod-cuentasxpagar .pagination-btn {
-    width: 30px; height: 30px;
-    display: inline-flex; align-items: center; justify-content: center;
-    border: 1px solid var(--dash-blue);
-    border-radius: 50%;
-    background: var(--dash-blue);
-    color: white;
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-#mod-cuentasxpagar .pagination-btn:hover:not(:disabled) {
-    background: var(--dash-blue-dark);
-    border-color: var(--dash-blue-dark);
-}
-
-#mod-cuentasxpagar .pagination-btn:disabled {
-    border-color: var(--dash-border);
-    background: var(--dash-card);
-    color: var(--dash-text-muted);
-    opacity: 0.6;
-    cursor: not-allowed;
-}
-
-@media (max-width: 700px) {
-    #mod-cuentasxpagar .table-footer { justify-content: center; text-align: center; }
-}
-
-#mod-cuentasxpagar .data-table tr:last-child td { border-bottom: none; }
-#mod-cuentasxpagar .data-table tbody tr:hover td { background: #fafcff; cursor: pointer; }
-
-#mod-cuentasxpagar .text-center { text-align: center; }
-
-/* La celda de acciones no debe partir los botones en dos líneas */
-#mod-cuentasxpagar .data-table td.text-center { white-space: nowrap; }
-#mod-cuentasxpagar .text-right  { text-align: right; }
-
-/* Utilidad genérica para ocultar cualquier elemento */
-.hidden { display: none !important; }
-
-/* ---- BADGES ---- */
-#mod-cuentasxpagar .badge {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 4px 12px; border-radius: 40px;
-    font-size: 11px; font-weight: 700; text-transform: uppercase;
-}
-
-#mod-cuentasxpagar .badge::before {
-    content: ''; width: 6px; height: 6px; border-radius: 50%;
-}
-
-#mod-cuentasxpagar .badge-active   { background: var(--dash-green-light); color: var(--dash-green-dark); }
-#mod-cuentasxpagar .badge-inactive { background: var(--dash-red-light);   color: var(--dash-red); }
-
-#mod-cuentasxpagar .badge-active::before   { background: var(--dash-green-dark); }
-#mod-cuentasxpagar .badge-inactive::before { background: currentColor; }
-
-/* ---- BOTONES DE ACCIÓN EN TABLA ---- */
-#mod-cuentasxpagar .btn-icon-sm {
-    background: transparent; border: none;
-    padding: 5px 10px; border-radius: 30px;
-    font-size: 11px; font-weight: 600;
-    cursor: pointer; transition: all 0.2s;
-    display: inline-flex; align-items: center; gap: 5px;
-    font-family: var(--dash-font);
-    margin: 0 2px;
-}
-
-#mod-cuentasxpagar .btn-icon-sm.view   { background: var(--dash-blue-light);  color: var(--dash-blue); }
-#mod-cuentasxpagar .btn-icon-sm.edit   { background: var(--dash-amber-light); color: var(--dash-amber); }
-#mod-cuentasxpagar .btn-icon-sm.reject { background: var(--dash-rose-light);  color: var(--dash-rose); }
-#mod-cuentasxpagar .btn-icon-sm:hover  { transform: translateY(-1px); filter: brightness(0.95); }
-
-/* ---- ESTADO VACÍO ---- */
-#mod-cuentasxpagar .empty-row td { text-align: center; padding: 48px !important; }
-
-#mod-cuentasxpagar .empty-state {
-    text-align: center; background: transparent; border: none;
-}
-
-#mod-cuentasxpagar .empty-state i {
-    font-size: 48px; color: var(--dash-text-muted);
-    opacity: 0.4; margin-bottom: 16px; display: block;
-}
-
-#mod-cuentasxpagar .empty-state p {
-    font-weight: 600; color: var(--dash-text-sub); margin-bottom: 4px;
-}
-
-#mod-cuentasxpagar .empty-state span {
-    font-size: 12px; color: var(--dash-text-muted);
-}
-
-/* ---- BOTONES GENÉRICOS ---- */
-#mod-cuentasxpagar .btn,
-.modal-footer .btn,
-.oc-selected .btn {
-    display: inline-flex; align-items: center; gap: 8px;
-    padding: 10px 22px; border-radius: 30px;
-    font-size: 13px; font-weight: 700;
-    cursor: pointer; transition: all 0.2s;
-    font-family: 'DM Sans', system-ui, sans-serif;
-    border: none; text-transform: none; letter-spacing: 0;
-}
-
-#mod-cuentasxpagar .btn-primary,
-.modal-footer .btn-primary { background: var(--dash-blue); color: white; }
-
-#mod-cuentasxpagar .btn-primary:hover,
-.modal-footer .btn-primary:hover { background: var(--dash-blue-dark); }
-
-/* Dentro de un modal "verde" (crear), el boton principal debe coordinar
-   con el color primario (header, pestana activa y foco de campos ya usan
-   ese mismo color), en vez del azul que corresponde a los modales "editar". */
-.modal-header.green ~ .modal-footer .btn-primary {
-    background: var(--color-primary, #2d8653);
-}
-.modal-header.green ~ .modal-footer .btn-primary:hover {
-    background: color-mix(in srgb, var(--color-primary, #2d8653) 80%, black);
-}
-
-#mod-cuentasxpagar .btn-success,
-.modal-footer .btn-success { background: var(--color-primary, #2d8653); color: white; }
-
-#mod-cuentasxpagar .btn-success:hover,
-.modal-footer .btn-success:hover { background: color-mix(in srgb, var(--color-primary, #2d8653) 68%, black); }
-
-#mod-cuentasxpagar .btn-secondary,
-.modal-footer .btn-secondary,
-.oc-selected .btn-secondary {
-    background: #f1f5f9; color: #475569;
-    border: 1.5px solid #c4c9d4;
-}
-
-#mod-cuentasxpagar .btn-secondary:hover,
-.modal-footer .btn-secondary:hover,
-.oc-selected .btn-secondary:hover { background: #e2e8f0; }
-
-#mod-cuentasxpagar .btn-danger,
-.modal-footer .btn-danger { background: #ef4444; color: white; }
-
-#mod-cuentasxpagar .btn-danger:hover,
-.modal-footer .btn-danger:hover { background: #dc2626; }
-
-/* ============================================
-   MODALES
-   ============================================ */
-.modal-overlay {
-    position: fixed; top: 0; left: 0;
-    width: 100%; height: 100%;
-    background: rgba(0,0,0,0.5);
-    backdrop-filter: blur(3px);
-    display: flex; align-items: center; justify-content: center;
-    z-index: 10000; padding: 1rem;
-}
-
-.modal-overlay.hidden { display: none; }
-
-.modal-box {
-    background: white; width: 100%;
-    max-width: 620px; max-height: 90vh;
-    border-radius: 24px;
-    box-shadow: 0 20px 35px -10px rgba(0,0,0,0.2);
-    display: flex; flex-direction: column;
-    overflow: hidden;
-    animation: fadeIn 0.2s ease;
-    font-family: 'DM Sans', system-ui, sans-serif;
-}
-
-.modal-header {
-    padding: 18px 24px;
-    display: flex; justify-content: space-between; align-items: center;
-    flex-shrink: 0;
-}
-
-.modal-header.green { background: var(--color-primary, #2d8653); color: white; }
-.modal-header.blue  { background: var(--dash-blue); color: white; }
-
-.modal-header h2 {
-    font-size: 18px; font-weight: 700; margin: 0;
-    font-family: 'DM Sans', system-ui, sans-serif;
-}
-
-.modal-header p {
-    font-size: 12px; opacity: 0.85; margin-top: 4px;
-    font-family: 'DM Sans', system-ui, sans-serif;
-}
-
-.modal-close {
-    background: rgba(255,255,255,0.2); border: none;
-    width: 32px; height: 32px; border-radius: 50%;
-    font-size: 16px; cursor: pointer; color: white;
-    display: flex; align-items: center; justify-content: center;
-    flex-shrink: 0; transition: background 0.2s;
-}
-
-.modal-close:hover { background: rgba(255,255,255,0.35); }
-
-.modal-body {
-    padding: 24px;
-    overflow-y: auto;
-    flex: 1;
-    font-family: 'DM Sans', system-ui, sans-serif;
-    position: relative;
-}
-
-.modal-footer {
-    padding: 16px 24px;
-    border-top: 1px solid #e9edf2;
-    display: flex; justify-content: flex-end;
-    gap: 12px; background: #ffffff; flex-shrink: 0;
-}
-
-/* ============================================
-   FORMULARIOS
-   ============================================ */
-.form-grid {
-    display: grid; grid-template-columns: 1fr 1fr;
-    gap: 16px; margin-bottom: 16px;
-}
-
-.form-field {
-    display: flex; flex-direction: column; margin-bottom: 16px;
-}
-
-.form-label {
-    font-size: 11px; font-weight: 700;
-    text-transform: uppercase; color: #64748b;
-    margin-bottom: 6px; letter-spacing: 0.5px;
-    font-family: 'DM Sans', system-ui, sans-serif;
-}
-
-.required { color: #ef4444; margin-left: 2px; }
-
-.form-input {
-    width: 100%;
-    padding: 11px 16px;
-    height: 44px;
-    border: 1.5px solid color-mix(in srgb, var(--color-primary, #2d8653) 35%, white);
-    border-radius: 50px;
-    font-family: 'DM Sans', system-ui, sans-serif;
-    font-size: 13px;
-    outline: none;
-    background: #ffffff;
-    color: #1e293b;
-    transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
-    appearance: none;
-}
-
-.form-input:hover {
-    background: color-mix(in srgb, var(--color-primary, #2d8653) 8%, white);
-    border-color: color-mix(in srgb, var(--color-primary, #2d8653) 52%, white);
-}
-
-.form-input:focus {
-    background: color-mix(in srgb, var(--color-primary, #2d8653) 8%, white);
-    border-color: var(--color-primary, #2d8653);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #2d8653) 12%, transparent);
-}
-
-.form-input::placeholder { color: #b0b8c9; }
-
-/* Quita las flechas de incremento/decremento de los campos numéricos */
-.form-input[type="number"]::-webkit-outer-spin-button,
-.form-input[type="number"]::-webkit-inner-spin-button {
-    -webkit-appearance: none;
-    margin: 0;
-}
-
-.form-input[type="number"] {
-    -moz-appearance: textfield;
-}
-
-.form-input:disabled {
-    background: #f8fafc;
-    border-color: #e2e8f0;
-    color: #94a3b8;
-    cursor: not-allowed;
-}
-
-.form-select {
-    width: 100%;
-    height: 44px;
-    padding: 11px 16px;
-    border: 1.5px solid color-mix(in srgb, var(--color-primary, #2d8653) 35%, white);
-    border-radius: 50px;
-    font-family: 'DM Sans', system-ui, sans-serif;
-    font-size: 13px;
-    color: #1e293b;
-    background: #ffffff;
-    outline: none;
-    cursor: pointer;
-    appearance: none;
-    -webkit-appearance: none;
-    transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
-}
-
-.form-select:hover {
-    background: color-mix(in srgb, var(--color-primary, #2d8653) 8%, white);
-    border-color: color-mix(in srgb, var(--color-primary, #2d8653) 52%, white);
-}
-
-.form-select:focus {
-    background: color-mix(in srgb, var(--color-primary, #2d8653) 8%, white);
-    border-color: var(--color-primary, #2d8653);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #2d8653) 12%, transparent);
-}
-
-.field-error {
-    font-size: 11px; color: #ef4444; margin-top: 4px;
-    display: block; max-height: 0; overflow: hidden;
-    transition: max-height 0.2s;
-}
-
-.field-error.visible { max-height: 3rem; }
-
-.field-hint {
-    font-size: 11px; color: #94a3b8; margin-top: 6px;
-    line-height: 1.45;
-}
-
-.section-title {
-    font-size: 11px; font-weight: 800;
-    text-transform: uppercase; letter-spacing: 0.08em;
-    color: #64748b; margin: 20px 0 12px;
-    padding-bottom: 8px; border-bottom: 2px solid #e9edf2;
-    display: flex; align-items: center; gap: 8px;
-    font-family: 'DM Sans', system-ui, sans-serif;
-}
-
-/* ============================================
-   DETALLE DE FACTURA (modal)
-   ============================================ */
-.detail-grid {
-    display: grid; grid-template-columns: 1fr 1fr;
-    gap: 12px; margin-bottom: 20px;
-}
-
-.detail-item {
-    background: #f9fafb; border: 1px solid #e9edf2;
-    border-radius: 12px; padding: 10px 14px;
-    display: flex; flex-direction: column; gap: 2px;
-}
-
-.detail-label {
-    font-size: 10px; font-weight: 700;
-    text-transform: uppercase; color: #94a3b8;
-    letter-spacing: 0.5px;
-}
-
-.detail-value {
-    font-size: 13px; font-weight: 600;
-    color: #1e293b; word-break: break-word;
-}
-
-.detail-subheading {
-    font-size: 11px; font-weight: 800;
-    text-transform: uppercase; letter-spacing: 0.08em;
-    color: #64748b; margin: 20px 0 12px;
-    padding-bottom: 8px; border-bottom: 2px solid #e9edf2;
-    display: flex; align-items: center; gap: 8px;
-    font-family: 'DM Sans', system-ui, sans-serif;
-}
-
-.detail-subheading i { color: var(--color-primary, #2d8653); }
-
-/* ---- CUOTAS (lista dentro del modal de detalle) ---- */
-.cuota-row {
-    display: grid;
-    grid-template-columns: 1fr auto auto auto;
+    grid-template-columns: minmax(0, 1fr) auto auto auto;
     align-items: center;
     gap: 12px;
     padding: 12px 16px;
-    background: #f9fafb;
-    border: 1px solid #e9edf2;
-    border-radius: 16px;
     margin-bottom: 10px;
+    background: var(--erp-subtle);
+    border: 1px solid var(--erp-line);
+    border-radius: 16px;
 }
+.erp-modal .cuota-num   { font-size: 13px; font-weight: 700; color: var(--erp-text); }
+.erp-modal .cuota-fecha { white-space: nowrap; font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--erp-muted); }
+.erp-modal .cuota-valor { white-space: nowrap; font-size: 14px; font-weight: 800; color: var(--erp-strong); font-variant-numeric: tabular-nums; }
 
-.cuota-num {
-    font-size: 13px; font-weight: 700; color: #1e293b;
-}
-
-.cuota-fecha {
-    font-size: 10px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.5px;
-    color: #94a3b8; white-space: nowrap;
-}
-
-.cuota-valor {
-    font-size: 14px; font-weight: 800;
-    color: #0a0c1a; white-space: nowrap;
-}
-
-/* Los badges de las cuotas viven dentro del modal, fuera del scope del módulo */
-.cuota-row .badge {
-    display: inline-flex; align-items: center; gap: 6px;
-    padding: 4px 12px; border-radius: 40px;
-    font-size: 11px; font-weight: 700; text-transform: uppercase;
-    white-space: nowrap;
-}
-
-.cuota-row .badge::before {
-    content: ''; width: 6px; height: 6px; border-radius: 50%;
-    background: currentColor;
-}
-
-.cuota-row .badge-active   { background: #ecfdf5; color: #059669; }
-.cuota-row .badge-inactive { background: #fffbeb; color: #b45309; }
-
-/* ---- ESTADO VACÍO DENTRO DE MODALES ---- */
-.modal-body .empty-state { text-align: center; padding: 24px 12px; }
-.modal-body .empty-state i { font-size: 28px; color: #94a3b8; opacity: 0.5; display: block; margin-bottom: 10px; }
-.modal-body .empty-state p { font-size: 13px; font-weight: 600; color: #475569; }
-
-/* ---- NOTA DE PREVISUALIZACIÓN DE CUOTAS ---- */
-.config-hint {
-    font-size: 12px; color: #475569;
-    background: var(--dash-blue-light);
-    border: 1px solid var(--dash-blue-border);
+/* ---- Nota de previsualización de cuotas ---- */
+.erp-modal .config-hint {
+    font-size: 12px; color: var(--erp-sub);
+    background: var(--erp-soft);
+    border: 1px solid color-mix(in srgb, var(--erp-primary) 30%, var(--erp-surface));
     border-radius: 8px;
     padding: 12px 14px;
     margin: 4px 0 18px;
@@ -822,193 +43,193 @@
     text-wrap: pretty;
 }
 
-.config-hint i { color: var(--dash-blue); font-size: 14px; margin-top: 1px; flex-shrink: 0; }
+.erp-modal .config-hint i { color: var(--erp-primary); font-size: 14px; margin-top: 1px; flex-shrink: 0; }
 
 /* ============================================
    ORDEN DE COMPRA (elección + selector)
    ============================================ */
-.oc-choice {
+.erp-modal .oc-choice {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
 }
 
-.oc-choice-opt {
+.erp-modal .oc-choice-opt {
     display: flex; align-items: center; gap: 10px;
-    border: 1px solid #e9edf2;
+    border: 1px solid var(--erp-line);
     border-radius: 12px;
     padding: 12px 14px;
     cursor: pointer;
     font-size: 13px; font-weight: 600;
-    color: #1e293b;
+    color: var(--erp-text);
     transition: all 0.2s;
 }
 
-.oc-choice-opt:hover { border-color: #cbd5e1; background: #f9fafb; }
+.erp-modal .oc-choice-opt:hover { border-color: var(--erp-line-strong); background: var(--erp-subtle); }
 
 /* La opción marcada se resalta con el borde, no con un relleno fuerte */
-.oc-choice-opt:has(input:checked) {
-    border-color: var(--dash-blue);
-    background: var(--dash-blue-light);
-    color: var(--dash-blue-dark);
+.erp-modal .oc-choice-opt:has(input:checked) {
+    border-color: var(--erp-primary);
+    background: var(--erp-soft);
+    color: var(--erp-primary-strong);
 }
 
-.oc-choice-opt input { accent-color: var(--dash-blue); width: 16px; height: 16px; flex-shrink: 0; }
+.erp-modal .oc-choice-opt input { accent-color: var(--erp-primary); width: 16px; height: 16px; flex-shrink: 0; }
 
 /* ---- Resumen de la orden elegida (en el formulario) ---- */
-.oc-selected {
+.erp-modal .oc-selected {
     display: flex; align-items: center; justify-content: space-between;
     gap: 16px; flex-wrap: wrap;
-    border: 1px solid #e9edf2;
+    border: 1px solid var(--erp-line);
     border-radius: 12px;
     padding: 14px 16px;
-    background: #f9fafb;
+    background: var(--erp-subtle);
 }
 
-.oc-selected.sel { border-color: var(--dash-blue); background: var(--dash-blue-light); }
+.erp-modal .oc-selected.sel { border-color: var(--erp-primary); background: var(--erp-soft); }
 
-.oc-selected-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.erp-modal .oc-selected-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 
-.oc-selected .btn { flex-shrink: 0; white-space: nowrap; }
+.erp-modal .oc-selected .btn { flex-shrink: 0; white-space: nowrap; }
 
-.oc-selected-num {
+.erp-modal .oc-selected-num {
     font-size: 13px; font-weight: 700;
-    color: #1e293b; line-height: 1.35;
+    color: var(--erp-text); line-height: 1.35;
 }
 
-.oc-selected.sel .oc-selected-num { color: var(--dash-blue-dark); }
+.erp-modal .oc-selected.sel .oc-selected-num { color: var(--erp-primary-strong); }
 
-.oc-selected-meta {
+.erp-modal .oc-selected-meta {
     font-size: 11.5px; font-weight: 600;
-    color: #475569; line-height: 1.4;
+    color: var(--erp-sub); line-height: 1.4;
 }
 
 /* ---- Barra de filtros del modal ---- */
-.oc-filter-bar {
+.erp-modal .oc-filter-bar {
     display: flex; align-items: center; gap: 12px;
     flex-wrap: wrap;
     margin-bottom: 12px;
 }
 
-.oc-filter-bar .search-wrapper {
+.erp-modal .oc-filter-bar .search-wrapper {
     position: relative;
     flex: 1; min-width: 240px;
 }
 
-.oc-filter-bar .search-icon {
+.erp-modal .oc-filter-bar .search-icon {
     position: absolute;
     left: 13px; top: 50%;
     transform: translateY(-50%);
-    color: #94a3b8; font-size: 12.5px;
+    color: var(--erp-muted); font-size: 12.5px;
     pointer-events: none;
 }
 
-.oc-filter-bar .search-input {
+.erp-modal .oc-filter-bar .search-input {
     width: 100%; height: 40px;
     padding: 10px 16px 10px 38px;
-    border: 1.5px solid color-mix(in srgb, var(--color-primary, #2d8653) 35%, white);
+    border: 1.5px solid color-mix(in srgb, var(--erp-primary) 35%, var(--erp-surface));
     border-radius: 50px;
-    background: #ffffff;
+    background: var(--erp-surface);
     font-family: inherit;
     font-size: 13px; font-weight: 500;
-    color: #1e293b;
+    color: var(--erp-text);
     transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.oc-filter-bar .search-input::placeholder { color: #94a3b8; font-weight: 500; }
+.erp-modal .oc-filter-bar .search-input::placeholder { color: var(--erp-muted); font-weight: 500; }
 
-.oc-filter-bar .search-input:hover { border-color: #8cc4a8; }
+.erp-modal .oc-filter-bar .search-input:hover { border-color: color-mix(in srgb, var(--erp-primary) 45%, var(--erp-surface)); }
 
-.oc-filter-bar .search-input:focus {
+.erp-modal .oc-filter-bar .search-input:focus {
     outline: none;
-    border-color: var(--dash-blue);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--dash-blue) 12%, transparent);
+    border-color: var(--erp-primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--erp-primary) 12%, transparent);
 }
 
-.oc-filter-bar > .form-select {
+#modal-oc .oc-filter-bar > .form-input {
     width: auto; min-width: 210px;
-    height: 40px; padding: 8px 16px;
+    height: 40px; padding-top: 8px; padding-bottom: 8px;
     font-size: 13px;
 }
 
-.oc-filter-bar .btn-clear-filter {
+.erp-modal .oc-filter-bar .btn-clear-filter {
     display: inline-flex; align-items: center; gap: 6px;
-    background: #ffffff;
-    border: 1px solid #fecdd3;
+    background: var(--erp-surface);
+    border: 1px solid color-mix(in srgb, var(--erp-danger) 30%, var(--erp-surface));
     border-radius: 999px;
     padding: 7px 14px;
     font-family: inherit;
     font-size: 12px; font-weight: 600;
-    color: #be123c; cursor: pointer;
+    color: var(--erp-danger-ink); cursor: pointer;
     white-space: nowrap;
     transition: all 0.2s;
 }
 
-.oc-filter-bar .btn-clear-filter:hover { background: #fff1f2; border-color: #fda4af; }
+.erp-modal .oc-filter-bar .btn-clear-filter:hover { background: var(--erp-danger-bg); border-color: color-mix(in srgb, var(--erp-danger) 45%, var(--erp-surface)); }
 
-.oc-filter-bar .btn-clear-filter i { font-size: 10px; }
+.erp-modal .oc-filter-bar .btn-clear-filter i { font-size: 10px; }
 
-.oc-filter-bar .filter-info {
+.erp-modal .oc-filter-bar .filter-info {
     font-size: 11px; font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.4px;
-    color: #475569;
+    color: var(--erp-sub);
     margin-left: auto;
     white-space: nowrap;
 }
 
-.oc-filter-bar .filter-toggle-group { display: flex; gap: 6px; }
+.erp-modal .oc-filter-bar .filter-toggle-group { display: flex; gap: 6px; }
 
-.oc-filter-bar-sec {
+.erp-modal .oc-filter-bar-sec {
     gap: 10px 18px;
     padding-bottom: 14px;
     margin-bottom: 14px;
-    border-bottom: 1px solid #e9edf2;
+    border-bottom: 1px solid var(--erp-line);
 }
 
-.oc-filter-field { display: flex; align-items: center; gap: 8px; }
+.erp-modal .oc-filter-field { display: flex; align-items: center; gap: 8px; }
 
-.oc-filter-field label {
+.erp-modal .oc-filter-field label {
     font-size: 11px; font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.4px;
-    color: #475569; white-space: nowrap;
+    color: var(--erp-sub); white-space: nowrap;
 }
 
-.oc-filter-field .form-input {
+#modal-oc .oc-filter-field .form-input {
     width: auto; height: 40px;
     padding: 8px 16px;
     font-size: 12.5px;
 }
 
-.oc-toggle {
-    background: #ffffff;
-    border: 1px solid #e9edf2;
+.erp-modal .oc-toggle {
+    background: var(--erp-surface);
+    border: 1px solid var(--erp-line);
     border-radius: 999px;
     padding: 7px 14px;
-    font-family: var(--dash-font, inherit);
+    font-family: var(--erp-font);
     font-size: 12px; font-weight: 600;
-    color: #475569; cursor: pointer;
+    color: var(--erp-sub); cursor: pointer;
     transition: all 0.2s;
 }
 
-.oc-toggle:hover { border-color: #cbd5e1; background: #f9fafb; }
+.erp-modal .oc-toggle:hover { border-color: var(--erp-line-strong); background: var(--erp-subtle); }
 
-.oc-toggle.active {
-    background: var(--dash-blue-light); border-color: var(--dash-blue);
-    color: var(--dash-blue-dark); font-weight: 700;
+.erp-modal .oc-toggle.active {
+    background: var(--erp-soft); border-color: var(--erp-primary);
+    color: var(--erp-primary-strong); font-weight: 700;
 }
 
 /* ---- Lista de órdenes disponibles ---- */
-.oc-list {
+.erp-modal .oc-list {
     max-height: 320px;
     overflow-y: auto;
-    border: 1px solid #e9edf2;
+    border: 1px solid var(--erp-line);
     border-radius: 16px;
     padding: 8px;
-    background: #ffffff;
+    background: var(--erp-surface);
     margin-top: 4px;
 }
 
-.oc-row {
+.erp-modal .oc-row {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
@@ -1019,30 +240,30 @@
     transition: background 0.15s;
 }
 
-.oc-row:hover { background: #f9fafb; }
-.oc-row.sel { background: var(--dash-blue-light); }
+.erp-modal .oc-row:hover { background: var(--erp-subtle); }
+.erp-modal .oc-row.sel { background: var(--erp-soft); }
 
-.oc-row input { accent-color: var(--dash-blue); width: 15px; height: 15px; flex-shrink: 0; }
+.erp-modal .oc-row input { accent-color: var(--erp-primary); width: 15px; height: 15px; flex-shrink: 0; }
 
-.oc-row-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.erp-modal .oc-row-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 
-.oc-row-num {
+.erp-modal .oc-row-num {
     font-size: 12.5px; font-weight: 700;
-    color: #1e293b; line-height: 1.35;
+    color: var(--erp-text); line-height: 1.35;
 }
 
-.oc-row-meta {
+.erp-modal .oc-row-meta {
     font-size: 11px; font-weight: 600;
-    color: #475569; line-height: 1.4;
+    color: var(--erp-sub); line-height: 1.4;
 }
 
-.oc-row-valor {
+.erp-modal .oc-row-valor {
     font-size: 13px; font-weight: 800;
-    color: #0a0c1a; white-space: nowrap;
+    color: var(--erp-strong); white-space: nowrap;
 }
 
-.oc-vacio {
-    font-size: 12.5px; color: #475569;
+.erp-modal .oc-vacio {
+    font-size: 12.5px; color: var(--erp-sub);
     text-align: center; padding: 24px 12px;
     line-height: 1.5;
 }
@@ -1053,8 +274,7 @@
 #new-factura-form .form-grid { gap: 12px; margin-bottom: 11px; }
 #new-factura-form .form-label { margin-bottom: 5px; }
 #new-factura-form .field-hint { margin-top: 4px; }
-#new-factura-form .form-input,
-#new-factura-form .form-select { height: 40px; padding-top: 9px; padding-bottom: 9px; }
+#new-factura-form .form-input { height: 40px; padding-top: 9px; padding-bottom: 9px; }
 
 #new-factura-form .config-hint {
     margin: 2px 0 12px;
@@ -1068,10 +288,10 @@
 #new-factura-form .oc-selected { padding: 11px 14px; }
 
 /* ---- COLUMNA DE ORDEN DE COMPRA EN LA TABLA ---- */
-.oc-tag {
+#mod-cuentasxpagar .oc-tag {
     display: inline-block;
-    background: var(--dash-blue-light);
-    color: var(--dash-blue-dark);
+    background: var(--erp-soft);
+    color: var(--erp-primary-strong);
     border-radius: 6px;
     padding: 3px 8px;
     font-size: 11.5px; font-weight: 700;
@@ -1079,220 +299,9 @@
 }
 
 /* Sin orden no hay dato que mostrar: se marca como compra directa */
-.oc-directa {
+#mod-cuentasxpagar .oc-directa {
     font-size: 11.5px; font-weight: 600;
-    color: var(--dash-text-muted);
-}
-
-/* ============================================
-   CAMPO DE FECHA (abre el calendario)
-   Mismo estilo que el calendario de Cronograma de Pagos, pero aquí
-   se puede elegir cualquier fecha: no hay días bloqueados por días
-   de pago ni festivos (solo el min/max que ya tenía el campo).
-   Reemplaza al <input type="date">: es un botón con el mismo aspecto
-   de .form-input que muestra la fecha elegida.
-   ============================================ */
-.dp-trigger {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 8px;
-    text-align: left;
-    cursor: pointer;
-}
-
-.dp-trigger .dp-trigger-texto {
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
-.dp-trigger .dp-trigger-texto.vacio { color: #b0b8c9; }
-.dp-trigger i { color: #94a3b8; font-size: 14px; flex-shrink: 0; transition: color 0.2s; }
-
-/* Campo con el calendario abierto: mismo aspecto que un campo con foco */
-.dp-trigger.abierto {
-    background: color-mix(in srgb, var(--color-primary, #2d8653) 8%, white);
-    border-color: var(--color-primary, #2d8653);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary, #2d8653) 12%, transparent);
-}
-
-.dp-trigger.abierto i { color: var(--color-primary, #2d8653); }
-
-/* ============================================
-   CALENDARIO FLOTANTE
-   Va con position:fixed (lo ubica el JS) para que el scroll
-   del modal no lo recorte.
-   ============================================ */
-.dp-pop {
-    position: fixed;
-    z-index: 10050;              /* por encima de .modal-overlay (10000) */
-    width: 300px;
-    padding: 14px;
-    background: var(--dash-card);
-    border: 1px solid var(--dash-border);
-    border-radius: var(--dash-radius);
-    box-shadow: 0 16px 36px -8px rgba(15, 23, 42, 0.22);
-    font-family: var(--dash-font);
-    color: var(--dash-text-body);
-    animation: fadeIn 0.15s ease;
-}
-
-.dp-head {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 10px;
-}
-
-.dp-head strong {
-    font-size: 14px; font-weight: 800;
-    color: var(--dash-text-head);
-}
-
-.dp-nav-grupo { display: flex; align-items: center; gap: 2px; }
-
-.dp-nav {
-    width: 28px; height: 28px;
-    border: none; border-radius: 50%;
-    background: transparent;
-    color: var(--dash-text-muted);
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.dp-nav:hover:not(:disabled) { color: var(--dash-blue); background: var(--dash-blue-light); }
-.dp-nav:disabled { opacity: 0.35; cursor: default; }
-
-.dp-semana,
-.dp-grid {
-    display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-    justify-items: center;
-}
-
-.dp-semana { margin-bottom: 4px; }
-
-.dp-semana span {
-    font-size: 10px; font-weight: 700;
-    text-transform: uppercase; letter-spacing: 0.6px;
-    color: var(--dash-text-muted);
-}
-
-.dp-grid { row-gap: 3px; }
-
-.dp-dia {
-    position: relative;
-    width: 34px; height: 34px;
-    border: 1.5px solid transparent;
-    border-radius: 50%;
-    background: transparent;
-    font-family: var(--dash-font);
-    font-size: 12.5px; font-weight: 600;
-    color: var(--dash-text-body);
-    padding: 0;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-
-.dp-dia.vacio { cursor: default; }
-
-/* Cualquier día se puede elegir: se resalta al pasar el mouse */
-.dp-dia:not(.vacio):not(:disabled):hover {
-    background: var(--dash-blue-light);
-    border-color: var(--dash-blue);
-    color: var(--dash-blue-dark);
-}
-
-/* Fuera del min/max del campo (p. ej. emisión posterior a hoy) */
-.dp-dia.fuera {
-    color: #cbd5e1;
-    cursor: not-allowed;
-}
-
-.dp-dia.hoy { box-shadow: inset 0 0 0 1.5px var(--dash-text-muted); }
-
-/* Fecha elegida (va de último para ganarle a los demás estados) */
-.dp-dia.sel,
-.dp-dia.sel:not(.vacio):not(:disabled):hover {
-    background: var(--dash-blue);
-    border-color: var(--dash-blue);
-    color: #ffffff;
-    font-weight: 800;
-    box-shadow: 0 2px 6px color-mix(in srgb, var(--dash-blue) 35%, transparent);
-}
-
-/* Botones Hoy / Borrar */
-.dp-acciones {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 8px;
-    margin-top: 10px; padding-top: 10px;
-    border-top: 1px solid var(--dash-border);
-}
-
-.dp-accion {
-    border: none;
-    border-radius: 30px;
-    padding: 6px 14px;
-    background: var(--dash-blue-light);
-    color: var(--dash-blue-dark);
-    font-family: var(--dash-font);
-    font-size: 12px; font-weight: 700;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.dp-accion:hover:not(:disabled) { background: color-mix(in srgb, var(--dash-blue) 20%, white); }
-.dp-accion:disabled { opacity: 0.4; cursor: default; }
-
-.dp-accion.secundaria { background: transparent; color: var(--dash-text-sub); }
-.dp-accion.secundaria:hover:not(:disabled) { background: #f1f5f9; color: var(--dash-rose); }
-
-/* Campos de fecha en la barra de filtros del selector de órdenes */
-.oc-filter-field .dp-trigger { min-width: 150px; }
-
-/* ---- TOAST ---- */
-#toast {
-    position: fixed; bottom: 20px; right: 20px;
-    background: #0f172a; color: white;
-    padding: 12px 20px; border-radius: 40px;
-    display: flex; align-items: center; gap: 10px;
-    font-size: 13px; font-weight: 500;
-    z-index: 10100; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    font-family: 'DM Sans', system-ui, sans-serif;
-    animation: slideIn 0.3s ease;
-}
-
-#toast.hidden { display: none; }
-
-/* ---- ANIMACIONES ---- */
-@keyframes fadeIn {
-    from { opacity: 0; transform: scale(0.96); }
-    to   { opacity: 1; transform: scale(1); }
-}
-
-@keyframes slideIn {
-    from { opacity: 0; transform: translateX(20px); }
-    to   { opacity: 1; transform: translateX(0); }
-}
-
-/* ---- RESPONSIVE ---- */
-@media (max-width: 900px) {
-    #mod-cuentasxpagar { padding: 20px; }
-    #mod-cuentasxpagar .filter-bar { flex-direction: column; align-items: stretch; }
-    #mod-cuentasxpagar .filter-info { margin-left: 0; text-align: center; }
-    .form-grid { grid-template-columns: 1fr; }
-    .detail-grid { grid-template-columns: 1fr; }
-}
-
-@media (max-width: 768px) {
-    .oc-choice { grid-template-columns: 1fr; }
-    .oc-row { grid-template-columns: auto minmax(0, 1fr); row-gap: 6px; }
-    .oc-row-valor { grid-column: 2; }
-    .oc-filter-bar > .form-select { width: 100%; min-width: 0; }
-    .oc-filter-bar .filter-info { margin-left: 0; }
-    .oc-filter-field { flex: 1; }
-    .oc-filter-field .form-input { flex: 1; width: 100%; }
-    .oc-selected { flex-direction: column; align-items: stretch; }
-
-    #mod-cuentasxpagar .stats-grid { grid-template-columns: 1fr; }
-    .modal-box { width: 95vw; max-width: 95vw; }
-    .cuota-row { grid-template-columns: 1fr auto; row-gap: 8px; }
+    color: var(--erp-muted);
 }
 
 /* ============================================
@@ -1300,41 +309,41 @@
    La define la orden de compra (o el proveedor en compra directa).
    data-estado: pendiente | contado | credito
    ============================================ */
-.pago-modalidad {
+.erp-modal .pago-modalidad {
     display: flex; align-items: center; gap: 12px;
     padding: 12px 14px;
     margin: 4px 0 12px;
-    border: 1px solid var(--dash-border);
+    border: 1px solid var(--erp-line);
     border-radius: 12px;
-    background: #f9fafb;
+    background: var(--erp-subtle);
     transition: background 0.2s, border-color 0.2s;
 }
 
-.pago-modalidad-icono {
+.erp-modal .pago-modalidad-icono {
     width: 36px; height: 36px;
     border-radius: 50%;
     display: inline-flex; align-items: center; justify-content: center;
     flex-shrink: 0;
-    background: #eef1f5;
-    color: var(--dash-text-muted);
+    background: var(--erp-subtle-2);
+    color: var(--erp-muted);
     font-size: 15px;
 }
 
-.pago-modalidad-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.erp-modal .pago-modalidad-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
 
-.pago-modalidad-titulo {
+.erp-modal .pago-modalidad-titulo {
     font-size: 13px; font-weight: 700;
-    color: var(--dash-text-body);
+    color: var(--erp-text);
 }
 
-.pago-modalidad-detalle {
+.erp-modal .pago-modalidad-detalle {
     font-size: 11.5px; font-weight: 500;
-    color: var(--dash-text-sub);
+    color: var(--erp-sub);
     line-height: 1.45;
     text-wrap: pretty;
 }
 
-.pago-modalidad-badge {
+.erp-modal .pago-modalidad-badge {
     flex-shrink: 0;
     padding: 4px 12px;
     border-radius: 40px;
@@ -1344,49 +353,49 @@
 }
 
 /* Contado: tono ámbar, comunica que es un valor fijo */
-.pago-modalidad[data-estado="contado"] {
-    background: var(--dash-amber-light);
-    border-color: color-mix(in srgb, var(--dash-amber) 35%, white);
+.erp-modal .pago-modalidad[data-estado="contado"] {
+    background: var(--erp-warning-bg);
+    border-color: color-mix(in srgb, var(--erp-warning) 35%, var(--erp-surface));
 }
-.pago-modalidad[data-estado="contado"] .pago-modalidad-icono {
-    background: color-mix(in srgb, var(--dash-amber) 18%, white);
-    color: #b45309;
+.erp-modal .pago-modalidad[data-estado="contado"] .pago-modalidad-icono {
+    background: color-mix(in srgb, var(--erp-warning) 18%, var(--erp-surface));
+    color: var(--erp-warning-ink);
 }
-.pago-modalidad[data-estado="contado"] .pago-modalidad-badge {
-    background: color-mix(in srgb, var(--dash-amber) 18%, white);
-    color: #b45309;
+.erp-modal .pago-modalidad[data-estado="contado"] .pago-modalidad-badge {
+    background: color-mix(in srgb, var(--erp-warning) 18%, var(--erp-surface));
+    color: var(--erp-warning-ink);
 }
 
 /* Crédito: color primario del sistema */
-.pago-modalidad[data-estado="credito"] {
-    background: var(--dash-blue-light);
-    border-color: var(--dash-blue-border);
+.erp-modal .pago-modalidad[data-estado="credito"] {
+    background: var(--erp-soft);
+    border-color: color-mix(in srgb, var(--erp-primary) 30%, var(--erp-surface));
 }
-.pago-modalidad[data-estado="credito"] .pago-modalidad-icono {
-    background: color-mix(in srgb, var(--dash-blue) 18%, white);
-    color: var(--dash-blue-dark);
+.erp-modal .pago-modalidad[data-estado="credito"] .pago-modalidad-icono {
+    background: color-mix(in srgb, var(--erp-primary) 18%, var(--erp-surface));
+    color: var(--erp-primary-strong);
 }
-.pago-modalidad[data-estado="credito"] .pago-modalidad-badge {
-    background: color-mix(in srgb, var(--dash-blue) 18%, white);
-    color: var(--dash-blue-dark);
+.erp-modal .pago-modalidad[data-estado="credito"] .pago-modalidad-badge {
+    background: color-mix(in srgb, var(--erp-primary) 18%, var(--erp-surface));
+    color: var(--erp-primary-strong);
 }
 
 /* Número de cuotas fijo (contado o sin modalidad aún): aspecto de campo bloqueado */
-.cuotas-fijas {
+.erp-modal .cuotas-fijas {
     display: flex; align-items: center; justify-content: space-between;
     gap: 8px;
     height: 44px;
     padding: 0 16px;
-    border: 1.5px solid #e2e8f0;
+    border: 1.5px solid var(--erp-line);
     border-radius: 50px;
-    background: #f8fafc;
+    background: var(--erp-subtle);
     font-size: 13px; font-weight: 600;
-    color: var(--dash-text-sub);
+    color: var(--erp-sub);
     cursor: not-allowed;
     user-select: none;
 }
 
-.cuotas-fijas i { color: var(--dash-text-muted); font-size: 12px; flex-shrink: 0; }
+.erp-modal .cuotas-fijas i { color: var(--erp-muted); font-size: 12px; flex-shrink: 0; }
 
 #new-factura-form .cuotas-fijas { height: 40px; }
 #new-factura-form .pago-modalidad { padding: 10px 12px; margin: 2px 0 11px; }
@@ -1403,12 +412,8 @@
    Al ser más ancho, campos que antes iban uno debajo del otro
    comparten fila (número + proveedor, pregunta de OC + orden).
    ============================================ */
-.modal-box.modal-box-factura {
-    max-width: 880px;
-    max-height: 94vh;
-}
-
-.modal-box-factura .modal-body { padding: 20px 24px; }
+.erp-modal .modal-box.modal-box-factura { max-width: 880px; }
+.erp-modal .modal-box-factura .modal-body { padding: 20px 24px; }
 
 /* Número de factura angosto, proveedor ancho */
 #new-factura-form .form-grid-factura { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
@@ -1424,24 +429,24 @@
 }
 
 /* ---- Valor de la factura bloqueado (viene de la orden de compra) ---- */
-.valor-wrap { position: relative; }
+.erp-modal .valor-wrap { position: relative; }
 
-.valor-wrap .valor-lock {
+.erp-modal .valor-wrap .valor-lock {
     position: absolute;
     right: 16px; top: 50%;
     transform: translateY(-50%);
-    color: var(--dash-text-muted);
+    color: var(--erp-muted);
     font-size: 12px;
     pointer-events: none;
 }
 
-.form-input.bloqueado,
-.form-input.bloqueado:hover,
-.form-input.bloqueado:focus {
-    background: #f8fafc;
-    border-color: #e2e8f0;
+#new-factura-form .form-input.bloqueado,
+#new-factura-form .form-input.bloqueado:hover,
+#new-factura-form .form-input.bloqueado:focus {
+    background: var(--erp-subtle);
+    border-color: var(--erp-line);
     box-shadow: none;
-    color: var(--dash-text-sub);
+    color: var(--erp-sub);
     font-weight: 600;
     cursor: not-allowed;
     padding-right: 38px;
@@ -1454,3 +459,8 @@
     #new-factura-form .form-grid-oc { grid-template-columns: 1fr; }
     #new-factura-form .form-grid-oc .form-field { margin-bottom: 11px; }
 }
+
+/* ---- Lista: 9 columnas, celdas algo más angostas para que quepan sin desplazar de lado ---- */
+#mod-cuentasxpagar .data-table thead th,
+#mod-cuentasxpagar .data-table tbody td { padding-left: 12px; padding-right: 12px; }
+#mod-cuentasxpagar .data-table tbody td:nth-child(3) { min-width: 160px; }

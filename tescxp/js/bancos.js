@@ -39,10 +39,15 @@ function showToast(message, type = 'success') {
     const span  = document.getElementById('toast-message');
     if (!toast || !span) return;
     span.textContent = message && message.trim() ? message : (type === 'success' ? 'Operación exitosa' : 'Ocurrió un error');
-    toast.style.background = type === 'error' ? '#ef4444' : '#0f172a';
+    toast.classList.toggle('toast-error', type === 'error');
     toast.classList.remove('hidden');
     clearTimeout(toast._timer);
     toast._timer = setTimeout(() => toast.classList.add('hidden'), 3500);
+}
+
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 }
 
 function resumenRespuesta(text) {
@@ -99,7 +104,7 @@ function openNewModal() {
 function closeNewModal() { hide('modal-new-banco'); }
 
 // ============================================================
-// 3. MODAL: EDITAR BANCO  (lo llama el onclick de cada fila)
+// 3. MODAL: EDITAR BANCO  (lo abre el botón Editar de cada fila)
 // ============================================================
 function openEditModal(banco) {
     clearAllFieldErrors('edit');
@@ -114,7 +119,7 @@ function openEditModal(banco) {
 function closeEditModal() { hide('modal-edit-banco'); }
 
 // ============================================================
-// 4. ACTIVAR / DESACTIVAR  (lo llama el onclick de cada fila)
+// 4. ACTIVAR / DESACTIVAR  (botón de cada fila)
 // ============================================================
 function toggleEstadoBanco(idBanco, nuevoEstado) {
     const formData = new FormData();
@@ -150,130 +155,115 @@ function confirmarEliminar() {
     enviarFormulario(formData, 'Error al eliminar');
 }
 
-// Las funciones que usan los onclick="" del HTML deben ser globales
-window.openEditModal     = openEditModal;
-window.toggleEstadoBanco = toggleEstadoBanco;
-window.eliminarBanco     = eliminarBanco;
-
 // ============================================================
-// 6. FILTROS + PAGINACIÓN + ORDEN
+// 6. LISTA: INDICADORES, FILTROS, ORDEN Y PAGINADOR
+// La tabla la pinta este archivo desde bancosData (PHP). Paginador y
+// orden: componentes compartidos del ERP (erp_ui.js) — GUIA_PANTALLAS_ERP §4-§5.
 // ============================================================
-let bancosPage     = 1;
-let bancosPageSize = 25; // coincide con el <option selected>
-let bancosFiltro   = 'all';
-let sortKey = null;
-let sortDir = 'asc';
+let pag = null, orden = null;
+const norm = t => (window.erpNormalizar ? erpNormalizar(t) : String(t ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
+const datos = () => (typeof bancosData !== 'undefined' && Array.isArray(bancosData) ? bancosData : []);
 
-function filasTabla() {
-    return Array.from(document.querySelectorAll('#bancos-tbody tr:not(.empty-row)'));
+function updateStats() {
+    const data = datos();
+    const activos = data.filter(b => esActivo(b.ind_estado)).length;
+    const conUso = data.filter(b => Number(b.num_cuentas) > 0).length;
+    setText('stat-total', data.length);
+    setText('stat-activos', activos);
+    setText('stat-inactivos', data.length - activos);
+    setText('stat-uso', conUso);
+    setText('ban-cnt-all', data.length);
+    setText('ban-cnt-activo', activos);
+    setText('ban-cnt-inactivo', data.length - activos);
 }
 
-function getFilteredRows() {
-    const query = val('banco-search').toLowerCase().trim();
-    return filasTabla().filter(fila => {
-        const codigo = (fila.cells[0]?.textContent || '').toLowerCase();
-        const nombre = (fila.cells[1]?.textContent || '').toLowerCase();
-        const coincideTexto  = !query || codigo.includes(query) || nombre.includes(query);
-        const coincideEstado = bancosFiltro === 'all' || fila.dataset.tipo === bancosFiltro;
-        return coincideTexto && coincideEstado;
+function prepararLista() {
+    if (!pag && window.ErpPaginador) {
+        pag = ErpPaginador.crear({ lista: document.getElementById('bancos-tbody'), onCambio: renderPage, tam: 25 });
+    }
+    if (!orden && window.ErpOrden) {
+        orden = ErpOrden.crear({
+            tabla: document.getElementById('bancos-table'),
+            columnas: {
+                'Código':           { valor: b => b.id_banco },
+                'Nombre del banco': { valor: b => b.nom_banco },
+                'Cuentas':          { valor: b => Number(b.num_cuentas) || 0, tipo: 'numero' },
+                'Estado':           { valor: b => (esActivo(b.ind_estado) ? 1 : 0), tipo: 'numero' },
+            },
+            onCambio: () => { if (pag) pag.inicio(); renderPage(); },
+        });
+    }
+}
+
+function hayFiltros() {
+    return val('banco-search').trim() !== '' || (val('banco-filtro-estado') || 'all') !== 'all';
+}
+
+function getFiltered() {
+    const q = norm(val('banco-search'));
+    const estado = val('banco-filtro-estado') || 'all';
+    return datos().filter(b => {
+        const activo = esActivo(b.ind_estado);
+        if (estado === 'activo' && !activo) return false;
+        if (estado === 'inactivo' && activo) return false;
+        if (q && !norm(`${b.id_banco} ${b.nom_banco}`).includes(q)) return false;
+        return true;
     });
 }
 
 function applyFilters() {
-    bancosPage = 1;
+    if (pag) pag.inicio();
     renderPage();
-    const hayFiltro = val('banco-search').trim() !== '' || bancosFiltro !== 'all';
-    const clearBtn  = document.getElementById('btn-clear-filters');
-    if (clearBtn) clearBtn.style.display = hayFiltro ? 'flex' : 'none';
-}
-
-function setFiltro(filtro) {
-    bancosFiltro = filtro;
-    document.querySelectorAll('#mod-bancos .filter-toggle').forEach(b => {
-        b.classList.toggle('active', b.dataset.filter === filtro);
-    });
-    applyFilters();
 }
 
 function clearFilters() {
     setVal('banco-search', '');
-    setFiltro('all');
+    setVal('banco-filtro-estado', 'all');
+    if (window.ErpFiltros) ErpFiltros.sincronizar();
+    applyFilters();
 }
 
+// Lista: filtrar → contar → ordenar → paginar → pintar
 function renderPage() {
-    const coinciden = getFilteredRows();
-    filasTabla().forEach(fila => { fila.style.display = 'none'; });
+    prepararLista();
+    let filas = getFiltered();
+    setText('bancos-count', `${filas.length} resultado${filas.length !== 1 ? 's' : ''}`);
+    const btnClear = document.getElementById('btn-clear-filters');
+    if (btnClear) btnClear.hidden = !hayFiltros();
 
-    const total        = coinciden.length;
-    const esTodos      = bancosPageSize === 'all';
-    const size         = esTodos ? total : bancosPageSize;
-    const totalPaginas = size > 0 ? Math.max(1, Math.ceil(total / size)) : 1;
-    bancosPage = Math.min(Math.max(bancosPage, 1), totalPaginas);
-
-    const start = esTodos ? 0 : (bancosPage - 1) * size;
-    const end   = esTodos ? total : Math.min(start + size, total);
-    coinciden.slice(start, end).forEach(fila => { fila.style.display = ''; });
-
-    setText('bancos-count', `${total} resultado${total !== 1 ? 's' : ''}`);
-    setText('bancos-range', total === 0 ? '0 de 0' : `${start + 1}–${end} de ${total}`);
-
-    const btnPrev = document.getElementById('bancos-prev');
-    const btnNext = document.getElementById('bancos-next');
-    if (btnPrev) btnPrev.disabled = bancosPage <= 1;
-    if (btnNext) btnNext.disabled = esTodos || bancosPage >= totalPaginas;
-}
-
-function sortRows(key, type) {
     const tbody = document.getElementById('bancos-tbody');
-    const filas = filasTabla();
-    if (!tbody || filas.length === 0) return;
-
-    sortDir = (sortKey === key && sortDir === 'asc') ? 'desc' : 'asc';
-    sortKey = key;
-
-    const getValor = fila => {
-        const celda = fila.cells[Number(key)];
-        const base  = celda?.dataset.sort ?? celda?.textContent.trim() ?? '';
-        return type === 'number' ? (parseFloat(base) || 0) : base.toLowerCase();
-    };
-
-    filas.sort((a, b) => {
-        const va = getValor(a), vb = getValor(b);
-        const cmp = type === 'number' ? (va - vb) : va.localeCompare(vb, 'es');
-        return sortDir === 'asc' ? cmp : -cmp;
-    });
-    filas.forEach(fila => tbody.appendChild(fila));
-
-    document.querySelectorAll('#mod-bancos .data-table th.sortable').forEach(th => {
-        const icon   = th.querySelector('.sort-icon');
-        const activo = th.dataset.sortKey === key;
-        th.classList.toggle('sort-active', activo);
-        if (icon) {
-            icon.className = activo
-                ? `fas sort-icon ${sortDir === 'asc' ? 'fa-caret-up' : 'fa-caret-down'}`
-                : 'fas fa-caret-down sort-icon';
-        }
-    });
-
-    bancosPage = 1;
-    renderPage();
-}
-
-function ajustarAlturaTabla() {
-    const scrollBox = document.getElementById('bancos-table-scroll');
-    if (!scrollBox) return;
-    const footer = document.querySelector('#mod-bancos .table-footer');
-    const top = scrollBox.getBoundingClientRect().top;
-    const alturaFooter = footer ? footer.offsetHeight : 0;
-
-    let margenInferior = 16;
-    const contentCard = scrollBox.closest('.content-card') || document.querySelector('.content-card');
-    if (contentCard) {
-        const cs = getComputedStyle(contentCard);
-        margenInferior += (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.marginBottom) || 0);
+    if (!tbody) return;
+    if (filas.length === 0) {
+        const hayDatos = datos().length > 0;
+        tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">
+            <i class="fas ${hayDatos ? 'fa-search' : 'fa-university'}"></i>
+            <p>${hayDatos ? 'Ningún banco coincide con los filtros' : 'No hay bancos para mostrar'}</p>
+            <span>${hayDatos ? 'Cambie la búsqueda o use «Limpiar»' : 'Use «Nuevo banco» para registrar el primero'}</span>
+        </div></td></tr>`;
+        if (pag) pag.paginar([]);
+        return;
     }
-    const disponible = window.innerHeight - top - alturaFooter - margenInferior;
-    scrollBox.style.maxHeight = Math.max(220, disponible) + 'px';
+    if (orden) filas = orden.ordenar(filas);
+    const pagina = pag ? pag.paginar(filas) : filas;
+    tbody.innerHTML = pagina.map(b => {
+        const id = escapeHtml(b.id_banco);
+        const nombre = escapeHtml(b.nom_banco);
+        const activo = esActivo(b.ind_estado);
+        const n = Number(b.num_cuentas) || 0;
+        return `<tr data-id="${id}">
+            <td class="tcx-num"><span class="tcx-fuerte">${id}</span></td>
+            <td>${nombre}</td>
+            <td class="text-center tcx-num">${n ? n : '<span class="tcx-muted">—</span>'}</td>
+            <td><span class="badge ${activo ? 'ok' : 'mute'}">${activo ? 'Activo' : 'Inactivo'}</span></td>
+            <td class="col-acciones">
+                <div class="actions-cell">
+                    <button type="button" class="btn-icon-sm ${activo ? 'toggle-off' : 'approve'}" data-ban-accion="estado" title="${activo ? 'Desactivar' : 'Activar'}" aria-label="${activo ? 'Desactivar' : 'Activar'} ${nombre}"><i class="fas fa-power-off"></i></button>
+                    <button type="button" class="btn-icon-sm edit" data-ban-accion="editar" title="Editar" aria-label="Editar ${nombre}"><i class="fas fa-pen"></i></button>
+                    <button type="button" class="btn-icon-sm reject" data-ban-accion="eliminar" title="Eliminar" aria-label="Eliminar ${nombre}"><i class="fas fa-trash"></i></button>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
 }
 
 // ============================================================
@@ -282,39 +272,43 @@ function ajustarAlturaTabla() {
 function initBancosModule() {
     if (!document.getElementById('mod-bancos')) return;
 
-    // Mover modales y toast al <body> para que el overlay cubra también
-    // la barra superior (escapan del contexto de apilamiento del layout)
-    ['modal-new-banco', 'modal-edit-banco', 'modal-confirm-eliminar', 'toast'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el && el.parentElement !== document.body) document.body.appendChild(el);
-    });
+    // Los modales los mueve a <body> el componente "modales" (erp_ui.js); el aviso se mueve aquí
+    const toastEl = document.getElementById('toast');
+    if (toastEl && toastEl.parentElement !== document.body) document.body.appendChild(toastEl);
 
     document.getElementById('btn-add-banco')?.addEventListener('click', openNewModal);
 
     // Filtros
     document.getElementById('banco-search')?.addEventListener('input', applyFilters);
-    document.querySelectorAll('#mod-bancos .filter-toggle').forEach(btn => {
-        btn.addEventListener('click', () => setFiltro(btn.dataset.filter));
-    });
+    document.getElementById('banco-filtro-estado')?.addEventListener('change', applyFilters);
     document.getElementById('btn-clear-filters')?.addEventListener('click', clearFilters);
 
-    // Paginación
-    document.getElementById('bancos-page-size')?.addEventListener('change', function () {
-        bancosPageSize = this.value === 'all' ? 'all' : parseInt(this.value, 10);
-        bancosPage = 1;
-        renderPage();
+    // Acciones de cada fila (sin onclick en línea)
+    document.getElementById('bancos-tbody')?.addEventListener('click', e => {
+        const btn = e.target.closest('[data-ban-accion]');
+        const tr = e.target.closest('tr[data-id]');
+        if (!btn || !tr) return;
+        const banco = datos().find(x => String(x.id_banco) === tr.dataset.id);
+        if (!banco) return;
+        const accion = btn.dataset.banAccion;
+        if (accion === 'estado')   toggleEstadoBanco(banco.id_banco, !esActivo(banco.ind_estado));
+        if (accion === 'editar')   openEditModal(banco);
+        if (accion === 'eliminar') eliminarBanco(banco.id_banco, banco.nom_banco);
     });
-    document.getElementById('bancos-prev')?.addEventListener('click', () => { bancosPage--; renderPage(); });
-    document.getElementById('bancos-next')?.addEventListener('click', () => { bancosPage++; renderPage(); });
 
-    // Orden
-    document.querySelectorAll('#mod-bancos .data-table th.sortable').forEach(th => {
-        th.addEventListener('click', () => sortRows(th.dataset.sortKey, th.dataset.sortType));
-    });
-
+    // Lista
+    updateStats();
     renderPage();
-    ajustarAlturaTabla();
-    window.addEventListener('resize', ajustarAlturaTabla);
+    if (window.ErpListaFija) ErpListaFija.ajustar();
+    const mod = document.getElementById('mod-bancos');
+    requestAnimationFrame(() => requestAnimationFrame(() => mod?.classList.add('is-listo')));
+
+    // La confirmación es de solo lectura: Esc la cierra (los formularios, solo X o Cancelar)
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        const m = document.getElementById('modal-confirm-eliminar');
+        if (m && !m.classList.contains('hidden')) cerrarConfirmEliminar();
+    });
 
     // Cerrar modales
     document.querySelectorAll('.btn-close-new-modal, .btn-cancel-new-modal')

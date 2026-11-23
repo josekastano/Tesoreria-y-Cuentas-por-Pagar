@@ -5,7 +5,7 @@ $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Códigos de Respuesta del Banco";
 $page_description = "Catálogo de los códigos que devuelve cada banco en su archivo de respuesta";
 $page_icon        = "bi-upc-scan";
-$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/codigos_respuesta_banco_tescxp.css', 'modules/tescxp/css/cmp_modales.css'];
+$page_extra_css   = ['modules/tescxp/css/tcx_pantalla.css', 'modules/tescxp/css/tcx_modales.css', 'modules/tescxp/css/codigos_respuesta_banco_tescxp.css'];
 $page_extra_js    = ['modules/tescxp/js/codigos_respuesta_banco_tescxp.js'];
 $page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
@@ -267,170 +267,93 @@ $es_borrado = fn($c) => in_array($c['ind_borrado'], [true, 't', 'true', 1, '1'],
 ob_start();
 ?>
 
-<div id="mod-codigos" class="app-view active">
+<div id="mod-codigos" class="app-view active tcx-pantalla" data-lista-fija>
 
     <!-- ENCABEZADO -->
     <div class="module-header">
         <div class="module-header-text">
-            <h1>Códigos de Respuesta del Banco</h1>
+            <h1>Códigos de respuesta del banco</h1>
             <p>Catálogo de los códigos que devuelve cada banco en su archivo de respuesta</p>
         </div>
-        <button id="btn-add-codigo" class="btn btn-primary">
-            <i class="fas fa-plus"></i> Nuevo Código
-        </button>
+        <div class="module-header-acciones">
+            <button type="button" id="btn-add-codigo" class="btn btn-primary"><i class="fas fa-plus"></i> Nuevo código</button>
+        </div>
     </div>
 
-    <!-- STATS -->
+    <!-- Indicadores: los calcula codigos_respuesta_banco_tescxp.js sobre todos los códigos -->
     <div class="stats-grid">
-        <?php
-        $total      = count($codigos);
-        $inactivos  = count(array_filter($codigos, $es_borrado));
-        $activos    = $total - $inactivos;
-        $num_bancos = count($bancos_filtro);
-        ?>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:0">
             <div class="stat-icon blue"><i class="fas fa-list-ul"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Códigos activos</div>
-                <div class="stat-value" id="stat-activos"><?= $activos ?></div>
+                <div class="stat-value" id="stat-activos">0</div>
+                <div class="stat-hint">Se ofrecen al registrar la respuesta</div>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon red"><i class="fas fa-ban"></i></div>
+        <div class="stat-card" style="--i:1">
+            <div class="stat-icon rose"><i class="fas fa-ban"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Dados de baja</div>
-                <div class="stat-value" id="stat-inactivos"><?= $inactivos ?></div>
+                <div class="stat-value" id="stat-inactivos">0</div>
+                <div class="stat-hint">Se pueden reactivar</div>
             </div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:2">
             <div class="stat-icon green"><i class="fas fa-university"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Bancos con códigos</div>
-                <div class="stat-value" id="stat-bancos"><?= $num_bancos ?></div>
+                <div class="stat-value" id="stat-bancos">0</div>
+                <div class="stat-hint">Con al menos un código activo</div>
+            </div>
+        </div>
+        <div class="stat-card" style="--i:3">
+            <div class="stat-icon amber"><i class="fas fa-triangle-exclamation"></i></div>
+            <div class="stat-info">
+                <div class="stat-label">Bancos sin códigos</div>
+                <div class="stat-value" id="stat-sin-codigos">0</div>
+                <div class="stat-hint" id="stat-sin-codigos-hint">Bancos activos sin catálogo</div>
             </div>
         </div>
     </div>
 
-    <!-- FILTROS -->
+    <!-- Filtros (componente "filtros"): "Todos" no incluye los dados de baja -->
     <div class="filter-bar">
-        <div class="search-wrapper">
-            <span class="search-icon"><i class="fas fa-search"></i></span>
-            <input type="text" id="codigo-search" class="search-input" placeholder="Buscar por código, banco o descripción...">
-        </div>
-        <select id="codigo-banco-filter" class="filter-select" aria-label="Filtrar por banco">
-            <option value="">Todos los bancos</option>
-            <?php foreach ($bancos_filtro as $id => $nom): ?>
-                <option value="<?= htmlspecialchars($id) ?>"><?= htmlspecialchars($nom) ?></option>
-            <?php endforeach; ?>
-        </select>
-        <div class="filter-toggle-group">
-            <button class="filter-toggle" data-filter="all">Todos</button>
-            <button class="filter-toggle active" data-filter="activo">Activos</button>
-            <button class="filter-toggle" data-filter="inactivo">Dados de baja</button>
-        </div>
-        <button id="btn-clear-filters" class="btn-clear-filter" style="display:none">
-            <i class="fas fa-times"></i> Limpiar
-        </button>
-        <div class="pagination-size">
-            <label for="codigos-page-size">Filas por página</label>
-            <select id="codigos-page-size">
-                <option value="10">10</option>
-                <option value="25" selected>25</option>
-                <option value="50">50</option>
-                <option value="all">Todos</option>
+        <div class="filter-row">
+            <div class="search-wrapper">
+                <span class="search-icon"><i class="fas fa-search"></i></span>
+                <input type="search" id="codigo-search" class="search-input" maxlength="60" autocomplete="off" placeholder="Buscar por código, banco o descripción...">
+            </div>
+            <select id="codigo-banco-filter" class="filter-select" aria-label="Filtrar por banco">
+                <option value="">Todos los bancos</option>
+                <?php foreach ($bancos_filtro as $id => $nom): ?>
+                    <option value="<?= htmlspecialchars($id) ?>"><?= htmlspecialchars($nom) ?></option>
+                <?php endforeach; ?>
             </select>
+            <div class="filter-toggle-group" role="group" aria-label="Estado" data-para="codigo-filtro-estado">
+                <button type="button" class="filter-toggle active" data-valor="all" aria-pressed="true">Todos <span class="count" id="cod-cnt-all"></span></button>
+                <button type="button" class="filter-toggle" data-valor="baja" aria-pressed="false"><i class="fas fa-trash-can"></i> Dados de baja <span class="count" id="cod-cnt-baja"></span></button>
+            </div>
+            <input type="hidden" id="codigo-filtro-estado" value="all">
+            <button type="button" id="btn-clear-filters" class="btn-clear-filter" hidden><i class="fas fa-eraser"></i> Limpiar</button>
         </div>
-        <span class="filter-info" id="codigos-count"><?= $activos ?> resultado<?= $activos !== 1 ? 's' : '' ?></span>
+        <div class="filter-info" id="codigos-count" aria-live="polite">0 resultados</div>
     </div>
 
-    <!-- TABLA -->
-    <div class="table-container">
-      <div class="table-scroll" id="codigos-table-scroll">
-        <table class="data-table">
-            <!-- Anchos fijos: las columnas no se mueven al ordenar o cambiar de página -->
-            <colgroup>
-                <col class="col-codigo">
-                <col class="col-banco">
-                <col class="col-descripcion">
-                <col class="col-estado">
-                <col class="col-acciones">
-            </colgroup>
-            <thead>
-                <tr>
-                    <th class="sortable" data-sort-key="0" data-sort-type="text">Código <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="1" data-sort-type="text">Banco <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="2" data-sort-type="text">Descripción <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="3" data-sort-type="text">Estado <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-center">Acciones</th>
-                </tr>
-            </thead>
-            <tbody id="codigos-tbody">
-            <?php if (empty($codigos)): ?>
-                <tr class="empty-row">
-                    <td colspan="5">
-                        <div class="empty-state">
-                            <i class="fas fa-barcode"></i>
-                            <p>No hay códigos de respuesta registrados</p>
-                            <span>Haga clic en "Nuevo Código" para agregar el primero</span>
-                        </div>
-                    </td>
-                </tr>
-            <?php else: ?>
-                <?php foreach ($codigos as $c):
-                    $borrado = $es_borrado($c);
-                    $estado  = $borrado ? 'inactivo' : 'activo';
-                    $datos   = [
-                        'id_codigo'   => $c['id_codigo'],
-                        'id_banco'    => $c['id_banco'],
-                        'nom_banco'   => $c['nom_banco'],
-                        'des_motivo'  => $c['des_motivo'],
-                        'ind_borrado' => $borrado,
-                    ];
-                    $json = htmlspecialchars(json_encode($datos, JSON_UNESCAPED_UNICODE), ENT_QUOTES);
-                ?>
-                <tr data-estado="<?= $estado ?>" data-banco="<?= htmlspecialchars($c['id_banco']) ?>">
-                    <td data-sort="<?= htmlspecialchars($c['id_codigo']) ?>"><span class="cod-bancario"><?= htmlspecialchars($c['id_codigo']) ?></span></td>
-                    <td data-sort="<?= htmlspecialchars($c['nom_banco']) ?>"><?= htmlspecialchars($c['nom_banco']) ?></td>
-                    <td data-sort="<?= htmlspecialchars($c['des_motivo']) ?>"><?= htmlspecialchars($c['des_motivo']) ?></td>
-                    <td data-sort="<?= $estado ?>">
-                        <?php if ($borrado): ?>
-                            <span class="badge badge-inactive">De baja</span>
-                        <?php else: ?>
-                            <span class="badge badge-active">Activo</span>
-                        <?php endif; ?>
-                    </td>
-                    <td class="text-center">
-                        <button class="btn-icon-sm edit" title="Editar" data-codigo="<?= $json ?>" data-action="editar">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        <?php if ($borrado): ?>
-                            <button class="btn-icon-sm toggle" title="Reactivar" data-codigo="<?= $json ?>" data-action="reactivar">
-                                <i class="fas fa-undo"></i>
-                            </button>
-                        <?php else: ?>
-                            <button class="btn-icon-sm reject" title="Dar de baja" data-codigo="<?= $json ?>" data-action="eliminar">
-                                <i class="fas fa-trash"></i>
-                            </button>
-                        <?php endif; ?>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            <?php endif; ?>
-            </tbody>
-        </table>
-      </div>
-
-        <!-- PAGINACIÓN -->
-        <div class="table-footer">
-            <div class="pagination-nav">
-                <span class="pagination-range" id="codigos-range">0 de 0</span>
-                <button type="button" id="codigos-prev" class="pagination-btn" disabled aria-label="Página anterior">
-                    <i class="fas fa-chevron-left"></i>
-                </button>
-                <button type="button" id="codigos-next" class="pagination-btn" disabled aria-label="Página siguiente">
-                    <i class="fas fa-chevron-right"></i>
-                </button>
-            </div>
+    <!-- Lista: la pinta el JS; el paginador agrega su pie -->
+    <div class="table-container" data-lista>
+        <div data-lista-scroll>
+            <table id="codigos-table" class="data-table" data-erp-movil data-erp-movil-titulo="3">
+                <thead>
+                    <tr>
+                        <th>Código</th>
+                        <th>Banco</th>
+                        <th>Descripción</th>
+                        <th>Estado</th>
+                        <th class="col-acciones">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="codigos-tbody"></tbody>
+            </table>
         </div>
     </div>
 </div>
@@ -438,19 +361,19 @@ ob_start();
 <!-- MODAL: NUEVO CÓDIGO -->
 <div id="modal-new-codigo" class="modal-overlay hidden">
     <div class="modal-box">
-        <div class="modal-header green">
+        <div class="modal-header">
             <div>
-                <h2>Nuevo Código de Respuesta</h2>
+                <h3>Nuevo código de respuesta</h3>
                 <p>Registre un código tal como lo envía el banco</p>
             </div>
-            <button class="modal-close btn-close-new-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-new-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="new-codigo-form" novalidate>
                 <input type="hidden" name="btn_nuevo" value="1">
                 <div class="form-field">
                     <label class="form-label">Banco <span class="required">*</span></label>
-                    <select id="new-id-banco" name="sel_id_banco" class="form-select">
+                    <select id="new-id-banco" name="sel_id_banco" class="form-input">
                         <option value="">Seleccione un banco</option>
                         <?php foreach ($bancos as $b): ?>
                             <option value="<?= htmlspecialchars($b['id_banco']) ?>"><?= htmlspecialchars($b['nom_banco']) ?></option>
@@ -474,7 +397,7 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-new-modal">Cancelar</button>
-            <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Código</button>
+            <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
@@ -482,12 +405,12 @@ ob_start();
 <!-- MODAL: EDITAR CÓDIGO -->
 <div id="modal-edit-codigo" class="modal-overlay hidden">
     <div class="modal-box">
-        <div class="modal-header blue">
+        <div class="modal-header">
             <div>
-                <h2>Editar Código de Respuesta</h2>
+                <h3>Editar código de respuesta</h3>
                 <p>Modifique la descripción del código</p>
             </div>
-            <button class="modal-close btn-close-edit-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-edit-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="edit-codigo-form" novalidate>
@@ -515,27 +438,38 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-edit-modal">Cancelar</button>
-            <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Actualizar Código</button>
+            <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
 
-<!-- MODAL: CONFIRMAR ACCIÓN (estilo módulo Compras) -->
+<!-- MODAL: CONFIRMAR DAR DE BAJA (después de los formularios: queda encima) -->
 <div id="modal-confirm-eliminar" class="modal-overlay hidden">
     <div class="modal-box confirm-box">
         <div class="confirm-icon"><i class="fas fa-exclamation-triangle"></i></div>
         <h4 id="confirm-eliminar-title"></h4>
         <p id="confirm-eliminar-body"></p>
-        <div class="confirm-buttons">
-            <button type="button" class="btn-cancelar" id="confirm-eliminar-cancel-btn">Cancelar</button>
-            <button type="button" class="btn-eliminar" id="confirm-eliminar-ok-btn">Sí, dar de baja</button>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="confirm-eliminar-cancel-btn">Cancelar</button>
+            <button type="button" class="btn btn-danger" id="confirm-eliminar-ok-btn">Dar de baja</button>
         </div>
     </div>
 </div>
 
 <!-- TOAST -->
-<div id="toast" class="hidden"><span id="toast-message"></span></div>
+<div id="toast" class="tcx-toast hidden" role="status" aria-live="polite"><span id="toast-message"></span></div>
 
+<!-- DATOS PARA EL JS -->
+<script>
+const codigosData = <?= json_encode(array_map(fn($c) => [
+    'id_codigo'   => $c['id_codigo'],
+    'id_banco'    => $c['id_banco'],
+    'nom_banco'   => $c['nom_banco'],
+    'des_motivo'  => $c['des_motivo'],
+    'ind_borrado' => $es_borrado($c),
+], $codigos), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+const codigosBancosActivos = <?= json_encode(array_values(array_map(fn($b) => ['id_banco' => $b['id_banco'], 'nom_banco' => $b['nom_banco']], $bancos)), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+</script>
 
 <?php
 $moduleContent = ob_get_clean();

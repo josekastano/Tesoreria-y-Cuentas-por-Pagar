@@ -1,0 +1,364 @@
+@import url('../../../css/erp_base.css?v=20261118');
+/* ==========================================================
+   TESORERÍA Y CUENTAS POR PAGAR — CONTENIDO DE LOS MODALES (común al módulo)
+   Archivo: modules/tescxp/css/tcx_modales.css   (22-nov-2026)
+   Tomada de Compras (modules/compro/css/cmp_modales.css) con el prefijo tcx-;
+   al final, lo propio de Tesorería: grilla .form-grid / .form-field, campo de
+   fecha (.dp-trigger) y el calendario flotante (#dp-pop).
+
+   El marco del modal (fondo difuminado, caja, cabecera, campos .form-input,
+   pie y botones) lo pone el componente compartido "modales" de
+   src/css/erp_ui.css (guía docs/GUIA_MODALES_MODULOS.md). Aquí va solo lo
+   que ese componente deja a cada página: grupos de campos, filas, mensajes
+   de error y la confirmación (ícono, título y texto).
+
+   Las reglas que cambian display van dentro de :where() (prioridad cero) para
+   que las clases de cada página que ocultan cosas (dev-oculto, hidden…) ganen.
+   Todo cuelga de .erp-modal (la clase que el componente pone al mover el
+   modal a <body>): no depende de #mod-… y no toca nada fuera de los modales.
+   Colores: solo variables --erp-* de src/css/erp_base.css.
+   ========================================================== */
+
+/* ---- Cuerpo ----
+   Bootstrap también define .modal-body con una variable que solo existe dentro de
+   su .modal: fuera de él queda en 0. Aquí se fija el relleno del sistema. */
+.erp-modal .modal-body { padding: 22px; }
+.erp-modal :where(*, *::before, *::after), .dp-pop :where(*, *::before, *::after) { box-sizing: border-box; }
+
+/* ---- Campos ---- */
+.erp-modal .form-group { margin-bottom: 16px; }
+.erp-modal .form-group:last-child { margin-bottom: 0; }
+:where(.erp-modal .form-row) { display: flex; gap: 16px; }     /* :where = sin prioridad: las clases que ocultan (dev-oculto…) siguen mandando */
+.erp-modal .form-row > .form-group { flex: 1 1 0; min-width: 0; }
+.erp-modal .form-row + .form-row,
+.erp-modal .form-row + .form-group,
+.erp-modal .form-group + .form-row { margin-top: 0; }
+.erp-modal .form-label .required,
+.erp-modal .required { color: var(--erp-danger); }
+.erp-modal .form-hint { display: block; margin-top: 6px; font-size: 11px; color: var(--erp-muted); }
+.erp-modal .form-label .form-hint { display: inline; margin: 0 0 0 6px; text-transform: none; letter-spacing: 0; font-weight: 600; }
+:where(.erp-modal .field-error) { display: block; }
+.erp-modal .field-error { max-height: 0; overflow: hidden; margin-top: 4px; font-size: 11px; color: var(--erp-danger-ink); transition: max-height .2s; }
+.erp-modal .field-error.visible { max-height: 4rem; }
+.erp-modal .field-error:empty { margin-top: 0; }
+.erp-modal textarea.form-input { resize: vertical; min-height: 84px; }
+
+/* ---- Formularios por secciones (y por pestañas con data-erp-pestanas) ----
+   Cada título .tcx-section-title + su grilla .tcx-grid: el componente "modales"
+   los convierte en tarjeta (y en pestaña); con pestañas, la grilla pasa a 4 columnas. */
+:where(.erp-modal .tcx-grid) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; }
+.erp-modal .tcx-grid > .form-group { margin-bottom: 0; }
+.erp-modal .tcx-grid > .form-group-wide { grid-column: 1 / -1; }
+.erp-modal .tcx-grid > .tcx-full { grid-column: 1 / -1; }
+
+/* ---- Confirmación: ícono + título + texto, sin cabecera ---- */
+.erp-modal .confirm-box .confirm-icon {
+  width: 56px; height: 56px; margin: 0 auto 14px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; font-size: 24px;
+  background: var(--erp-danger-bg); color: var(--erp-danger-strong);
+}
+.erp-modal .confirm-box.ok .confirm-icon   { background: var(--erp-success-bg); color: var(--erp-success-strong); }
+.erp-modal .confirm-box.info .confirm-icon { background: var(--erp-info-bg);    color: var(--erp-info-strong); }
+.erp-modal .confirm-box.warn .confirm-icon { background: var(--erp-warning-bg); color: var(--erp-warning-strong); }
+.erp-modal .confirm-box h4 { margin: 0 0 8px; font-size: 18px; font-weight: 700; color: var(--erp-strong); }
+.erp-modal .confirm-box p  { margin: 0; font-size: 14px; line-height: 1.5; color: var(--erp-sub); }
+.erp-modal .confirm-box .modal-footer {
+  display: flex; justify-content: center; flex-wrap: wrap; gap: 10px;
+  padding: 20px 0 22px; border-top: 0; background: transparent;
+}
+
+/* ---- Botones dentro del cuerpo de la ventana (Agregar, Quitar, Confirmar…) ----
+   El componente "botones" solo actúa en la pantalla y el de "modales" solo en el
+   pie: estos son los botones que quedan en el cuerpo, con el mismo estilo. */
+.erp-modal .modal-body :is(.btn, .btn-add) {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px 18px; border: 1.5px solid transparent; border-radius: 9px; box-shadow: none; cursor: pointer;
+  font: 600 13px/1.2 var(--erp-font); letter-spacing: 0; text-transform: none; white-space: nowrap;
+  transition: background .18s, border-color .18s, color .18s;
+}
+.erp-modal .modal-body :is(.btn.btn-primary, .btn-add) { background: var(--erp-primary); color: var(--erp-surface); }
+.erp-modal .modal-body :is(.btn.btn-primary, .btn-add):hover { background: var(--erp-primary-strong); color: var(--erp-surface); }
+.erp-modal .modal-body .btn.btn-secondary { background: var(--erp-surface); color: var(--erp-sub); border-color: var(--erp-line-strong); }
+.erp-modal .modal-body .btn.btn-secondary:hover { background: var(--erp-subtle); color: var(--erp-strong); }
+.erp-modal .modal-body .btn.btn-danger { background: var(--erp-danger-strong); color: var(--erp-surface); }
+.erp-modal .modal-body :is(.btn, .btn-add):disabled { opacity: .55; cursor: not-allowed; }
+.erp-modal .modal-body .btn-icon-sm {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-width: 30px; height: 28px; padding: 0 10px; border: 0; border-radius: 30px; cursor: pointer;
+  font: 600 12px/1 var(--erp-font);
+  background: var(--erp-danger-bg); color: var(--erp-danger-strong);   /* sin variante: "Quitar" */
+  transition: transform .2s, filter .2s;
+}
+.erp-modal .modal-body .btn-icon-sm:is(.edit)            { background: var(--erp-warning-bg); color: var(--erp-warning-strong); }
+.erp-modal .modal-body .btn-icon-sm:is(.view)            { background: var(--erp-soft);       color: var(--erp-primary); }
+.erp-modal .modal-body .btn-icon-sm:is(.approve, .rec-confirmar) { background: var(--erp-success-bg); color: var(--erp-success-ink); }
+.erp-modal .modal-body .btn-icon-sm:hover { transform: translateY(-1px); filter: brightness(.95); }
+.erp-modal .modal-body :is(.btn, .btn-add, .btn-icon-sm):focus-visible { outline: 2px solid var(--erp-focus); outline-offset: 2px; }
+
+/* ==========================================================
+   FICHAS (ventanas de detalle tipo perfil): proveedor, orden de compra,
+   solicitud, devolución y recepción. Cabecera con ícono o iniciales,
+   datos clave en tarjetas y bloques con filas "dato · valor".
+   ========================================================== */
+.erp-modal .modal-body.ficha-body { background: var(--erp-floor); padding: 16px 20px; }
+.ficha-perfil {
+  display: flex; align-items: center; gap: 18px; padding: 12px 18px;
+  background: var(--erp-surface); border: 1px solid var(--erp-line); border-radius: 16px;
+}
+.ficha-avatar {
+  width: 56px; height: 56px; flex-shrink: 0; display: grid; place-items: center; border-radius: 16px;
+  background: linear-gradient(135deg, var(--erp-primary), color-mix(in srgb, var(--erp-primary) 70%, var(--erp-surface)));
+  color: var(--erp-surface); font-size: 19px; font-weight: 800; letter-spacing: .02em;
+}
+.ficha-info { flex: 1; min-width: 0; }
+.ficha-info h3 { margin: 0; font-size: 19px; font-weight: 800; color: var(--erp-strong); overflow-wrap: anywhere; }
+.ficha-meta { margin-top: 3px; font-size: 12.5px; color: var(--erp-muted); }
+.ficha-etiquetas { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.ficha-tag { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; background: var(--erp-subtle-2); color: var(--erp-sub); }
+.ficha-calif { display: flex; align-items: center; gap: 12px; padding-left: 18px; border-left: 1px solid var(--erp-line); --tono: var(--erp-faint); }
+.ficha-calif.ok   { --tono: var(--erp-success-strong); }
+.ficha-calif.warn { --tono: var(--erp-warning-strong); }
+.ficha-calif.bad  { --tono: var(--erp-danger-strong); }
+.ficha-anillo {
+  width: 56px; height: 56px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%;
+  background: conic-gradient(var(--tono) calc(var(--valor) * 1%), var(--erp-subtle-2) 0);
+}
+.ficha-anillo span { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; background: var(--erp-surface); font-size: 13.5px; font-weight: 800; color: var(--erp-strong); }
+.ficha-calif small { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--erp-muted); }
+.ficha-calif b { font-size: 13px; color: var(--tono); }
+.ficha-calif:not(.ok):not(.warn):not(.bad) b { color: var(--erp-muted); }
+
+.ficha-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 10px 0; }
+.ficha-kpi { display: flex; align-items: center; gap: 11px; padding: 9px 14px; background: var(--erp-surface); border: 1px solid var(--erp-line); border-radius: 14px; }
+.ficha-kpi > i { width: 34px; height: 34px; flex-shrink: 0; display: grid; place-items: center; border-radius: 10px; font-size: 14px; background: var(--erp-soft); color: var(--erp-primary); }
+.ficha-kpi > i.info { background: var(--erp-info-bg); color: var(--erp-info-strong); }
+.ficha-kpi > i.warn { background: var(--erp-warning-bg); color: var(--erp-warning-strong); }
+.ficha-kpi > i.ok   { background: var(--erp-success-bg); color: var(--erp-success-strong); }
+.ficha-kpi div { min-width: 0; }
+.ficha-kpi small { display: block; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--erp-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ficha-kpi b { font-size: 16px; font-weight: 800; color: var(--erp-strong); font-variant-numeric: tabular-nums; }
+.ficha-kpi em { margin-left: 6px; font-style: normal; font-size: 11px; color: var(--erp-muted); white-space: nowrap; }
+
+.ficha-secciones { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ficha-sec { padding: 10px 16px; background: var(--erp-surface); border: 1px solid var(--erp-line); border-radius: 14px; }
+.ficha-sec h4 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--erp-strong); }
+.ficha-sec h4 i { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; font-size: 11px; background: var(--erp-soft); color: var(--erp-primary); }
+.ficha-fila { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; padding: 4px 0; border-top: 1px dashed var(--erp-line); font-size: 13px; }
+.ficha-sec h4 + .ficha-fila { border-top: 0; }
+.ficha-fila > span { color: var(--erp-muted); flex-shrink: 0; }
+.ficha-fila > b { min-width: 0; font-weight: 600; color: var(--erp-text); text-align: right; overflow-wrap: anywhere; }
+.ficha-fila a, .ficha-fila-enlace a { color: var(--erp-info-strong); font-weight: 600; text-decoration: none; }
+.ficha-fila a:hover { text-decoration: underline; }
+.ficha-fila-enlace { justify-content: flex-end; }
+.ficha-vacio { color: var(--erp-faint); font-weight: 500; }
+.ficha-persona { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-top: 1px dashed var(--erp-line); font-size: 13px; }
+.ficha-sec h4 + .ficha-persona { border-top: 0; }
+.ficha-mini { width: 32px; height: 32px; flex-shrink: 0; display: grid; place-items: center; border-radius: 50%; font-size: 11px; font-weight: 800; background: var(--erp-subtle-2); color: var(--erp-sub); }
+.ficha-persona > div { flex: 1; min-width: 0; }
+.ficha-persona > div b { font-weight: 600; color: var(--erp-text); }
+.ficha-persona small { display: block; font-size: 11.5px; color: var(--erp-muted); }
+.ficha-persona > b { font-weight: 600; color: var(--erp-text); white-space: nowrap; }
+
+@media (max-width: 760px) {
+  .ficha-perfil { flex-wrap: wrap; }
+  .ficha-calif { padding-left: 0; border-left: 0; width: 100%; }
+  .ficha-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ficha-secciones { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Ícono en vez de iniciales y total destacado a la derecha */
+.ficha-avatar.ficha-icono { font-size: 21px; }
+.ficha-avatar.ficha-icono.info { background: linear-gradient(135deg, var(--erp-info-strong), var(--erp-primary)); }
+.ficha-total { flex-shrink: 0; padding-left: 18px; border-left: 1px solid var(--erp-line); text-align: right; }
+.ficha-total small { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--erp-muted); }
+.ficha-total b { display: block; font-size: 22px; font-weight: 800; color: var(--erp-strong); font-variant-numeric: tabular-nums; }
+.ficha-total em { font-style: normal; font-size: 11.5px; color: var(--erp-muted); }
+.ficha-total .pago-select-mini { margin-top: 4px; }
+.ficha-barra { height: 5px; margin-top: 5px; border-radius: 9px; background: var(--erp-subtle-2); overflow: hidden; }
+.ficha-barra i { display: block; height: 100%; border-radius: 9px; background: var(--erp-success-strong); }
+.ficha-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.ficha-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; font-size: 11px; background: var(--erp-subtle-2); color: var(--erp-sub); }
+.ficha-chip i { font-size: 10px; color: var(--erp-muted); }
+.ficha-chip .ficha-muted { color: var(--erp-muted); }
+/* Pasos (seguimiento de la solicitud) */
+.ficha-pasos { display: flex; align-items: flex-start; margin: 8px 0 2px; }
+.ficha-paso { position: relative; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; text-align: center; font-size: 11.5px; font-weight: 600; color: var(--erp-muted); }
+.ficha-paso::before { content: ''; position: absolute; top: 13px; left: -50%; width: 100%; height: 2px; background: var(--erp-line); }
+.ficha-paso:first-child::before { display: none; }
+.ficha-paso > span { position: relative; z-index: 1; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; font-size: 11px; background: var(--erp-surface); border: 2px solid var(--erp-line); }
+.ficha-paso small { font-size: 10.5px; font-weight: 500; color: var(--erp-muted); }
+.ficha-paso.hecho, .ficha-paso.actual { color: var(--erp-text); }
+.ficha-paso.hecho::before, .ficha-paso.actual::before { background: var(--erp-success-strong); }
+.ficha-paso.hecho > span { background: var(--erp-success-strong); border-color: var(--erp-success-strong); color: var(--erp-surface); }
+.ficha-paso.actual > span { border-color: var(--erp-success-strong); color: var(--erp-success-strong); box-shadow: 0 0 0 4px var(--erp-success-bg); }
+.ficha-paso.anulado > span { background: var(--erp-danger-strong); border-color: var(--erp-danger-strong); color: var(--erp-surface); }
+.ficha-paso.anulado { color: var(--erp-danger-ink); }
+/* Tabla dentro de un bloque de ficha */
+.ficha-sec .ficha-tabla { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ficha-sec .ficha-tabla th { padding: 8px 10px; text-align: left; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--erp-muted); border-bottom: 1px solid var(--erp-line); background: transparent; }
+.ficha-sec .ficha-tabla td { padding: 9px 10px; border-bottom: 1px dashed var(--erp-line); vertical-align: top; color: var(--erp-text); }
+.ficha-sec .ficha-tabla tr:last-child td { border-bottom: 0; }
+.ficha-sec .ficha-tabla :is(th, td).text-right { text-align: right; }
+.ficha-sec .ficha-tabla :is(th, td).text-center { text-align: center; }
+.ficha-texto { margin: 0; font-size: 13px; line-height: 1.5; color: var(--erp-text); white-space: pre-line; }
+@media (max-width: 760px) { .ficha-total { width: 100%; padding-left: 0; border-left: 0; text-align: left; } }
+
+@media (max-width: 560px) {
+  :where(.erp-modal .tcx-grid) { grid-template-columns: minmax(0, 1fr); }
+  :where(.erp-modal .form-row) { flex-direction: column; gap: 0; }
+}
+
+/* ==========================================================
+   TESORERÍA: CAMPOS EN GRILLA (.form-grid > .form-field)
+   ========================================================== */
+:where(.erp-modal .form-grid) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; margin-bottom: 16px; }
+:where(.erp-modal .form-grid.tres) { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+:where(.erp-modal .form-field) { display: flex; flex-direction: column; min-width: 0; }
+.erp-modal .form-field { margin-bottom: 16px; }
+.erp-modal .form-grid > .form-field { margin-bottom: 0; }
+.erp-modal .form-field:last-child { margin-bottom: 0; }
+.erp-modal .field-hint { margin-top: 6px; font-size: 11px; line-height: 1.45; color: var(--erp-muted); }
+.erp-modal .section-title {
+  display: flex; align-items: center; gap: 8px; margin: 20px 0 12px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--erp-line);
+  font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--erp-sub);
+}
+.erp-modal .modal-body > .section-title:first-child,
+.erp-modal form > .section-title:first-child { margin-top: 0; }
+.erp-modal .form-input:disabled { background-color: var(--erp-subtle); border-color: var(--erp-line); color: var(--erp-muted); cursor: not-allowed; }
+/* Campos numéricos sin flechas */
+.erp-modal input[type="number"].form-input { -moz-appearance: textfield; appearance: textfield; }
+.erp-modal input[type="number"].form-input::-webkit-outer-spin-button,
+.erp-modal input[type="number"].form-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+/* Aviso dentro del cuerpo (caja cerrada, sin días de pago…) */
+.erp-modal .tcx-aviso {
+  display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; margin-bottom: 14px; border-radius: 12px;
+  background: var(--erp-warning-bg); color: var(--erp-warning-ink); font-size: 12.5px; line-height: 1.45;
+}
+.erp-modal .tcx-aviso.info { background: var(--erp-info-bg); color: var(--erp-info-ink); }
+.erp-modal .tcx-aviso.bad  { background: var(--erp-danger-bg); color: var(--erp-danger-ink); }
+.erp-modal .tcx-aviso > i { margin-top: 2px; }
+@media (max-width: 560px) {
+  :where(.erp-modal .form-grid), :where(.erp-modal .form-grid.tres) { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ==========================================================
+   TESORERÍA: CAMPO DE FECHA (.dp-trigger) Y CALENDARIO FLOTANTE (#dp-pop)
+   El campo es un botón con el aspecto de .form-input; el calendario va con
+   position: fixed en <body> (lo ubica el JS de la página) para que el scroll
+   del modal no lo recorte. z-index 1150: encima de los modales (1060) y
+   debajo de los avisos (1300) — GUIA_MODALES_MODULOS §7.
+   Las marcas propias (festivo, día de pago…) van en la hoja de cada página.
+   ========================================================== */
+.erp-modal .dp-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; cursor: pointer; }
+.erp-modal .dp-trigger .dp-trigger-texto { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.erp-modal .dp-trigger .dp-trigger-texto.vacio { color: var(--erp-muted); }
+.erp-modal .dp-trigger i { flex-shrink: 0; font-size: 14px; color: var(--erp-faint); transition: color .2s; }
+.erp-modal .dp-trigger.abierto { background-color: var(--erp-surface); border-color: var(--erp-focus); box-shadow: 0 0 0 4px var(--erp-ring); }
+.erp-modal .dp-trigger.abierto i { color: var(--erp-primary); }
+
+.dp-pop {
+  position: fixed; z-index: 1150; width: 300px; padding: 14px;
+  background: var(--erp-surface); border: 1px solid var(--erp-line); border-radius: 16px;
+  box-shadow: 0 16px 36px -8px color-mix(in srgb, var(--erp-strong) 22%, transparent);
+  font-family: var(--erp-font); color: var(--erp-text);
+  animation: tcx-dp-in .15s ease;
+}
+.dp-pop.hidden { display: none; }
+.dp-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.dp-head strong { font-size: 14px; font-weight: 800; color: var(--erp-strong); }
+.dp-nav-grupo { display: flex; align-items: center; gap: 2px; }
+.dp-nav {
+  width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; cursor: pointer;
+  color: var(--erp-muted); font-size: 12px; transition: color .2s, background .2s;
+}
+.dp-nav:hover:not(:disabled) { color: var(--erp-primary); background: var(--erp-soft); }
+.dp-nav:disabled { opacity: .35; cursor: default; }
+.dp-semana, .dp-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); justify-items: center; }
+.dp-semana { margin-bottom: 4px; }
+.dp-semana span { font-size: 10px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--erp-muted); }
+.dp-grid { row-gap: 3px; }
+.dp-dia {
+  position: relative; width: 34px; height: 34px; padding: 0; cursor: pointer;
+  border: 1.5px solid transparent; border-radius: 50%; background: transparent;
+  font: 600 12.5px var(--erp-font); color: var(--erp-text);
+  transition: background .15s, border-color .15s, color .15s;
+}
+.dp-dia.vacio { cursor: default; }
+.dp-dia:not(.vacio):not(:disabled):hover { background: var(--erp-soft); border-color: var(--erp-primary); color: var(--erp-primary-strong); }
+.dp-dia.fuera { color: var(--erp-line-strong); cursor: not-allowed; }
+.dp-dia.hoy { box-shadow: inset 0 0 0 1.5px var(--erp-muted); }
+.dp-info { min-height: 16px; margin-top: 8px; font-size: 11px; font-weight: 700; text-align: center; color: var(--erp-danger-ink); }
+.dp-leyenda {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--erp-line);
+  font-size: 10.5px; font-weight: 600; color: var(--erp-sub);
+}
+.dp-leyenda span { display: inline-flex; align-items: center; gap: 5px; }
+.dp-leyenda i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+.dp-leyenda .l-hoy { background: var(--erp-surface); border: 1.5px solid var(--erp-muted); }
+.dp-acciones { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--erp-line); }
+.dp-leyenda + .dp-acciones { margin-top: 8px; }
+.dp-accion {
+  padding: 6px 14px; border: 0; border-radius: 30px; cursor: pointer;
+  background: var(--erp-soft); color: var(--erp-primary-strong); font: 700 12px var(--erp-font);
+  transition: background .2s, color .2s;
+}
+.dp-accion:hover:not(:disabled) { background: color-mix(in srgb, var(--erp-primary) 20%, var(--erp-surface)); }
+.dp-accion:disabled { opacity: .4; cursor: default; }
+.dp-accion.secundaria { background: transparent; color: var(--erp-sub); }
+.dp-accion.secundaria:hover:not(:disabled) { background: var(--erp-subtle-2); color: var(--erp-danger-ink); }
+/* Fecha elegida: va de último para ganarle a las marcas de cada página */
+.dp-dia.sel, .dp-dia.sel:not(.vacio):not(:disabled):hover {
+  background: var(--erp-primary); border-color: var(--erp-primary); color: var(--erp-surface); font-weight: 800;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--erp-primary) 35%, transparent);
+}
+.dp-dia.sel::after { background: var(--erp-surface); }
+@keyframes tcx-dp-in { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) { .dp-pop { animation: none; } }
+
+/* ==========================================================
+   TESORERÍA: MODAL RÁPIDO ENCIMA DE OTRO (crear banco o cuenta sin salir)
+   Todos los modales tienen z-index 1060: el rápido queda encima porque va
+   después en el HTML (GUIA_MODALES_MODULOS §7).
+   ========================================================== */
+.erp-modal .modal-box.modal-box-sm { max-width: 460px; }
+.erp-modal .label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.erp-modal .label-row .form-label { margin-bottom: 0; }
+.erp-modal .btn-link-inline {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 4px; border: 0; border-radius: 6px; background: none; cursor: pointer;
+  font: 700 12px var(--erp-font); color: var(--erp-primary);
+}
+.erp-modal .btn-link-inline:hover { text-decoration: underline; }
+.erp-modal .btn-link-inline:focus-visible { outline: 2px solid var(--erp-focus); outline-offset: 2px; }
+.erp-modal .empty-hint {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; padding: 8px 12px; border-radius: 10px;
+  background: var(--erp-warning-bg); color: var(--erp-warning-ink); font-size: 12px;
+}
+.erp-modal .empty-hint.hidden { display: none; }
+
+/* ==========================================================
+   TESORERÍA: VENTANAS DE DETALLE (caja, factura, cronograma, pago…)
+   Datos en tarjetas, subtítulos de bloque y mensajes de las listas que
+   el JS carga dentro del modal (sin estilos en línea).
+   ========================================================== */
+.erp-modal .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+.erp-modal .detail-item {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 10px 14px;
+  background: var(--erp-subtle); border: 1px solid var(--erp-line); border-radius: 12px;
+}
+.erp-modal .detail-label { font-size: 10px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; color: var(--erp-muted); }
+.erp-modal .detail-value { font-size: 13px; font-weight: 600; color: var(--erp-text); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.erp-modal .detail-subheading {
+  display: flex; align-items: center; gap: 8px; margin: 20px 0 12px; padding-bottom: 8px; border-bottom: 1px solid var(--erp-line);
+  font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--erp-sub);
+}
+.erp-modal .modal-body > .detail-subheading:first-child { margin-top: 0; }
+.erp-modal .detail-subheading i { color: var(--erp-primary); }
+.erp-modal .config-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
+.erp-modal .tcx-lista-msg { margin: 0; padding: 12px; text-align: center; font-size: 12px; color: var(--erp-muted); }
+.erp-modal .tcx-lista-msg.error { color: var(--erp-danger-ink); }
+.erp-modal .empty-state { text-align: center; padding: 24px 12px; color: var(--erp-muted); }
+.erp-modal .empty-state i { display: block; margin-bottom: 8px; font-size: 22px; color: var(--erp-line-strong); }
+.erp-modal .empty-state p { margin: 0; font-size: 13px; font-weight: 600; color: var(--erp-sub); }
+@media (max-width: 560px) { .erp-modal .detail-grid { grid-template-columns: minmax(0, 1fr); } }
+.erp-modal .detail-value small { display: block; margin-top: 2px; font-size: 11px; font-weight: 500; color: var(--erp-muted); }

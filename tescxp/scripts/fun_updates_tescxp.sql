@@ -89,7 +89,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -136,7 +136,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -219,7 +219,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -299,7 +299,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -359,7 +359,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -419,7 +419,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -481,7 +481,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -546,7 +546,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -601,7 +601,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -671,7 +671,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -764,7 +764,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -888,7 +888,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -914,7 +914,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -934,7 +934,10 @@ BEGIN
         RAISE EXCEPTION 'Pago, estado y código de respuesta son obligatorios.';
     END IF;
 
-    SELECT * INTO wpago FROM tab_pagos_nomina WHERE id_pago_nomina = wid_pago_nomina;
+    SELECT p.estado_pago, p.id_banco, p.ano_nomina, p.mes_nomina, p.val_periodo, p.id_empleado, p.fec_pago
+      INTO wpago
+      FROM tab_pagos_nomina p
+     WHERE p.id_pago_nomina = wid_pago_nomina;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'El pago de nómina % no existe.', wid_pago_nomina;
@@ -968,7 +971,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -988,7 +991,10 @@ BEGIN
         RAISE EXCEPTION 'Pago, estado y código de respuesta son obligatorios.';
     END IF;
 
-    SELECT * INTO wpago FROM tab_pagos_inversion WHERE id_pago_inversion = wid_pago_inversion;
+    SELECT p.estado_pago, p.id_banco, p.id_proyecto, p.id_inversor, p.id_cuota, p.fec_pago
+      INTO wpago
+      FROM tab_pagos_inversion p
+     WHERE p.id_pago_inversion = wid_pago_inversion;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'El pago de inversión % no existe.', wid_pago_inversion;
@@ -1022,7 +1028,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;

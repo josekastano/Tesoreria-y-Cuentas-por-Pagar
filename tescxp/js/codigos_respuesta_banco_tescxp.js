@@ -35,7 +35,7 @@ function showToast(message, type = 'success') {
     if (!toast || !span) return;
     const text = message && message.trim() ? message : (type === 'success' ? 'Operación exitosa' : 'Ocurrió un error');
     span.textContent = text;
-    toast.style.background = type === 'error' ? '#ef4444' : '#0f172a';
+    toast.classList.toggle('toast-error', type === 'error');
     toast.classList.remove('hidden');
     clearTimeout(toast._timer);
     toast._timer = setTimeout(() => toast.classList.add('hidden'), 3500);
@@ -102,164 +102,118 @@ function closeEditModal() {
 }
 
 // ============================================================
-// 4. FILTROS + PAGINACIÓN + ORDENAMIENTO (mismo sistema que Proveedores)
+// 4. LISTA: INDICADORES, FILTROS, ORDEN Y PAGINADOR
+// La tabla la pinta este archivo desde codigosData (PHP). Paginador y
+// orden: componentes compartidos del ERP (erp_ui.js) — GUIA_PANTALLAS_ERP §4-§5.
+// "Todos" no incluye los dados de baja: van aparte, como una papelera.
 // ============================================================
+let pag = null, orden = null;
+const normCod = t => (window.erpNormalizar ? erpNormalizar(t) : String(t ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
+const datosCod = () => (typeof codigosData !== 'undefined' && Array.isArray(codigosData) ? codigosData : []);
+const escCod = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
 
-// ---- ESTADO DE PAGINACIÓN ----
-let codigosPage     = 1;
-let codigosPageSize = 25; // debe coincidir con el <option selected> de #codigos-page-size
-
-function getEstadoActivo() {
-    return document.querySelector('#mod-codigos .filter-toggle.active')?.dataset.filter ?? 'all';
+function updateStats() {
+    const data = datosCod();
+    const activos = data.filter(c => !c.ind_borrado);
+    const bancosCon = new Set(activos.map(c => String(c.id_banco)));
+    const bancosAct = (typeof codigosBancosActivos !== 'undefined' ? codigosBancosActivos : []);
+    const sin = bancosAct.filter(b => !bancosCon.has(String(b.id_banco)));
+    setText('stat-activos', activos.length);
+    setText('stat-inactivos', data.length - activos.length);
+    setText('stat-bancos', bancosCon.size);
+    setText('stat-sin-codigos', sin.length);
+    setText('stat-sin-codigos-hint', sin.length ? `Ej.: ${sin[0].nom_banco}` : 'Todos tienen catálogo');
+    setText('cod-cnt-all', activos.length);
+    setText('cod-cnt-baja', data.length - activos.length);
 }
 
-// Filas que pasan la búsqueda, el banco y el estado (sin tener en cuenta la página)
-function getFilteredCodigoRows() {
-    const query  = val('codigo-search').toLowerCase().trim();
-    const banco  = val('codigo-banco-filter');
-    const estado = getEstadoActivo();
-    const filas  = Array.from(document.querySelectorAll('#codigos-tbody tr:not(.empty-row)'));
-    return filas.filter(fila => {
-        const texto = [0, 1, 2].map(i => (fila.children[i]?.textContent ?? '').toLowerCase()).join(' ');
-        const pasaTexto  = !query || texto.includes(query);
-        const pasaBanco  = !banco || fila.dataset.banco === banco;
-        const pasaEstado = estado === 'all' || fila.dataset.estado === estado;
-        return pasaTexto && pasaBanco && pasaEstado;
+function prepararLista() {
+    if (!pag && window.ErpPaginador) {
+        pag = ErpPaginador.crear({ lista: document.getElementById('codigos-tbody'), onCambio: renderCodigos, tam: 25 });
+    }
+    if (!orden && window.ErpOrden) {
+        orden = ErpOrden.crear({
+            tabla: document.getElementById('codigos-table'),
+            columnas: {
+                'Código':      { valor: c => c.id_codigo },
+                'Banco':       { valor: c => c.nom_banco },
+                'Descripción': { valor: c => c.des_motivo },
+                'Estado':      { valor: c => (c.ind_borrado ? 0 : 1), tipo: 'numero' },
+            },
+            onCambio: () => { if (pag) pag.inicio(); renderCodigos(); },
+        });
+    }
+}
+
+function hayFiltros() {
+    return val('codigo-search').trim() !== '' || val('codigo-banco-filter') !== '' || (val('codigo-filtro-estado') || 'all') !== 'all';
+}
+
+function getFilteredCodigos() {
+    const q = normCod(val('codigo-search'));
+    const banco = val('codigo-banco-filter');
+    const papelera = (val('codigo-filtro-estado') || 'all') === 'baja';
+    return datosCod().filter(c => {
+        if (!!c.ind_borrado !== papelera) return false;
+        if (banco && String(c.id_banco) !== banco) return false;
+        if (q && !normCod(`${c.id_codigo} ${c.nom_banco} ${c.des_motivo}`).includes(q)) return false;
+        return true;
     });
 }
 
-// Aplica los filtros y vuelve a la primera página.
-// "Limpiar" aparece cuando algo difiere de la vista por defecto (Activos, todos los bancos).
 function applyFilters() {
-    codigosPage = 1;
-    renderCodigosPage();
-
-    const hayFiltro = val('codigo-search').trim() || val('codigo-banco-filter') || getEstadoActivo() !== 'activo';
-    const clearBtn  = document.getElementById('btn-clear-filters');
-    if (clearBtn) clearBtn.style.display = hayFiltro ? 'flex' : 'none';
+    if (pag) pag.inicio();
+    renderCodigos();
 }
 
 function clearFilters() {
     setVal('codigo-search', '');
     setVal('codigo-banco-filter', '');
-    document.querySelectorAll('#mod-codigos .filter-toggle').forEach(btn => btn.classList.remove('active'));
-    document.querySelector('#mod-codigos .filter-toggle[data-filter="activo"]')?.classList.add('active');
+    setVal('codigo-filtro-estado', 'all');
+    if (window.ErpFiltros) ErpFiltros.sincronizar();
     applyFilters();
 }
 
-// Muestra solo las filas que pasan el filtro Y caen en la página actual
-function renderCodigosPage() {
-    const todas     = Array.from(document.querySelectorAll('#codigos-tbody tr:not(.empty-row)'));
-    const coinciden = getFilteredCodigoRows();
-    todas.forEach(fila => { fila.style.display = 'none'; });
+// Lista: filtrar → contar → ordenar → paginar → pintar
+function renderCodigos() {
+    prepararLista();
+    let filas = getFilteredCodigos();
+    setText('codigos-count', `${filas.length} resultado${filas.length !== 1 ? 's' : ''}`);
+    const btnClear = document.getElementById('btn-clear-filters');
+    if (btnClear) btnClear.hidden = !hayFiltros();
 
-    const total        = coinciden.length;
-    const esTodos      = codigosPageSize === 'all';
-    const size         = esTodos ? total : codigosPageSize;
-    const totalPaginas = size > 0 ? Math.max(1, Math.ceil(total / size)) : 1;
-    if (codigosPage > totalPaginas) codigosPage = totalPaginas;
-    if (codigosPage < 1) codigosPage = 1;
-
-    const start = esTodos ? 0 : (codigosPage - 1) * size;
-    const end   = esTodos ? total : Math.min(start + size, total);
-    coinciden.slice(start, end).forEach(fila => { fila.style.display = ''; });
-
-    setText('codigos-count', `${total} resultado${total !== 1 ? 's' : ''}`);
-
-    const rangeEl = document.getElementById('codigos-range');
-    if (rangeEl) {
-        rangeEl.textContent = total === 0 ? '0 de 0' : `${start + 1}–${end} de ${total}`;
-    }
-
-    const btnPrev = document.getElementById('codigos-prev');
-    const btnNext = document.getElementById('codigos-next');
-    if (btnPrev) btnPrev.disabled = codigosPage <= 1;
-    if (btnNext) btnNext.disabled = esTodos || codigosPage >= totalPaginas;
-}
-
-function initCodigosPagination() {
-    document.getElementById('codigos-page-size')?.addEventListener('change', function() {
-        codigosPageSize = this.value === 'all' ? 'all' : parseInt(this.value, 10);
-        codigosPage = 1;
-        renderCodigosPage();
-    });
-    document.getElementById('codigos-prev')?.addEventListener('click', () => {
-        codigosPage--;
-        renderCodigosPage();
-    });
-    document.getElementById('codigos-next')?.addEventListener('click', () => {
-        codigosPage++;
-        renderCodigosPage();
-    });
-}
-
-// ---- ORDENAMIENTO ASC / DESC ----
-// El código se compara con "numeric" (R2 < R10).
-let codigosSortKey = null; // índice de columna, coincide con data-sort-key del <th>
-let codigosSortDir = 'asc';
-
-function sortCodigoRows(key, type) {
     const tbody = document.getElementById('codigos-tbody');
     if (!tbody) return;
-    const filas = Array.from(tbody.querySelectorAll('tr:not(.empty-row)'));
-    if (filas.length === 0) return;
-
-    codigosSortDir = (codigosSortKey === key && codigosSortDir === 'asc') ? 'desc' : 'asc';
-    codigosSortKey = key;
-
-    const getValor = fila => {
-        const celda = fila.cells[Number(key)];
-        const crudo = celda?.dataset.sort;
-        const base  = crudo !== undefined ? crudo : (celda?.textContent.trim() ?? '');
-        return type === 'number' ? (parseFloat(base) || 0) : base.toLowerCase();
-    };
-
-    filas.sort((a, b) => {
-        const va  = getValor(a);
-        const vb  = getValor(b);
-        const cmp = type === 'number' ? (va - vb) : va.localeCompare(vb, 'es', { numeric: true });
-        return codigosSortDir === 'asc' ? cmp : -cmp;
-    });
-    filas.forEach(fila => tbody.appendChild(fila));
-
-    document.querySelectorAll('#mod-codigos .data-table th.sortable').forEach(th => {
-        const icon   = th.querySelector('.sort-icon');
-        const activo = th.dataset.sortKey === key;
-        th.classList.toggle('sort-active', activo);
-        if (icon) {
-            icon.className = activo
-                ? `fas sort-icon ${codigosSortDir === 'asc' ? 'fa-caret-up' : 'fa-caret-down'}`
-                : 'fas fa-caret-down sort-icon';
-        }
-    });
-
-    codigosPage = 1;
-    renderCodigosPage();
-}
-
-function initCodigosSorting() {
-    document.querySelectorAll('#mod-codigos .data-table th.sortable').forEach(th => {
-        th.addEventListener('click', () => sortCodigoRows(th.dataset.sortKey, th.dataset.sortType));
-    });
-}
-
-// ---- ALTO DINÁMICO DE LA TABLA (evita el doble scroll) ----
-function ajustarAlturaTablaCodigos() {
-    const scrollBox = document.getElementById('codigos-table-scroll');
-    if (!scrollBox) return;
-    const footer = document.querySelector('#mod-codigos .table-footer');
-    const top = scrollBox.getBoundingClientRect().top;
-    const alturaFooter = footer ? footer.offsetHeight : 0;
-
-    let margenInferior = 16;
-    const contentCard = scrollBox.closest('.content-card') || document.querySelector('.content-card');
-    if (contentCard) {
-        const cs = getComputedStyle(contentCard);
-        margenInferior += (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.marginBottom) || 0);
+    if (filas.length === 0) {
+        const hayDatos = datosCod().length > 0;
+        tbody.innerHTML = `<tr><td colspan="5"><div class="empty-state">
+            <i class="fas ${hayDatos ? 'fa-search' : 'fa-barcode'}"></i>
+            <p>${hayDatos ? 'Ningún código coincide con los filtros' : 'No hay códigos de respuesta para mostrar'}</p>
+            <span>${hayDatos ? 'Cambie la búsqueda o use «Limpiar»' : 'Use «Nuevo código» para registrar el primero'}</span>
+        </div></td></tr>`;
+        if (pag) pag.paginar([]);
+        return;
     }
-
-    const disponible = window.innerHeight - top - alturaFooter - margenInferior;
-    scrollBox.style.maxHeight = Math.max(220, disponible) + 'px';
+    if (orden) filas = orden.ordenar(filas);
+    const pagina = pag ? pag.paginar(filas) : filas;
+    tbody.innerHTML = pagina.map(c => {
+        const i = datosCod().indexOf(c);
+        const cod = escCod(c.id_codigo);
+        return `<tr data-i="${i}">
+            <td><span class="cod-bancario">${cod}</span></td>
+            <td>${escCod(c.nom_banco)}</td>
+            <td>${escCod(c.des_motivo)}</td>
+            <td><span class="badge ${c.ind_borrado ? 'mute' : 'ok'}">${c.ind_borrado ? 'De baja' : 'Activo'}</span></td>
+            <td class="col-acciones">
+                <div class="actions-cell">
+                    <button type="button" class="btn-icon-sm edit" data-action="editar" title="Editar" aria-label="Editar el código ${cod}"><i class="fas fa-pen"></i></button>
+                    ${c.ind_borrado
+                        ? `<button type="button" class="btn-icon-sm restore" data-action="reactivar" title="Reactivar" aria-label="Reactivar el código ${cod}"><i class="fas fa-undo"></i></button>`
+                        : `<button type="button" class="btn-icon-sm reject" data-action="eliminar" title="Dar de baja" aria-label="Dar de baja el código ${cod}"><i class="fas fa-trash"></i></button>`}
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
 }
 
 // ============================================================
@@ -322,45 +276,42 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initCodigosModule() {
-    // Mover modales y toast al <body> para que el overlay cubra también
-    // la barra superior (escapan del contexto de apilamiento del layout)
-    ['modal-new-codigo', 'modal-edit-codigo', 'modal-confirm-eliminar', 'toast'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el && el.parentElement !== document.body) document.body.appendChild(el);
-    });
+    // Los modales los mueve a <body> el componente "modales" (erp_ui.js); el aviso se mueve aquí
+    const toastEl = document.getElementById('toast');
+    if (toastEl && toastEl.parentElement !== document.body) document.body.appendChild(toastEl);
 
     document.getElementById('btn-add-codigo')?.addEventListener('click', openNewModal);
 
     document.getElementById('codigo-search')?.addEventListener('input', applyFilters);
     document.getElementById('codigo-banco-filter')?.addEventListener('change', applyFilters);
+    document.getElementById('codigo-filtro-estado')?.addEventListener('change', applyFilters);
     document.getElementById('btn-clear-filters')?.addEventListener('click', clearFilters);
 
-    document.querySelectorAll('#mod-codigos .filter-toggle').forEach(btn => {
-        btn.addEventListener('click', function() {
-            document.querySelectorAll('#mod-codigos .filter-toggle').forEach(b => b.classList.remove('active'));
-            this.classList.add('active');
-            applyFilters();
-        });
-    });
-
     // ---------- BOTONES DE CADA FILA (editar / dar de baja / reactivar) ----------
-    // Los datos van en data-codigo (JSON), así no hay que escapar comillas en un onclick.
     document.getElementById('codigos-tbody')?.addEventListener('click', function(e) {
         const btn = e.target.closest('button[data-action]');
-        if (!btn) return;
-        let codigo;
-        try { codigo = JSON.parse(btn.dataset.codigo); } catch (err) { return; }
+        const tr = e.target.closest('tr[data-i]');
+        if (!btn || !tr) return;
+        const codigo = datosCod()[Number(tr.dataset.i)];
+        if (!codigo) return;
         if (btn.dataset.action === 'editar')    openEditModal(codigo);
         if (btn.dataset.action === 'eliminar')  darDeBajaCodigo(codigo);
         if (btn.dataset.action === 'reactivar') reactivarCodigo(codigo);
     });
 
-    // ---------- PAGINACIÓN Y ORDENAMIENTO ----------
-    initCodigosPagination();
-    initCodigosSorting();
-    renderCodigosPage();
-    ajustarAlturaTablaCodigos();
-    window.addEventListener('resize', ajustarAlturaTablaCodigos);
+    // ---------- LISTA ----------
+    updateStats();
+    renderCodigos();
+    if (window.ErpListaFija) ErpListaFija.ajustar();
+    const mod = document.getElementById('mod-codigos');
+    requestAnimationFrame(() => requestAnimationFrame(() => mod?.classList.add('is-listo')));
+
+    // La confirmación es de solo lectura: Esc la cierra (los formularios, solo X o Cancelar)
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        const m = document.getElementById('modal-confirm-eliminar');
+        if (m && !m.classList.contains('hidden')) cerrarConfirmEliminar();
+    });
 
     document.querySelectorAll('.btn-close-new-modal, .btn-cancel-new-modal')
         .forEach(btn => btn.addEventListener('click', closeNewModal));

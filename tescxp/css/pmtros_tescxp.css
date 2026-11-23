@@ -1,40 +1,42 @@
+@import url('../../../css/erp_base.css?v=20261118');
 /* ============================================================
-   parametros.css — Parámetros de Tesorería
-   Página: parametros.php   ·   Contenedor: #mod-pmtros-tescxp
+   pmtros_tescxp.css — Parámetros de Tesorería
+   Página: pmtros_tescxp.php   ·   Contenedor: #mod-pmtros-tescxp
+   (22-nov-2026) GUIA_PANTALLAS_ERP §1: colores solo con variables --erp-*,
+   letra Inter; botones con las clases estándar (componente "botones") y
+   el aviso con .tcx-toast (tcx_pantalla.css).
    Lenguaje visual alineado con Parámetros Generales / Compras:
    tarjeta resumen oscura degradada a la izquierda + panel de
    formulario a la derecha. Hoja autocontenida.
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
-
 #mod-pmtros-tescxp {
-  --dash-bg:           #ffffff;
-  --dash-border:       #e9edf2;
-  --dash-shadow-sm:    0 1px 2px rgba(0,0,0,0.03), 0 1px 2px rgba(0,0,0,0.05);
-  --dash-text-head:    #0a0c1a;
-  --dash-text-body:    #1e293b;
-  --dash-text-sub:     #475569;
-  --dash-text-muted:   #94a3b8;
+  --dash-bg:           var(--erp-surface);
+  --dash-border:       var(--erp-line);
+  --dash-shadow-sm:    0 1px 2px color-mix(in srgb, var(--erp-strong) 3%, transparent), 0 1px 2px color-mix(in srgb, var(--erp-strong) 5%, transparent);
+  --dash-text-head:    var(--erp-strong);
+  --dash-text-body:    var(--erp-text);
+  --dash-text-sub:     var(--erp-sub);
+  --dash-text-muted:   var(--erp-muted);
   /* Igual que en Parámetros de Compras (pmtros_compras.css): el "hint" de
      este panel usa el acento de la paleta, no el primario. */
-  --dash-blue:         var(--color-accent, #3b82f6);
-  --dash-blue-light:   color-mix(in srgb, var(--dash-blue) 12%, white);
-  --dash-blue-border:  color-mix(in srgb, var(--dash-blue) 30%, white);
-  --dash-amber:        #f59e0b;
+  --dash-blue:         var(--erp-accent);
+  --dash-blue-light:   color-mix(in srgb, var(--erp-primary) 12%, var(--erp-surface));
+  --dash-blue-border:  color-mix(in srgb, var(--erp-primary) 30%, var(--erp-surface));
+  --dash-amber:        var(--erp-warning);
   --dash-radius:       18px;
   --dash-radius-sm:    10px;
-  --dash-font:         'DM Sans', system-ui, sans-serif;
+  --dash-font:         var(--erp-font);
 
   /* Paleta de la tarjeta oscura — mismo mecanismo que Parámetros de Compras:
      --pc-primary/--pc-accent leídos de la paleta global, con degradado hacia
      la propia versión oscura del primario en vez de un segundo color fijo. */
-  --pc-primary:   var(--color-primary, #2563eb);
-  --pc-accent:    var(--color-accent, #00d9ff);
-  --pc-text:      #ffffff;
+  --pc-primary:   var(--erp-primary);
+  --pc-accent:    var(--erp-accent);
+  --pc-text:      var(--erp-surface);
 
-  font-family: var(--dash-font);
-  background: var(--dash-bg);
+  font-family: var(--erp-font);
+  background: var(--erp-surface);
   padding: 0;
 }
 
@@ -48,29 +50,29 @@
 #mod-pmtros-tescxp .module-header-text h1 {
   font-size: 32px;
   font-weight: 700;
-  color: var(--dash-text-head);
+  color: var(--erp-strong);
   letter-spacing: -0.4px;
   margin: 0 0 6px;
 }
 
 #mod-pmtros-tescxp .module-header-text p {
   font-size: 14px;
-  color: var(--dash-text-sub);
+  color: var(--erp-sub);
   margin: 0;
 }
 
 /* ---------- CONTENEDOR GENÉRICO (usado solo por el estado vacío) ---------- */
 #mod-pmtros-tescxp .table-container {
-  background: #ffffff;
-  border: 1px solid var(--dash-border);
-  border-radius: var(--dash-radius);
+  background: var(--erp-surface);
+  border: 1px solid var(--erp-line);
+  border-radius: 16px;
   padding: 64px 24px;
 }
 
 #mod-pmtros-tescxp .empty-state { text-align: center; }
-#mod-pmtros-tescxp .empty-state i { font-size: 48px; color: var(--dash-text-muted); opacity: 0.4; margin-bottom: 16px; display: block; }
-#mod-pmtros-tescxp .empty-state p { font-weight: 600; color: var(--dash-text-sub); margin: 0 0 4px; }
-#mod-pmtros-tescxp .empty-state span { font-size: 12px; color: var(--dash-text-muted); }
+#mod-pmtros-tescxp .empty-state i { font-size: 48px; color: var(--erp-muted); opacity: 0.4; margin-bottom: 16px; display: block; }
+#mod-pmtros-tescxp .empty-state p { font-weight: 600; color: var(--erp-sub); margin: 0 0 4px; }
+#mod-pmtros-tescxp .empty-state span { font-size: 12px; color: var(--erp-muted); }
 
 /* ---------- LAYOUT DE DOS PANELES ---------- */
 #mod-pmtros-tescxp .pmt-pg { display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap; }
@@ -81,11 +83,11 @@
    TARJETA RESUMEN (oscura)
    ============================================================ */
 #mod-pmtros-tescxp .pmt-cc {
-  background: linear-gradient(135deg, var(--pc-primary), color-mix(in srgb, var(--pc-primary) 70%, black));
-  border-radius: var(--dash-radius);
+  background: linear-gradient(135deg, var(--pc-primary), color-mix(in srgb, var(--pc-primary) 70%, var(--erp-negro)));
+  border-radius: 16px;
   overflow: hidden;
   color: var(--pc-text);
-  box-shadow: 0 8px 20px rgba(0,0,0,.15);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--erp-strong) 15%, transparent);
 }
 
 #mod-pmtros-tescxp .pmt-cc-top { padding: 18px 20px 0; display: flex; justify-content: flex-end; }
@@ -110,7 +112,7 @@
 #mod-pmtros-tescxp .pmt-cc-body { padding: 20px; }
 
 #mod-pmtros-tescxp .pmt-cc-nit {
-  font-size: 11px; color: rgba(255,255,255,.5);
+  font-size: 11px; color: color-mix(in srgb, var(--erp-surface) 50%, transparent);
   letter-spacing: .3px; margin-bottom: 6px;
 }
 
@@ -126,8 +128,8 @@
 }
 
 #mod-pmtros-tescxp .pmt-cc-stat {
-  background: rgba(255,255,255,.04);
-  border: 1px solid rgba(255,255,255,.08);
+  background: color-mix(in srgb, var(--erp-surface) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--erp-surface) 8%, transparent);
   border-radius: 12px;
   padding: 14px 16px;
   min-width: 0;
@@ -137,7 +139,7 @@
 
 #mod-pmtros-tescxp .pmt-cc-stat-label {
   font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
-  color: rgba(255,255,255,.45); font-weight: 600;
+  color: color-mix(in srgb, var(--erp-surface) 45%, transparent); font-weight: 600;
   margin-bottom: 8px; line-height: 1.4;
 }
 
@@ -155,21 +157,21 @@
   font-size: 13px; font-weight: 700;
 }
 
-#mod-pmtros-tescxp .pmt-cc-status.ok   { color: #34d399; }
-#mod-pmtros-tescxp .pmt-cc-status.pend { color: #fbbf24; }
+#mod-pmtros-tescxp .pmt-cc-status.ok   { color: var(--erp-success); }
+#mod-pmtros-tescxp .pmt-cc-status.pend { color: var(--erp-warning); }
 
 #mod-pmtros-tescxp .pmt-cc-status-ico { display: inline-flex; font-size: 13px; }
-#mod-pmtros-tescxp .pmt-cc-status-ico.green  { color: #34d399; }
+#mod-pmtros-tescxp .pmt-cc-status-ico.green  { color: var(--erp-success); }
 #mod-pmtros-tescxp .pmt-cc-status-ico.amber,
-#mod-pmtros-tescxp .pmt-cc-status-ico.yellow { color: #fbbf24; }
+#mod-pmtros-tescxp .pmt-cc-status-ico.yellow { color: var(--erp-warning); }
 
 #mod-pmtros-tescxp .pmt-cc-foot {
-  border-top: 1px solid rgba(255,255,255,.08);
+  border-top: 1px solid color-mix(in srgb, var(--erp-surface) 8%, transparent);
   padding: 14px 20px;
 }
 
 #mod-pmtros-tescxp .pmt-cc-meta {
-  font-size: 11px; color: rgba(255,255,255,.5);
+  font-size: 11px; color: color-mix(in srgb, var(--erp-surface) 50%, transparent);
   display: flex; align-items: flex-start; gap: 8px; line-height: 1.5;
 }
 
@@ -185,21 +187,21 @@
 
 #mod-pmtros-tescxp .pmt-cfg-icon {
   width: 36px; height: 36px;
-  background: color-mix(in srgb, var(--pc-accent) 15%, white);
-  border-radius: var(--dash-radius-sm);
+  background: color-mix(in srgb, var(--pc-accent) 15%, var(--erp-surface));
+  border-radius: 10px;
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
 
-#mod-pmtros-tescxp .pmt-cfg-icon i { font-size: 18px; color: var(--pc-accent); }
+#mod-pmtros-tescxp .pmt-cfg-icon i { font-size: 18px; color: var(--erp-accent-ink); }
 
 #mod-pmtros-tescxp .pmt-cfg-title {
   font-size: 22px; font-weight: 700; margin: 0;
-  color: var(--dash-text-head); letter-spacing: -0.2px;
+  color: var(--erp-strong); letter-spacing: -0.2px;
 }
 
 #mod-pmtros-tescxp .pmt-cfg-sub {
-  font-size: 13px; color: var(--dash-text-sub);
+  font-size: 13px; color: var(--erp-sub);
   margin: 2px 0 0; flex-basis: 100%;
 }
 
@@ -207,11 +209,11 @@
    TARJETA DE FORMULARIO
    ============================================================ */
 #mod-pmtros-tescxp .pmt-card {
-  background: #ffffff;
-  border-radius: var(--dash-radius);
-  border: 1px solid var(--dash-border);
+  background: var(--erp-surface);
+  border-radius: 16px;
+  border: 1px solid var(--erp-line);
   overflow: hidden;
-  box-shadow: var(--dash-shadow-sm);
+  box-shadow: var(--erp-shadow-card);
 }
 
 #mod-pmtros-tescxp .pmt-body { padding: 28px; }
@@ -222,7 +224,7 @@
 #mod-pmtros-tescxp .pmt-fl {
   display: block; font-size: 11px; font-weight: 700;
   letter-spacing: .5px; text-transform: uppercase;
-  color: var(--dash-text-sub); margin-bottom: 10px;
+  color: var(--erp-sub); margin-bottom: 10px;
 }
 
 /* ---------- LÍNEA DE LA SEMANA ---------- */
@@ -230,8 +232,8 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
   gap: 12px;
-  background: #f9fafb;
-  border: 1.5px solid var(--dash-border);
+  background: var(--erp-subtle);
+  border: 1.5px solid var(--erp-line);
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 18px;
@@ -247,14 +249,14 @@
 
 #mod-pmtros-tescxp .week-count {
   font-size: 11px; font-weight: 700;
-  color: var(--dash-text-muted);
-  background: #f1f5f9;
+  color: var(--erp-muted);
+  background: var(--erp-subtle-2);
   padding: 3px 10px; border-radius: 30px;
   transition: background .2s ease, color .2s ease;
 }
 
 #mod-pmtros-tescxp .week-count.complete {
-  background: color-mix(in srgb, var(--pc-primary) 10%, white);
+  background: color-mix(in srgb, var(--pc-primary) 10%, var(--erp-surface));
   color: var(--pc-primary);
 }
 
@@ -269,8 +271,8 @@
   user-select: none;
   -webkit-tap-highlight-color: transparent;
 
-  background: #ffffff;
-  border: 1.5px solid var(--dash-border);
+  background: var(--erp-surface);
+  border: 1.5px solid var(--erp-line);
   border-radius: 12px;
   padding: 16px 6px;
   display: flex;
@@ -281,12 +283,12 @@
 }
 
 #mod-pmtros-tescxp .week-day:hover {
-  border-color: color-mix(in srgb, var(--pc-primary) 45%, white);
+  border-color: color-mix(in srgb, var(--pc-primary) 45%, var(--erp-surface));
   transform: translateY(-2px);
 }
 
 #mod-pmtros-tescxp .week-day:hover .week-day-letter {
-  background: color-mix(in srgb, var(--pc-primary) 10%, white);
+  background: color-mix(in srgb, var(--pc-primary) 10%, var(--erp-surface));
   color: var(--pc-primary);
 }
 
@@ -304,8 +306,8 @@
 #mod-pmtros-tescxp .week-day-letter {
   width: 38px; height: 38px;
   border-radius: 50%;
-  background: #f1f5f9;
-  color: var(--dash-text-muted);
+  background: var(--erp-subtle-2);
+  color: var(--erp-muted);
   display: flex; align-items: center; justify-content: center;
   font-weight: 800; font-size: 16px;
   transition: background .2s ease, color .2s ease;
@@ -313,7 +315,7 @@
 
 #mod-pmtros-tescxp .week-day-name {
   font-size: 10px;
-  color: var(--dash-text-muted);
+  color: var(--erp-muted);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: .5px;
@@ -344,22 +346,22 @@
   display: block;
   font-size: 11px; font-weight: 700;
   letter-spacing: .4px; text-transform: uppercase;
-  color: var(--dash-text-sub);
+  color: var(--erp-sub);
   margin-bottom: 8px;
 }
 
-#mod-pmtros-tescxp .required { color: #ef4444; margin-left: 2px; }
+#mod-pmtros-tescxp .required { color: var(--erp-danger); margin-left: 2px; }
 
 #mod-pmtros-tescxp .form-input,
 #mod-pmtros-tescxp .form-select {
   width: 100%;
   padding: 11px 14px;
-  border: 1.5px solid var(--dash-border);
-  border-radius: var(--dash-radius-sm);
+  border: 1.5px solid var(--erp-line);
+  border-radius: 10px;
   font-size: 13.5px;
-  font-family: var(--dash-font);
-  color: var(--dash-text-body);
-  background: #ffffff;
+  font-family: var(--erp-font);
+  color: var(--erp-text);
+  background: var(--erp-surface);
   outline: none;
   transition: border-color .15s ease, box-shadow .15s ease;
 }
@@ -367,7 +369,7 @@
 #mod-pmtros-tescxp .form-select { cursor: pointer; }
 
 #mod-pmtros-tescxp .form-input:hover,
-#mod-pmtros-tescxp .form-select:hover { border-color: #cbd5e1; }
+#mod-pmtros-tescxp .form-select:hover { border-color: var(--erp-line-strong); }
 
 #mod-pmtros-tescxp .form-input:focus,
 #mod-pmtros-tescxp .form-select:focus {
@@ -381,8 +383,8 @@
   outline-offset: 1px;
 }
 
-#mod-pmtros-tescxp .form-input::placeholder { color: #b0b8c9; font-weight: 400; }
-#mod-pmtros-tescxp .form-input:disabled { background: #f9fafb; color: var(--dash-text-muted); }
+#mod-pmtros-tescxp .form-input::placeholder { color: var(--erp-line-strong); font-weight: 400; }
+#mod-pmtros-tescxp .form-input:disabled { background: var(--erp-subtle); color: var(--erp-muted); }
 
 /* Quita las flechas de incremento/decremento de los campos numéricos */
 #mod-pmtros-tescxp .form-input[type="number"]::-webkit-outer-spin-button,
@@ -401,23 +403,23 @@
 #mod-pmtros-tescxp .money-prefix {
   display: flex; align-items: center; justify-content: center;
   width: 40px;
-  border: 1.5px solid var(--dash-border);
+  border: 1.5px solid var(--erp-line);
   border-right: none;
-  border-radius: var(--dash-radius-sm) 0 0 var(--dash-radius-sm);
-  background: #f9fafb;
-  color: var(--dash-text-muted);
+  border-radius: 10px 0 0 10px;
+  background: var(--erp-subtle);
+  color: var(--erp-muted);
   font-size: 14px; font-weight: 800;
   flex-shrink: 0;
 }
 
 #mod-pmtros-tescxp .input-money .form-input {
-  border-radius: 0 var(--dash-radius-sm) var(--dash-radius-sm) 0;
+  border-radius: 0 10px 10px 0;
   font-size: 15px; font-weight: 700;
 }
 
 /* ---------- ERRORES Y AYUDAS ---------- */
 #mod-pmtros-tescxp .field-error {
-  font-size: 11px; color: #ef4444; margin-top: 8px;
+  font-size: 11px; color: var(--erp-danger); margin-top: 8px;
   display: block; max-height: 0; overflow: hidden;
   transition: max-height .2s ease;
 }
@@ -425,14 +427,14 @@
 #mod-pmtros-tescxp .field-error.visible { max-height: 3rem; }
 
 #mod-pmtros-tescxp .field-hint {
-  font-size: 11.5px; color: var(--dash-text-muted);
+  font-size: 11.5px; color: var(--erp-muted);
   margin: 10px 0 0; line-height: 1.45;
 }
 
 #mod-pmtros-tescxp .pmt-hint {
-  font-size: 12px; color: var(--dash-text-sub);
-  background: var(--dash-blue-light);
-  border: 1px solid var(--dash-blue-border);
+  font-size: 12px; color: var(--erp-sub);
+  background: var(--erp-soft);
+  border: 1px solid color-mix(in srgb, var(--erp-primary) 30%, var(--erp-surface));
   border-radius: 8px;
   padding: 12px 14px;
   margin-top: 22px;
@@ -441,92 +443,37 @@
   text-wrap: pretty;
 }
 
-#mod-pmtros-tescxp .pmt-hint i { color: var(--dash-blue); font-size: 15px; margin-top: 1px; flex-shrink: 0; }
+#mod-pmtros-tescxp .pmt-hint i { color: var(--erp-primary); font-size: 15px; margin-top: 1px; flex-shrink: 0; }
 
 /* ============================================================
    FOOTER DEL FORMULARIO
    ============================================================ */
 #mod-pmtros-tescxp .pmt-form-footer {
   padding: 16px 28px;
-  border-top: 1px solid var(--dash-border);
-  background: #fafbfc;
+  border-top: 1px solid var(--erp-line);
+  background: var(--erp-subtle);
   display: flex; align-items: center; justify-content: flex-end; gap: 12px;
 }
 
 #mod-pmtros-tescxp .pmt-chg-ind {
-  font-size: 11px; color: var(--dash-text-muted);
+  font-size: 11px; color: var(--erp-muted);
   display: flex; align-items: center; gap: 6px;
   margin-right: auto;
   opacity: 0; transition: opacity .2s ease;
 }
 
-#mod-pmtros-tescxp .pmt-chg-ind.visible { opacity: 1; color: var(--dash-amber); }
+#mod-pmtros-tescxp .pmt-chg-ind.visible { opacity: 1; color: var(--erp-warning); }
 
 #mod-pmtros-tescxp .pmt-chg-ind::before {
   content: ''; width: 8px; height: 8px;
-  background: var(--dash-amber); border-radius: 50%;
+  background: var(--erp-warning); border-radius: 50%;
   display: inline-block; flex-shrink: 0;
-}
-
-#mod-pmtros-tescxp .pmt-btn-secondary,
-#mod-pmtros-tescxp .pmt-btn-primary {
-  padding: 9px 22px; font-size: 13px; font-weight: 600;
-  border-radius: 8px; cursor: pointer; border: none;
-  font-family: var(--dash-font);
-  transition: background .2s ease, border-color .2s ease, opacity .2s ease;
-}
-
-#mod-pmtros-tescxp .pmt-btn-secondary {
-  background: transparent;
-  border: 1.5px solid var(--dash-border);
-  color: var(--dash-text-sub);
-}
-
-#mod-pmtros-tescxp .pmt-btn-secondary:hover { background: #ffffff; border-color: #cbd5e1; }
-
-#mod-pmtros-tescxp .pmt-btn-primary {
-  background: var(--pc-primary); color: #ffffff;
-  display: inline-flex; align-items: center; gap: 8px;
-}
-
-#mod-pmtros-tescxp .pmt-btn-primary:not(:disabled):hover { background: color-mix(in srgb, var(--pc-primary) 85%, black); }
-
-#mod-pmtros-tescxp .pmt-btn-primary:disabled {
-  opacity: .5; cursor: not-allowed; background: #94a3b8;
-}
-
-#mod-pmtros-tescxp .pmt-btn-primary:focus-visible,
-#mod-pmtros-tescxp .pmt-btn-secondary:focus-visible {
-  outline: 2px solid var(--pc-primary);
-  outline-offset: 2px;
-}
-
-/* ============================================================
-   TOAST
-   ============================================================ */
-#toast {
-  position: fixed; bottom: 20px; right: 20px;
-  background: #0f172a; color: white;
-  padding: 12px 20px; border-radius: 40px;
-  display: flex; align-items: center; gap: 10px;
-  font-size: 13px; font-weight: 500;
-  z-index: 1100; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-  font-family: 'DM Sans', system-ui, sans-serif;
-  animation: slideIn .3s ease;
-}
-
-#toast.hidden { display: none; }
-
-@keyframes slideIn {
-  from { opacity: 0; transform: translateX(20px); }
-  to   { opacity: 1; transform: translateX(0); }
 }
 
 /* ============================================================
    RESPONSIVE
    ============================================================ */
 @media (max-width: 900px) {
-  #mod-pmtros-tescxp { padding: 20px; }
   #mod-pmtros-tescxp .pmt-pg { flex-direction: column; }
   #mod-pmtros-tescxp .pmt-panel-l,
   #mod-pmtros-tescxp .pmt-panel-r { flex: 1 1 auto; width: 100%; min-width: 0; }

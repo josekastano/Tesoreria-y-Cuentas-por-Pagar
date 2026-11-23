@@ -43,7 +43,7 @@ function showToast(message, type = 'success') {
     if (!toast || !span) return;
     const text = message && message.trim() ? message : (type === 'success' ? 'Operación exitosa' : 'Ocurrió un error');
     span.textContent = text;
-    toast.style.background = type === 'error' ? '#ef4444' : '#0f172a';
+    toast.classList.toggle('toast-error', type === 'error');
     toast.classList.remove('hidden');
     clearTimeout(toast._timer);
     toast._timer = setTimeout(() => toast.classList.add('hidden'), 3500);
@@ -360,155 +360,119 @@ function closeEditModal() {
 }
 
 // ============================================================
-// 4. FILTRO DE BÚSQUEDA + PAGINACIÓN (mismo sistema que Proveedores)
+// 4. LISTA: INDICADORES, FILTROS, ORDEN Y PAGINADOR
+// La tabla la pinta este archivo desde festivosData (PHP). Paginador y
+// orden: componentes compartidos del ERP (erp_ui.js) — GUIA_PANTALLAS_ERP §4-§5.
 // ============================================================
+let pag = null, orden = null;
+const normFes = t => (window.erpNormalizar ? erpNormalizar(t) : String(t ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim());
+const datosFes = () => (Array.isArray(window.festivosData) ? window.festivosData : (typeof festivosData !== 'undefined' ? festivosData : []));
 
-// ---- ESTADO DE PAGINACIÓN ----
-let festivosPage     = 1;
-let festivosPageSize = 25; // debe coincidir con el <option selected> de #festivos-page-size
+function updateStats() {
+    const data  = datosFes();
+    const hoy   = hoyLocal();
+    const lim   = new Date(); lim.setDate(lim.getDate() + 30);
+    const en30  = isoLocal(lim);
+    const anio  = hoy.slice(0, 4);
+    const futuros = data.filter(f => f.fecha >= hoy).sort((x, y) => x.fecha.localeCompare(y.fecha));
+    setText('stat-total', data.length);
+    setText('stat-proximos', futuros.filter(f => f.fecha <= en30).length);
+    setText('stat-anio', data.filter(f => String(f.fecha).slice(0, 4) === anio).length);
+    setText('stat-anio-hint', `Del año ${anio}`);
+    if (futuros.length) {
+        setText('stat-siguiente', formatDate(futuros[0].fecha).slice(0, 5));
+        setText('stat-siguiente-hint', futuros[0].nom_festivo);
+    } else {
+        setText('stat-siguiente', '—');
+        setText('stat-siguiente-hint', 'Sin festivos próximos');
+    }
+    setText('fes-cnt-all', data.length);
+    setText('fes-cnt-proximos', futuros.length);
+    setText('fes-cnt-pasados', data.length - futuros.length);
+}
 
-// Filas que pasan el filtro de búsqueda (sin tener en cuenta la página)
-function getFilteredFestivoRows() {
-    const query = val('festivo-search').toLowerCase().trim();
-    const filas = Array.from(document.querySelectorAll('#festivos-tbody tr:not(.empty-row)'));
-    return filas.filter(fila => {
-        const nombre = fila.children[2]?.textContent.toLowerCase() ?? '';
-        return !query || nombre.includes(query);
+function prepararLista() {
+    if (!pag && window.ErpPaginador) {
+        pag = ErpPaginador.crear({ lista: document.getElementById('festivos-tbody'), onCambio: renderFestivos, tam: 25 });
+    }
+    if (!orden && window.ErpOrden) {
+        orden = ErpOrden.crear({
+            tabla: document.getElementById('festivos-table'),
+            columnas: {
+                'ID':                 { valor: f => Number(f.id_festivo), tipo: 'numero' },
+                'Fecha':              { valor: f => f.fecha, tipo: 'fecha' },
+                'Nombre del festivo': { valor: f => f.nom_festivo },
+            },
+            onCambio: () => { if (pag) pag.inicio(); renderFestivos(); },
+        });
+    }
+}
+
+function hayFiltros() {
+    return val('festivo-search').trim() !== '' || (val('festivo-filtro-periodo') || 'all') !== 'all';
+}
+
+function getFilteredFestivos() {
+    const q       = normFes(val('festivo-search'));
+    const periodo = val('festivo-filtro-periodo') || 'all';
+    const hoy     = hoyLocal();
+    return datosFes().filter(f => {
+        if (periodo === 'proximos' && f.fecha < hoy) return false;
+        if (periodo === 'pasados' && f.fecha >= hoy) return false;
+        if (q && !normFes(`${f.id_festivo} ${f.nom_festivo} ${formatDate(f.fecha)}`).includes(q)) return false;
+        return true;
     });
 }
 
-// Aplica el filtro de búsqueda y vuelve a la primera página
 function applyFilters() {
-    festivosPage = 1;
-    renderFestivosPage();
-
-    const query    = val('festivo-search').trim();
-    const clearBtn = document.getElementById('btn-clear-filters');
-    if (clearBtn) clearBtn.style.display = query ? 'flex' : 'none';
+    if (pag) pag.inicio();
+    renderFestivos();
 }
 
 function clearFilters() {
     setVal('festivo-search', '');
+    setVal('festivo-filtro-periodo', 'all');
+    if (window.ErpFiltros) ErpFiltros.sincronizar();
     applyFilters();
 }
 
-// Muestra solo las filas que pasan el filtro Y caen en la página actual
-function renderFestivosPage() {
-    const todas     = Array.from(document.querySelectorAll('#festivos-tbody tr:not(.empty-row)'));
-    const coinciden = getFilteredFestivoRows();
-    todas.forEach(fila => { fila.style.display = 'none'; });
+// Lista: filtrar → contar → ordenar → paginar → pintar
+function renderFestivos() {
+    prepararLista();
+    let filas = getFilteredFestivos();
+    setText('festivos-count', `${filas.length} resultado${filas.length !== 1 ? 's' : ''}`);
+    const btnClear = document.getElementById('btn-clear-filters');
+    if (btnClear) btnClear.hidden = !hayFiltros();
 
-    const total        = coinciden.length;
-    const esTodos      = festivosPageSize === 'all';
-    const size         = esTodos ? total : festivosPageSize;
-    const totalPaginas = size > 0 ? Math.max(1, Math.ceil(total / size)) : 1;
-    if (festivosPage > totalPaginas) festivosPage = totalPaginas;
-    if (festivosPage < 1) festivosPage = 1;
-
-    const start = esTodos ? 0 : (festivosPage - 1) * size;
-    const end   = esTodos ? total : Math.min(start + size, total);
-    coinciden.slice(start, end).forEach(fila => { fila.style.display = ''; });
-
-    setText('festivos-count', `${total} resultado${total !== 1 ? 's' : ''}`);
-
-    const rangeEl = document.getElementById('festivos-range');
-    if (rangeEl) {
-        rangeEl.textContent = total === 0 ? '0 de 0' : `${start + 1}–${end} de ${total}`;
-    }
-
-    const btnPrev = document.getElementById('festivos-prev');
-    const btnNext = document.getElementById('festivos-next');
-    if (btnPrev) btnPrev.disabled = festivosPage <= 1;
-    if (btnNext) btnNext.disabled = esTodos || festivosPage >= totalPaginas;
-}
-
-// ---- ORDENAMIENTO ASC / DESC (mismo sistema que Proveedores) ----
-// La fecha se ordena por su valor 'YYYY-MM-DD' guardado en data-sort,
-// no por el texto 'dd/mm/aaaa' que se ve en pantalla.
-let festivosSortKey = null; // índice de columna, coincide con data-sort-key del <th>
-let festivosSortDir = 'asc';
-
-function sortFestivoRows(key, type) {
     const tbody = document.getElementById('festivos-tbody');
     if (!tbody) return;
-    const filas = Array.from(tbody.querySelectorAll('tr:not(.empty-row)'));
-    if (filas.length === 0) return;
-
-    festivosSortDir = (festivosSortKey === key && festivosSortDir === 'asc') ? 'desc' : 'asc';
-    festivosSortKey = key;
-
-    const getValor = fila => {
-        const celda = fila.cells[Number(key)];
-        const crudo = celda?.dataset.sort;
-        const base  = crudo !== undefined ? crudo : (celda?.textContent.trim() ?? '');
-        return type === 'number' ? (parseFloat(base) || 0) : base.toLowerCase();
-    };
-
-    filas.sort((a, b) => {
-        const va  = getValor(a);
-        const vb  = getValor(b);
-        const cmp = type === 'number' ? (va - vb) : va.localeCompare(vb, 'es');
-        return festivosSortDir === 'asc' ? cmp : -cmp;
-    });
-    filas.forEach(fila => tbody.appendChild(fila));
-
-    document.querySelectorAll('#mod-festivos .data-table th.sortable').forEach(th => {
-        const icon   = th.querySelector('.sort-icon');
-        const activo = th.dataset.sortKey === key;
-        th.classList.toggle('sort-active', activo);
-        if (icon) {
-            icon.className = activo
-                ? `fas sort-icon ${festivosSortDir === 'asc' ? 'fa-caret-up' : 'fa-caret-down'}`
-                : 'fas fa-caret-down sort-icon';
-        }
-    });
-
-    festivosPage = 1;
-    renderFestivosPage();
-}
-
-function initFestivosSorting() {
-    document.querySelectorAll('#mod-festivos .data-table th.sortable').forEach(th => {
-        th.addEventListener('click', () => sortFestivoRows(th.dataset.sortKey, th.dataset.sortType));
-    });
-}
-
-function initFestivosPagination() {
-    document.getElementById('festivos-page-size')?.addEventListener('change', function() {
-        festivosPageSize = this.value === 'all' ? 'all' : parseInt(this.value, 10);
-        festivosPage = 1;
-        renderFestivosPage();
-    });
-    document.getElementById('festivos-prev')?.addEventListener('click', () => {
-        festivosPage--;
-        renderFestivosPage();
-    });
-    document.getElementById('festivos-next')?.addEventListener('click', () => {
-        festivosPage++;
-        renderFestivosPage();
-    });
-}
-
-// ---- ALTO DINÁMICO DE LA TABLA (evita el doble scroll) ----
-// Mide cuánto espacio queda entre la tabla y el borde inferior de la
-// ventana y lo usa como max-height del scroll interno, para que la tabla
-// no empuje la altura de la página y aparezca también el scroll grande.
-function ajustarAlturaTablaFestivos() {
-    const scrollBox = document.getElementById('festivos-table-scroll');
-    if (!scrollBox) return;
-    const footer = document.querySelector('#mod-festivos .table-footer');
-    const top = scrollBox.getBoundingClientRect().top;
-    const alturaFooter = footer ? footer.offsetHeight : 0;
-
-    let margenInferior = 16;
-    const contentCard = scrollBox.closest('.content-card') || document.querySelector('.content-card');
-    if (contentCard) {
-        const cs = getComputedStyle(contentCard);
-        margenInferior += (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.marginBottom) || 0);
+    if (filas.length === 0) {
+        const hayDatos = datosFes().length > 0;
+        tbody.innerHTML = `<tr><td colspan="4"><div class="empty-state">
+            <i class="fas ${hayDatos ? 'fa-search' : 'fa-calendar-times'}"></i>
+            <p>${hayDatos ? 'Ningún festivo coincide con los filtros' : 'No hay festivos para mostrar'}</p>
+            <span>${hayDatos ? 'Cambie la búsqueda o use «Limpiar»' : 'Use «Nuevo festivo» para registrar el primero'}</span>
+        </div></td></tr>`;
+        if (pag) pag.paginar([]);
+        return;
     }
-
-    const disponible = window.innerHeight - top - alturaFooter - margenInferior;
-    scrollBox.style.maxHeight = Math.max(220, disponible) + 'px';
+    if (orden) filas = orden.ordenar(filas);
+    const pagina = pag ? pag.paginar(filas) : filas;
+    tbody.innerHTML = pagina.map(f => {
+        const id = escapeHtml(f.id_festivo);
+        const nombre = escapeHtml(f.nom_festivo);
+        return `<tr data-id="${id}">
+            <td class="tcx-num"><span class="tcx-fuerte">#${id}</span></td>
+            <td class="tcx-num">${escapeHtml(formatDate(f.fecha))}</td>
+            <td>${nombre}</td>
+            <td class="col-acciones">
+                <div class="actions-cell">
+                    <button type="button" class="btn-icon-sm edit" data-fes-accion="editar" title="Editar" aria-label="Editar ${nombre}"><i class="fas fa-pen"></i></button>
+                    <button type="button" class="btn-icon-sm reject" data-fes-accion="eliminar" title="Eliminar" aria-label="Eliminar ${nombre}"><i class="fas fa-trash"></i></button>
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
 }
 
 // ============================================================
@@ -561,8 +525,6 @@ function ejecutarEliminarFestivo(id) {
     .catch(() => showToast('Error de conexión', 'error'));
 }
 
-// Exponer para los onclick inline del HTML generado por PHP
-window.openEditModal = openEditModal;
 
 // ============================================================
 // 6. INICIALIZACIÓN GENERAL
@@ -572,9 +534,9 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function initFestivoModule() {
-    // Mover modales, calendario y toast al <body> para que el overlay cubra
-    // también la barra superior (escapan del contexto de apilamiento del layout)
-    ['modal-new-festivo', 'modal-edit-festivo', 'modal-confirm-eliminar', 'dp-pop', 'toast'].forEach(id => {
+    // Los modales los mueve a <body> el componente "modales" (erp_ui.js).
+    // El calendario y el aviso se mueven aquí: así no los tapa el difuminado.
+    ['dp-pop', 'toast'].forEach(id => {
         const el = document.getElementById(id);
         if (el && el.parentElement !== document.body) document.body.appendChild(el);
     });
@@ -585,14 +547,26 @@ function initFestivoModule() {
     initSelectorFecha();
 
     document.getElementById('festivo-search')?.addEventListener('input', applyFilters);
+    document.getElementById('festivo-filtro-periodo')?.addEventListener('change', applyFilters);
     document.getElementById('btn-clear-filters')?.addEventListener('click', clearFilters);
 
-    // ---------- PAGINACIÓN ----------
-    initFestivosPagination();
-    initFestivosSorting();
-    renderFestivosPage();
-    ajustarAlturaTablaFestivos();
-    window.addEventListener('resize', ajustarAlturaTablaFestivos);
+    // Acciones de cada fila (sin onclick en línea)
+    document.getElementById('festivos-tbody')?.addEventListener('click', e => {
+        const b = e.target.closest('[data-fes-accion]');
+        const tr = e.target.closest('tr[data-id]');
+        if (!b || !tr) return;
+        const f = datosFes().find(x => String(x.id_festivo) === tr.dataset.id);
+        if (!f) return;
+        if (b.dataset.fesAccion === 'editar') openEditModal(f);
+        if (b.dataset.fesAccion === 'eliminar') window.eliminarFestivo(f.id_festivo, f.nom_festivo);
+    });
+
+    // ---------- LISTA ----------
+    updateStats();
+    renderFestivos();
+    if (window.ErpListaFija) ErpListaFija.ajustar();
+    const mod = document.getElementById('mod-festivos');
+    requestAnimationFrame(() => requestAnimationFrame(() => mod?.classList.add('is-listo')));
 
     document.querySelectorAll('.btn-close-new-modal, .btn-cancel-new-modal')
         .forEach(btn => btn.addEventListener('click', closeNewModal));
@@ -604,6 +578,12 @@ function initFestivoModule() {
     // accidental. Se cierran solo con la X, "Cancelar" o "Cerrar".
 
     // ---------- MODAL: CONFIRMAR ELIMINACIÓN ----------
+    // Es de solo lectura: Esc lo cierra (los formularios solo con la X o Cancelar)
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape' || selectorFechaAbierto()) return;
+        const m = document.getElementById('modal-confirm-eliminar');
+        if (m && !m.classList.contains('hidden')) cerrarConfirmEliminar();
+    });
     document.getElementById('confirm-eliminar-cancel-btn')?.addEventListener('click', cerrarConfirmEliminar);
     document.getElementById('confirm-eliminar-ok-btn')?.addEventListener('click', () => {
         const accion = _confirmDeleteAction;

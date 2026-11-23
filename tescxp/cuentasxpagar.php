@@ -5,7 +5,7 @@ $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Cuentas por Pagar";
 $page_description = "Registro y seguimiento de facturas de proveedores";
 $page_icon        = "bi-receipt";
-$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/cuentasxpagar.css', 'modules/tescxp/css/cmp_modales.css'];
+$page_extra_css   = ['modules/tescxp/css/tcx_pantalla.css', 'modules/tescxp/css/tcx_modales.css', 'modules/tescxp/css/cuentasxpagar.css'];
 $page_extra_js    = ['modules/tescxp/js/cuentasxpagar.js'];
 $page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
@@ -70,13 +70,7 @@ function condiciones_pago(array $cond_prov, ?bool $oc_credito): array {
 
 // Total ya facturado contra cada orden, para calcular el saldo disponible
 // con la misma lógica que valida fun_insert_cuentasxpagar (val_total -
-// suma de facturas ya registradas contra esa orden).
-$list_facturado_x_oc = $pdo->prepare(
-    "SELECT id_ordencompra, COALESCE(SUM(val_factura), 0) AS val_facturado
-       FROM tab_cuentasxpagar
-      WHERE id_ordencompra IS NOT NULL
-      GROUP BY id_ordencompra"
-);
+// suma de facturas ya registradas contra esa orden). Consulta en prepare_tescxp.php §15.
 $list_facturado_x_oc->execute();
 $facturado_x_oc = [];
 foreach ($list_facturado_x_oc->fetchAll(PDO::FETCH_ASSOC) as $f) {
@@ -261,183 +255,93 @@ $facturas = $list_cuentasxpagar->fetchAll(PDO::FETCH_ASSOC);
 ob_start();
 ?>
 
-<div id="mod-cuentasxpagar" class="app-view active">
+<div id="mod-cuentasxpagar" class="app-view active tcx-pantalla" data-lista-fija>
 
     <!-- ENCABEZADO -->
     <div class="module-header">
         <div class="module-header-text">
-            <h1>Cuentas por Pagar</h1>
-            <p>Registro de facturas de proveedores y seguimiento de saldos</p>
+            <h1>Cuentas por pagar</h1>
+            <p>Registro de facturas de proveedores y seguimiento de saldos. Haga clic en una factura para ver sus cuotas.</p>
         </div>
-        <button id="btn-add-factura" class="btn btn-primary">
-            <i class="fas fa-plus"></i> Nueva Factura
-        </button>
+        <div class="module-header-acciones">
+            <button type="button" id="btn-add-factura" class="btn btn-primary"><i class="fas fa-plus"></i> Nueva factura</button>
+        </div>
     </div>
 
-    <!-- STATS -->
+    <!-- Indicadores: los calcula cuentasxpagar.js sobre todas las facturas -->
     <div class="stats-grid">
-        <?php
-        $total       = count($facturas);
-        $pendientes  = count(array_filter($facturas, fn($f) => !($f['ind_estado'] === 't' || $f['ind_estado'] === true)));
-        $pagadas     = $total - $pendientes;
-        $hoy         = date('Y-m-d');
-        $vencidas    = count(array_filter($facturas, fn($f) =>
-            !($f['ind_estado'] === 't' || $f['ind_estado'] === true) && $f['fec_vencimiento'] < $hoy
-        ));
-        $saldo_total = array_sum(array_column($facturas, 'val_saldo'));
-        ?>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:0">
             <div class="stat-icon blue"><i class="fas fa-file-invoice-dollar"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Total facturas</div>
-                <div class="stat-value" id="stat-total"><?= $total ?></div>
+                <div class="stat-value" id="stat-total">0</div>
+                <div class="stat-hint">Registradas</div>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon yellow"><i class="fas fa-clock"></i></div>
+        <div class="stat-card" style="--i:1">
+            <div class="stat-icon amber"><i class="fas fa-clock"></i></div>
             <div class="stat-info">
                 <div class="stat-label">En deuda</div>
-                <div class="stat-value" id="stat-pendientes"><?= $pendientes ?></div>
+                <div class="stat-value" id="stat-pendientes">0</div>
+                <div class="stat-hint">Con saldo por pagar</div>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon red"><i class="fas fa-exclamation-triangle"></i></div>
+        <div class="stat-card" style="--i:2">
+            <div class="stat-icon rose"><i class="fas fa-exclamation-triangle"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Vencidas</div>
-                <div class="stat-value" id="stat-vencidas"><?= $vencidas ?></div>
+                <div class="stat-value" id="stat-vencidas">0</div>
+                <div class="stat-hint">Pasaron su vencimiento</div>
             </div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:3">
             <div class="stat-icon green"><i class="fas fa-coins"></i></div>
             <div class="stat-info">
-                <div class="stat-label">Saldo total por pagar</div>
-                <div class="stat-value" id="stat-saldo" style="font-size:16px">$<?= number_format($saldo_total, 0, ',', '.') ?></div>
+                <div class="stat-label">Saldo por pagar</div>
+                <div class="stat-value" id="stat-saldo">$0</div>
+                <div class="stat-hint" id="stat-saldo-hint">De las facturas en deuda</div>
             </div>
         </div>
     </div>
 
-    <!-- FILTROS -->
+    <!-- Filtros (componente "filtros": píldoras con conteo) -->
     <div class="filter-bar">
-        <div class="search-wrapper">
-            <span class="search-icon"><i class="fas fa-search"></i></span>
-            <input type="text" id="factura-search" class="search-input" placeholder="Buscar por proveedor o número de factura...">
+        <div class="filter-row">
+            <div class="search-wrapper">
+                <span class="search-icon"><i class="fas fa-search"></i></span>
+                <input type="search" id="factura-search" class="search-input" maxlength="60" autocomplete="off" placeholder="Buscar por proveedor, NIT, factura u orden...">
+            </div>
+            <div class="filter-toggle-group" role="group" aria-label="Estado" data-para="factura-filtro-estado">
+                <button type="button" class="filter-toggle active" data-valor="all" aria-pressed="true">Todas <span class="count" id="fac-cnt-all"></span></button>
+                <button type="button" class="filter-toggle" data-valor="pendiente" aria-pressed="false">En deuda <span class="count" id="fac-cnt-pendiente"></span></button>
+                <button type="button" class="filter-toggle" data-valor="vencida" aria-pressed="false">Vencidas <span class="count" id="fac-cnt-vencida"></span></button>
+                <button type="button" class="filter-toggle" data-valor="pagada" aria-pressed="false">Pagadas <span class="count" id="fac-cnt-pagada"></span></button>
+            </div>
+            <input type="hidden" id="factura-filtro-estado" value="all">
+            <button type="button" id="btn-clear-filters" class="btn-clear-filter" hidden><i class="fas fa-eraser"></i> Limpiar</button>
         </div>
-        <div class="filter-toggle-group">
-            <button class="filter-toggle active" data-filter="all">Todas</button>
-            <button class="filter-toggle" data-filter="pendiente">En deuda</button>
-            <button class="filter-toggle" data-filter="vencida">Vencidas</button>
-            <button class="filter-toggle" data-filter="pagada">Pagadas</button>
-        </div>
-        <button id="btn-clear-filters" class="btn-clear-filter" style="display:none">
-            <i class="fas fa-times"></i> Limpiar
-        </button>
-        <div class="pagination-size">
-            <label for="facturas-page-size">Filas por página</label>
-            <select id="facturas-page-size">
-                <option value="10">10</option>
-                <option value="25" selected>25</option>
-                <option value="50">50</option>
-                <option value="all">Todos</option>
-            </select>
-        </div>
-        <span class="filter-info" id="facturas-count"><?= $total ?> resultado<?= $total !== 1 ? 's' : '' ?></span>
+        <div class="filter-info" id="facturas-count" aria-live="polite">0 resultados</div>
     </div>
 
-    <!-- TABLA -->
-    <div class="table-container">
-      <div class="table-scroll" id="facturas-table-scroll">
-        <table class="data-table">
-            <!-- Anchos fijos: las columnas no se mueven al ordenar o cambiar de página -->
-            <colgroup>
-                <col class="col-factura">
-                <col class="col-oc">
-                <col class="col-proveedor">
-                <col class="col-emision">
-                <col class="col-vencimiento">
-                <col class="col-valor">
-                <col class="col-saldo">
-                <col class="col-cuotas">
-                <col class="col-estado">
-            </colgroup>
-            <thead>
-                <tr>
-                    <th class="sortable" data-sort-key="0" data-sort-type="number">Factura <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="1" data-sort-type="number">Orden de Compra <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="2" data-sort-type="text">Proveedor <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="3" data-sort-type="text">Emisión <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="4" data-sort-type="text">Vencimiento <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-right sortable" data-sort-key="5" data-sort-type="number">Valor <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-right sortable" data-sort-key="6" data-sort-type="number">Saldo <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-center sortable" data-sort-key="7" data-sort-type="number">Cuotas <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-center">Estado</th>
-                </tr>
-            </thead>
-            <tbody id="facturas-tbody">
-            <?php if (empty($facturas)): ?>
-                <tr class="empty-row">
-                    <td colspan="9">
-                        <div class="empty-state">
-                            <i class="fas fa-file-invoice"></i>
-                            <p>No hay facturas registradas</p>
-                            <span>Haga clic en "Nueva Factura" para agregar la primera</span>
-                        </div>
-                    </td>
-                </tr>
-            <?php else: ?>
-                <?php foreach ($facturas as $f):
-                    $pagada      = ($f['ind_estado'] === 't' || $f['ind_estado'] === true);
-                    $esta_vencida = !$pagada && $f['fec_vencimiento'] < $hoy;
-
-                    if ($pagada) {
-                        $badge = '<span class="badge badge-active">Pagada</span>';
-                        $filtro_estado = 'pagada';
-                    } elseif ($esta_vencida) {
-                        $badge = '<span class="badge badge-inactive">Vencida</span>';
-                        $filtro_estado = 'vencida';
-                    } else {
-                        $badge = '<span class="badge badge-inactive" style="background:#fffbeb;color:#f59e0b">En deuda</span>';
-                        $filtro_estado = 'pendiente';
-                    }
-
-                    $id_fact_esc = htmlspecialchars($f['id_factura']);
-                ?>
-                <tr data-estado="<?= $filtro_estado ?>" onclick="openDetailModal(<?= $id_fact_esc ?>)">
-                    <td data-sort="<?= (int)$f['id_factura'] ?>"><strong>#<?= $id_fact_esc ?></strong></td>
-                    <td data-sort="<?= !empty($f['id_ordencompra']) ? (int)$f['id_ordencompra'] : 0 ?>">
-                        <?php if (!empty($f['id_ordencompra'])): ?>
-                            <span class="oc-tag">OC #<?= (int)$f['id_ordencompra'] ?></span>
-                        <?php else: ?>
-                            <span class="oc-directa">Compra directa</span>
-                        <?php endif; ?>
-                    </td>
-                    <td data-sort="<?= htmlspecialchars($f['nom_tercero']) ?>">
-                        <?= htmlspecialchars($f['nom_tercero']) ?><br>
-                        <small style="color:#94a3b8;font-size:11px"><?= htmlspecialchars($f['id_proveedor']) ?></small>
-                    </td>
-                    <td data-sort="<?= htmlspecialchars(date('Y-m-d', strtotime($f['fec_emision']))) ?>"><?= htmlspecialchars(date('d/m/Y', strtotime($f['fec_emision']))) ?></td>
-                    <td data-sort="<?= htmlspecialchars(date('Y-m-d', strtotime($f['fec_vencimiento']))) ?>"><?= htmlspecialchars(date('d/m/Y', strtotime($f['fec_vencimiento']))) ?></td>
-                    <td class="text-right" data-sort="<?= (float)$f['val_factura'] ?>">$<?= number_format((float)$f['val_factura'], 0, ',', '.') ?></td>
-                    <td class="text-right" data-sort="<?= (float)$f['val_saldo'] ?>">$<?= number_format((float)$f['val_saldo'], 0, ',', '.') ?></td>
-                    <td class="text-center" data-sort="<?= (int)$f['num_cuotas'] ?>"><?= htmlspecialchars($f['num_cuotas']) ?></td>
-                    <td class="text-center"><?= $badge ?></td>
-                </tr>
-                <?php endforeach; ?>
-            <?php endif; ?>
-            </tbody>
-        </table>
-      </div>
-
-        <!-- PAGINACIÓN -->
-        <div class="table-footer">
-            <div class="pagination-nav">
-                <span class="pagination-range" id="facturas-range">0 de 0</span>
-                <button type="button" id="facturas-prev" class="pagination-btn" disabled aria-label="Página anterior">
-                    <i class="fas fa-chevron-left"></i>
-                </button>
-                <button type="button" id="facturas-next" class="pagination-btn" disabled aria-label="Página siguiente">
-                    <i class="fas fa-chevron-right"></i>
-                </button>
-            </div>
+    <!-- Lista: la pinta cuentasxpagar.js; clic en la fila abre el detalle; el paginador agrega su pie -->
+    <div class="table-container" data-lista>
+        <div data-lista-scroll>
+            <table id="facturas-table" class="data-table" data-erp-movil data-erp-movil-titulo="3">
+                <thead>
+                    <tr>
+                        <th>Factura</th>
+                        <th>Orden de compra</th>
+                        <th>Proveedor</th>
+                        <th>Emisión</th>
+                        <th>Vencimiento</th>
+                        <th class="text-right">Valor</th>
+                        <th class="text-right">Saldo</th>
+                        <th class="text-center">Cuotas</th>
+                        <th>Estado</th>
+                    </tr>
+                </thead>
+                <tbody id="facturas-tbody"></tbody>
+            </table>
         </div>
     </div>
 </div>
@@ -445,12 +349,12 @@ ob_start();
 <!-- MODAL: NUEVA FACTURA -->
 <div id="modal-new-factura" class="modal-overlay hidden">
     <div class="modal-box modal-box-factura">
-        <div class="modal-header green">
+        <div class="modal-header">
             <div>
-                <h2>Nueva Factura</h2>
+                <h3>Nueva factura</h3>
                 <p>Registre una factura de proveedor</p>
             </div>
-            <button class="modal-close btn-close-new-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-new-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="new-factura-form" novalidate>
@@ -464,7 +368,7 @@ ob_start();
                 </div>
                 <div class="form-field">
                     <label class="form-label">Proveedor <span class="required">*</span></label>
-                    <select id="new-id-proveedor" name="sel_id_proveedor" class="form-select">
+                    <select id="new-id-proveedor" name="sel_id_proveedor" class="form-input">
                         <option value="">Seleccione...</option>
                         <?php foreach ($proveedores_dp as $p):
                             $cond_p = $proveedores_cond_idx[$p['id_proveedor']];
@@ -572,20 +476,20 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-new-modal">Cancelar</button>
-            <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Factura</button>
+            <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
 
 <!-- MODAL: SELECCIONAR ORDEN DE COMPRA -->
 <div id="modal-oc" class="modal-overlay hidden">
-    <div class="modal-box" style="max-width:820px">
-        <div class="modal-header blue">
+    <div class="modal-box">
+        <div class="modal-header">
             <div>
-                <h2>Seleccionar Orden de Compra</h2>
+                <h3>Seleccionar orden de compra</h3>
                 <p>Órdenes aprobadas que aún no tienen factura asociada</p>
             </div>
-            <button class="modal-close" id="close-oc-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close" id="close-oc-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
 
@@ -593,9 +497,9 @@ ob_start();
             <div class="oc-filter-bar">
                 <div class="search-wrapper">
                     <span class="search-icon"><i class="fas fa-search"></i></span>
-                    <input type="text" id="oc-search" class="search-input" placeholder="Buscar por número de orden o proveedor...">
+                    <input type="search" id="oc-search" class="search-input" autocomplete="off" placeholder="Buscar por número de orden o proveedor...">
                 </div>
-                <select id="oc-filtro-proveedor" class="form-select">
+                <select id="oc-filtro-proveedor" class="form-input" aria-label="Filtrar por proveedor">
                     <option value="">Todos los proveedores</option>
                     <?php foreach ($proveedores_dp as $p): ?>
                         <option value="<?= htmlspecialchars($p['id_proveedor']) ?>">
@@ -647,10 +551,10 @@ ob_start();
 
 <!-- MODAL: DETALLE DE FACTURA (con cuotas) -->
 <div id="modal-detail" class="modal-overlay hidden">
-    <div class="modal-box" style="max-width:560px">
-        <div class="modal-header blue">
-            <div><h2 id="detail-title">Detalle de Factura</h2><p id="detail-subtitle"></p></div>
-            <button class="modal-close" id="close-detail-modal"><i class="fas fa-times"></i></button>
+    <div class="modal-box">
+        <div class="modal-header">
+            <div><h3 id="detail-title">Detalle de factura</h3><p id="detail-subtitle">Datos de la factura y sus cuotas</p></div>
+            <button type="button" class="modal-close" id="close-detail-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <div id="detail-content">
@@ -658,7 +562,7 @@ ob_start();
             </div>
         </div>
         <div class="modal-footer">
-            <button class="btn btn-secondary" id="close-detail-btn">Cerrar</button>
+            <button type="button" class="btn btn-secondary" id="close-detail-btn">Cerrar</button>
         </div>
     </div>
 </div>
@@ -688,7 +592,7 @@ ob_start();
 </div>
 
 <!-- TOAST -->
-<div id="toast" class="hidden"><span id="toast-message"></span></div>
+<div id="toast" class="tcx-toast hidden" role="status" aria-live="polite"><span id="toast-message"></span></div>
 
 <!-- DATOS PARA EL JS -->
 <script>

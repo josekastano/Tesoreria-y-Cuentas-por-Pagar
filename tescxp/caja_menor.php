@@ -5,7 +5,7 @@ $activeModule     = 'tescxp';
 $page_title       = "ADSOERP | Caja Menor";
 $page_description = "Gestión de fondos fijos y sus movimientos";
 $page_icon        = "bi-cash-coin";
-$page_extra_css   = ['modules/tescxp/css/cmp_pantalla.css', 'modules/tescxp/css/caja_menor.css', 'modules/tescxp/css/cmp_modales.css'];
+$page_extra_css   = ['modules/tescxp/css/tcx_pantalla.css', 'modules/tescxp/css/tcx_modales.css', 'modules/tescxp/css/caja_menor.css'];
 $page_extra_js    = ['modules/tescxp/js/caja_menor.js'];
 $page_erp_ui      = ['modales', 'indicadores', 'filtros', 'paginador', 'lista_fija', 'movil', 'botones', 'orden'];   // GUIA_PANTALLAS_ERP §2
 $show_welcome     = false;
@@ -250,169 +250,89 @@ $cajas = $list_enc_caja_menor->fetchAll(PDO::FETCH_ASSOC);
 // ============================================================
 ob_start();
 ?>
-<div id="mod-caja-menor" class="app-view active">
+<div id="mod-caja-menor" class="app-view active tcx-pantalla" data-lista-fija>
 
     <!-- ENCABEZADO -->
     <div class="module-header">
         <div class="module-header-text">
-            <h1>Caja Menor</h1>
-            <p>Fondos fijos asignados y seguimiento de sus movimientos</p>
+            <h1>Caja menor</h1>
+            <p>Fondos fijos asignados y seguimiento de sus movimientos. Haga clic en una caja para ver sus movimientos.</p>
         </div>
-        <button id="btn-add-caja" class="btn btn-primary">
-            <i class="fas fa-plus"></i> Nueva Caja
-        </button>
+        <div class="module-header-acciones">
+            <button type="button" id="btn-add-caja" class="btn btn-primary"><i class="fas fa-plus"></i> Nueva caja</button>
+        </div>
     </div>
 
-    <!-- STATS -->
+    <!-- Indicadores: los calcula caja_menor.js sobre todas las cajas -->
     <div class="stats-grid">
-        <?php
-        $total      = count($cajas);
-        $activas    = count(array_filter($cajas, fn($c) => es_caja_activa($c['ind_estado_caja_m'])));
-        $disponible_total = array_sum(array_column($cajas, 'monto_disponible'));
-        $asignado_total   = array_sum(array_column($cajas, 'monto_asignado'));
-        ?>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:0">
             <div class="stat-icon blue"><i class="fas fa-cash-register"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Total cajas</div>
-                <div class="stat-value" id="stat-total"><?= $total ?></div>
+                <div class="stat-value" id="stat-total">0</div>
+                <div class="stat-hint">Abiertas y cerradas</div>
             </div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:1">
             <div class="stat-icon green"><i class="fas fa-check-circle"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Activas</div>
-                <div class="stat-value" id="stat-activas"><?= $activas ?></div>
+                <div class="stat-value" id="stat-activas">0</div>
+                <div class="stat-hint">Admiten movimientos</div>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon yellow"><i class="fas fa-coins"></i></div>
+        <div class="stat-card" style="--i:2">
+            <div class="stat-icon amber"><i class="fas fa-coins"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Disponible total</div>
-                <div class="stat-value" id="stat-disponible" style="font-size:16px">$<?= number_format($disponible_total, 0, ',', '.') ?></div>
+                <div class="stat-value" id="stat-disponible">$0</div>
+                <div class="stat-hint" id="stat-disponible-hint">De las cajas activas</div>
             </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-icon blue"><i class="fas fa-wallet"></i></div>
+        <div class="stat-card" style="--i:3">
+            <div class="stat-icon rose"><i class="fas fa-wallet"></i></div>
             <div class="stat-info">
                 <div class="stat-label">Asignado total</div>
-                <div class="stat-value" id="stat-asignado" style="font-size:16px">$<?= number_format($asignado_total, 0, ',', '.') ?></div>
+                <div class="stat-value" id="stat-asignado">$0</div>
+                <div class="stat-hint">De las cajas activas</div>
             </div>
         </div>
     </div>
 
-    <!-- FILTROS -->
+    <!-- Filtros (componente "filtros": píldoras con conteo) -->
     <div class="filter-bar">
-        <div class="search-wrapper">
-            <span class="search-icon"><i class="fas fa-search"></i></span>
-            <input type="text" id="caja-search" class="search-input" placeholder="Buscar por nombre de caja...">
+        <div class="filter-row">
+            <div class="search-wrapper">
+                <span class="search-icon"><i class="fas fa-search"></i></span>
+                <input type="search" id="caja-search" class="search-input" maxlength="60" autocomplete="off" placeholder="Buscar por nombre o número de caja...">
+            </div>
+            <div class="filter-toggle-group" role="group" aria-label="Estado" data-para="caja-filtro-estado">
+                <button type="button" class="filter-toggle active" data-valor="all" aria-pressed="true">Todas <span class="count" id="caja-cnt-all"></span></button>
+                <button type="button" class="filter-toggle" data-valor="activa" aria-pressed="false">Activas <span class="count" id="caja-cnt-activa"></span></button>
+                <button type="button" class="filter-toggle" data-valor="cerrada" aria-pressed="false">Cerradas <span class="count" id="caja-cnt-cerrada"></span></button>
+            </div>
+            <input type="hidden" id="caja-filtro-estado" value="all">
+            <button type="button" id="btn-clear-filters" class="btn-clear-filter" hidden><i class="fas fa-eraser"></i> Limpiar</button>
         </div>
-        <div class="filter-toggle-group">
-            <button class="filter-toggle active" data-filter="all">Todas</button>
-            <button class="filter-toggle" data-filter="activa">Activas</button>
-            <button class="filter-toggle" data-filter="cerrada">Cerradas</button>
-        </div>
-        <button id="btn-clear-filters" class="btn-clear-filter" style="display:none">
-            <i class="fas fa-times"></i> Limpiar
-        </button>
-        <div class="pagination-size">
-            <label for="cajas-page-size">Filas por página</label>
-            <select id="cajas-page-size">
-                <option value="10">10</option>
-                <option value="25" selected>25</option>
-                <option value="50">50</option>
-                <option value="all">Todos</option>
-            </select>
-        </div>
-        <span class="filter-info" id="cajas-count"><?= $total ?> resultado<?= $total !== 1 ? 's' : '' ?></span>
+        <div class="filter-info" id="cajas-count" aria-live="polite">0 resultados</div>
     </div>
 
-    <!-- TABLA -->
-    <div class="table-container">
-      <div class="table-scroll" id="cajas-table-scroll">
-        <table class="data-table">
-            <!-- Anchos fijos: las columnas no se mueven al ordenar o cambiar de página -->
-            <colgroup>
-                <col class="col-caja">
-                <col class="col-apertura">
-                <col class="col-asignado">
-                <col class="col-disponible">
-                <col class="col-estado">
-                <col class="col-acciones">
-            </colgroup>
-            <thead>
-                <tr>
-                    <th class="sortable" data-sort-key="0" data-sort-type="text">Caja <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="sortable" data-sort-key="1" data-sort-type="text">Apertura <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-right sortable" data-sort-key="2" data-sort-type="number">Asignado <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-right sortable" data-sort-key="3" data-sort-type="number">Disponible <i class="fas fa-caret-down sort-icon"></i></th>
-                    <th class="text-center">Estado</th>
-                    <th class="text-center">Acciones</th>
-                </tr>
-            </thead>
-            <tbody id="cajas-tbody">
-            <?php if (empty($cajas)): ?>
-                <tr class="empty-row">
-                    <td colspan="6">
-                        <div class="empty-state">
-                            <i class="fas fa-cash-register"></i>
-                            <p>No hay cajas menores registradas</p>
-                            <span>Haga clic en "Nueva Caja" para agregar la primera</span>
-                        </div>
-                    </td>
-                </tr>
-            <?php else: ?>
-                <?php foreach ($cajas as $c):
-                    $activa      = es_caja_activa($c['ind_estado_caja_m']);
-                    $badge       = $activa
-                        ? '<span class="badge badge-active">Activa</span>'
-                        : '<span class="badge badge-inactive">Cerrada</span>';
-                    $filtro      = $activa ? 'activa' : 'cerrada';
-                    $id_caja_esc = htmlspecialchars($c['id_caja_menor']);
-                    $pct_disp    = $c['monto_asignado'] > 0
-                        ? round(($c['monto_disponible'] / $c['monto_asignado']) * 100)
-                        : 0;
-                    // Se normaliza el estado a booleano real para el JS
-                    $c['ind_estado_caja_m'] = $activa;
-                    $json_caja = htmlspecialchars(json_encode($c), ENT_QUOTES, 'UTF-8');
-                ?>
-                <tr data-estado="<?= $filtro ?>" onclick="openDetailModal(<?= $json_caja ?>)">
-                    <td data-sort="<?= htmlspecialchars($c['nom_caja_menor']) ?>">
-                        <strong><?= htmlspecialchars($c['nom_caja_menor']) ?></strong><br>
-                        <small style="color:#94a3b8;font-size:11px">#<?= $id_caja_esc ?> — <?= $pct_disp ?>% disponible</small>
-                    </td>
-                    <td data-sort="<?= htmlspecialchars(date('Y-m-d', strtotime($c['fecha_apertura']))) ?>"><?= htmlspecialchars(date('d/m/Y', strtotime($c['fecha_apertura']))) ?></td>
-                    <td class="text-right" data-sort="<?= (float)$c['monto_asignado'] ?>">$<?= number_format((float)$c['monto_asignado'], 0, ',', '.') ?></td>
-                    <td class="text-right" data-sort="<?= (float)$c['monto_disponible'] ?>">$<?= number_format((float)$c['monto_disponible'], 0, ',', '.') ?></td>
-                    <td class="text-center"><?= $badge ?></td>
-                    <td class="text-center" onclick="event.stopPropagation()">
-                        <button class="btn-icon-sm edit" onclick="openEditModal(<?= $json_caja ?>)" title="Editar nombre">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        <?php if ($activa): ?>
-                        <button class="btn-icon-sm close" onclick="cerrarCajaMenor(<?= $json_caja ?>)" title="Cerrar caja">
-                            <i class="fas fa-lock"></i>
-                        </button>
-                        <?php endif; ?>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            <?php endif; ?>
-            </tbody>
-        </table>
-      </div>
-
-        <!-- PAGINACIÓN -->
-        <div class="table-footer">
-            <div class="pagination-nav">
-                <span class="pagination-range" id="cajas-range">0 de 0</span>
-                <button type="button" id="cajas-prev" class="pagination-btn" disabled aria-label="Página anterior">
-                    <i class="fas fa-chevron-left"></i>
-                </button>
-                <button type="button" id="cajas-next" class="pagination-btn" disabled aria-label="Página siguiente">
-                    <i class="fas fa-chevron-right"></i>
-                </button>
-            </div>
+    <!-- Lista: la pinta caja_menor.js; clic en la fila abre los movimientos; el paginador agrega su pie -->
+    <div class="table-container" data-lista>
+        <div data-lista-scroll>
+            <table id="cajas-table" class="data-table" data-erp-movil data-erp-movil-titulo="1">
+                <thead>
+                    <tr>
+                        <th>Caja</th>
+                        <th>Apertura</th>
+                        <th class="text-right">Asignado</th>
+                        <th class="text-right">Disponible</th>
+                        <th>Estado</th>
+                        <th class="col-acciones">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="cajas-tbody"></tbody>
+            </table>
         </div>
     </div>
 </div>
@@ -420,12 +340,12 @@ ob_start();
 <!-- MODAL: NUEVA CAJA -->
 <div id="modal-new-caja" class="modal-overlay hidden">
     <div class="modal-box">
-        <div class="modal-header green">
+        <div class="modal-header">
             <div>
-                <h2>Nueva Caja Menor</h2>
+                <h3>Nueva Caja Menor</h3>
                 <p>Registre un nuevo fondo fijo</p>
             </div>
-            <button class="modal-close btn-close-new-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-new-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="new-caja-form" novalidate>
@@ -445,7 +365,7 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-new-modal">Cancelar</button>
-            <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar Caja</button>
+            <button type="button" id="new-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
@@ -453,12 +373,12 @@ ob_start();
 <!-- MODAL: EDITAR NOMBRE DE CAJA -->
 <div id="modal-edit-caja" class="modal-overlay hidden">
     <div class="modal-box">
-        <div class="modal-header blue">
+        <div class="modal-header">
             <div>
-                <h2>Editar Caja Menor</h2>
+                <h3>Editar Caja Menor</h3>
                 <p>Solo se puede modificar el nombre</p>
             </div>
-            <button class="modal-close btn-close-edit-modal"><i class="fas fa-times"></i></button>
+            <button type="button" class="modal-close btn-close-edit-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <form id="edit-caja-form" novalidate>
@@ -478,17 +398,17 @@ ob_start();
         </div>
         <div class="modal-footer">
             <button type="button" class="btn btn-secondary btn-cancel-edit-modal">Cancelar</button>
-            <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Actualizar Nombre</button>
+            <button type="button" id="edit-btn-save" class="btn btn-primary"><i class="fas fa-save"></i> Guardar</button>
         </div>
     </div>
 </div>
 
 <!-- MODAL: DETALLE DE CAJA (movimientos) -->
 <div id="modal-detail" class="modal-overlay hidden">
-    <div class="modal-box" style="max-width:620px">
-        <div class="modal-header blue">
-            <div><h2 id="detail-title">Detalle de Caja</h2><p id="detail-subtitle"></p></div>
-            <button class="modal-close" id="close-detail-modal"><i class="fas fa-times"></i></button>
+    <div class="modal-box">
+        <div class="modal-header">
+            <div><h3 id="detail-title">Detalle de caja</h3><p id="detail-subtitle">Saldo y movimientos de la caja</p></div>
+            <button type="button" class="modal-close" id="close-detail-modal" aria-label="Cerrar"><i class="fas fa-times"></i></button>
         </div>
         <div class="modal-body">
             <div id="detail-content"></div>
@@ -534,27 +454,36 @@ ob_start();
             </div>
         </div>
         <div class="modal-footer">
-            <button class="btn btn-danger hidden" id="detail-btn-cerrar-caja"><i class="fas fa-lock"></i> Cerrar Caja</button>
-            <button class="btn btn-secondary" id="close-detail-btn">Cerrar</button>
+            <button type="button" class="btn btn-danger hidden" id="detail-btn-cerrar-caja"><i class="fas fa-lock"></i> Cerrar Caja</button>
+            <button type="button" class="btn btn-secondary" id="close-detail-btn">Cerrar</button>
         </div>
     </div>
 </div>
 
-<!-- MODAL: CONFIRMAR ACCIÓN (estilo módulo Compras) -->
+<!-- MODAL: CONFIRMAR ACCIÓN (después del detalle: queda encima) -->
 <div id="modal-confirm-accion" class="modal-overlay hidden">
     <div class="modal-box confirm-box">
         <div class="confirm-icon"><i class="fas fa-exclamation-triangle"></i></div>
         <h4 id="confirm-accion-title"></h4>
         <p id="confirm-accion-body"></p>
-        <div class="confirm-buttons">
-            <button type="button" class="btn-cancelar" id="confirm-accion-cancel-btn">Cancelar</button>
-            <button type="button" class="btn-confirmar-accion" id="confirm-accion-ok-btn">Confirmar</button>
+        <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" id="confirm-accion-cancel-btn">Cancelar</button>
+            <button type="button" class="btn btn-primary" id="confirm-accion-ok-btn">Confirmar</button>
         </div>
     </div>
 </div>
 
 <!-- TOAST -->
-<div id="toast" class="hidden"><span id="toast-message"></span></div>
+<div id="toast" class="tcx-toast hidden" role="status" aria-live="polite"><span id="toast-message"></span></div>
+
+<!-- DATOS PARA EL JS (el estado se normaliza a booleano) -->
+<script>
+const cajasData = <?= json_encode(array_map(function ($c) {
+    $c['ind_estado_caja_m'] = es_caja_activa($c['ind_estado_caja_m']);
+    return $c;
+}, $cajas), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+</script>
+
 
 
 <?php

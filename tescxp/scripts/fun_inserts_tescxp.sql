@@ -112,7 +112,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -165,7 +165,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -218,7 +218,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -317,7 +317,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -390,7 +390,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -463,7 +463,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -604,7 +604,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -653,7 +653,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -727,7 +727,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -873,13 +873,13 @@ EXCEPTION
     -- mensaje general ("Un campo obligatorio está vacío") no lo dice.
     WHEN not_null_violation THEN
         GET STACKED DIAGNOSTICS wtabla_err = TABLE_NAME, wcolumna_err = COLUMN_NAME;
-        RAISE EXCEPTION 'ERROR: % (%.%)', public.fun_mensaje_error(SQLSTATE, SQLERRM), wtabla_err, wcolumna_err;
+        RAISE EXCEPTION 'ERROR: % (%.%)', fun_mensaje_error(SQLSTATE, SQLERRM), wtabla_err, wcolumna_err;
     -- Registro duplicado: se agrega la tabla y la restricción que lo impidió.
     WHEN unique_violation THEN
         GET STACKED DIAGNOSTICS wtabla_err = TABLE_NAME, wcolumna_err = CONSTRAINT_NAME;
-        RAISE EXCEPTION 'ERROR: % (tabla %, restricción %)', public.fun_mensaje_error(SQLSTATE, SQLERRM), wtabla_err, wcolumna_err;
+        RAISE EXCEPTION 'ERROR: % (tabla %, restricción %)', fun_mensaje_error(SQLSTATE, SQLERRM), wtabla_err, wcolumna_err;
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -1124,13 +1124,13 @@ EXCEPTION
     -- mensaje general ("Un campo obligatorio está vacío") no lo dice.
     WHEN not_null_violation THEN
         GET STACKED DIAGNOSTICS wtabla_err = TABLE_NAME, wcolumna_err = COLUMN_NAME;
-        RAISE EXCEPTION 'ERROR: % (%.%)', public.fun_mensaje_error(SQLSTATE, SQLERRM), wtabla_err, wcolumna_err;
+        RAISE EXCEPTION 'ERROR: % (%.%)', fun_mensaje_error(SQLSTATE, SQLERRM), wtabla_err, wcolumna_err;
     -- Registro duplicado: se agrega la tabla y la restricción que lo impidió.
     WHEN unique_violation THEN
         GET STACKED DIAGNOSTICS wtabla_err = TABLE_NAME, wcolumna_err = CONSTRAINT_NAME;
-        RAISE EXCEPTION 'ERROR: % (tabla %, restricción %)', public.fun_mensaje_error(SQLSTATE, SQLERRM), wtabla_err, wcolumna_err;
+        RAISE EXCEPTION 'ERROR: % (tabla %, restricción %)', fun_mensaje_error(SQLSTATE, SQLERRM), wtabla_err, wcolumna_err;
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -1184,7 +1184,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -1241,7 +1241,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -1444,7 +1444,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -1733,7 +1733,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -1933,7 +1933,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -2151,7 +2151,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
@@ -2305,7 +2305,7 @@ BEGIN
 
 EXCEPTION
     WHEN OTHERS THEN
-        RAISE EXCEPTION 'ERROR: %', public.fun_mensaje_error(SQLSTATE, SQLERRM);
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
 END;
 $BODY$
 LANGUAGE PLPGSQL;
