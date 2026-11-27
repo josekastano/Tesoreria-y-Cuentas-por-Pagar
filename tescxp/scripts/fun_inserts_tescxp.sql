@@ -32,7 +32,15 @@ BEGIN
                                 'fun_insert_pagos_nomina',
                                 'fun_enviar_inversiones_tesoreria',
                                 'fun_aplicar_respuesta_inversion',
-                                'fun_insert_pagos_inversion') LOOP
+                                'fun_insert_pagos_inversion',
+                                'fun_usuario_erp',
+                                'fun_id_modulo_tesoreria',
+                                'fun_es_lider_tesoreria',
+                                'fun_registrar_descarga_archivo',
+                                'fun_insert_inconsistencia_respuesta',
+                                'fun_validar_total_respuesta',
+                                'fun_crear_archivo_plano',
+                                'fun_crear_cronograma') LOOP
         EXECUTE 'DROP FUNCTION ' || r.fn;
     END LOOP;
 END $$;
@@ -1588,7 +1596,7 @@ BEGIN
       FOR UPDATE;
 
 -- ¿HAY EMPLEADOS PARA ENVIAR? (sin enviar o rechazados, con neto mayor a cero)
-    SELECT COUNT(*) INTO wcantidad
+    SELECT COUNT(id_empleado) INTO wcantidad
       FROM tab_nomina
      WHERE ano_nomina  = wano_nomina
        AND mes_nomina  = wmes_nomina
@@ -1604,7 +1612,7 @@ BEGIN
     END IF;
 
 -- VALIDAR DATOS BANCARIOS DE CADA EMPLEADO (se listan todos los que fallan)
-    SELECT COUNT(*),
+    SELECT COUNT(x.motivo),
            STRING_AGG(x.motivo, '; ' ORDER BY x.motivo)
       INTO wcant_errores, werrores
       FROM (SELECT TRIM(e.nom_empleado || ' ' || e.ape_empleado) || ' (' || n.id_empleado || '): ' ||
@@ -2006,7 +2014,7 @@ BEGIN
       FOR UPDATE;
 
 -- ¿HAY CUOTAS PARA ENVIAR?
-    SELECT COUNT(*) INTO wcantidad
+    SELECT COUNT(c.id_cuota) INTO wcantidad
       FROM tab_cuotas_inversion c
       JOIN tab_inversiones      n ON n.id_proyecto = c.id_proyecto AND n.id_inversor = c.id_inversor
      WHERE c.ind_aprobada     = TRUE
@@ -2021,7 +2029,7 @@ BEGIN
     END IF;
 
 -- VALIDAR LOS DATOS BANCARIOS DE CADA CUOTA (se listan todas las que fallan)
-    SELECT COUNT(*),
+    SELECT COUNT(x.motivo),
            STRING_AGG(x.motivo, '; ' ORDER BY x.motivo)
       INTO wcant_errores, werrores
       FROM (SELECT COALESCE(TRIM(i.nom_inversor), '') || ' (' || c.id_inversor || ', proyecto ' || c.id_proyecto || ', cuota ' || c.id_cuota || '): ' ||
@@ -2096,7 +2104,7 @@ BEGIN
 -- inversiones (los que tienen líneas en tab_det_archivo_inversion) con ese nombre.
     wnom_base := 'INVERSION_' || TO_CHAR(wfec_corte, 'YYYY_MM_DD');
 
-    SELECT COUNT(*) INTO wenvios_previos
+    SELECT COUNT(a.nom_archivo) INTO wenvios_previos
       FROM tab_enc_archivo_plano a
      WHERE (a.nom_archivo = wnom_base OR a.nom_archivo LIKE wnom_base || '\_R%')
        AND EXISTS (SELECT 1 FROM tab_det_archivo_inversion d WHERE d.id_archivo_plano = a.id_archivo_plano);
@@ -2306,6 +2314,267 @@ BEGIN
 EXCEPTION
     WHEN OTHERS THEN
         RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- SEGURIDAD DE PAGOS
+--------------------------------------------------------------------------------------------------------------------------------------
+-- Usuario del ERP que hace la operación: el mismo que usa fun_audit_trail
+-- (src/config.php lo pone en myapp.user_id con $_SESSION['id_usuario']).
+-- NULL si la conexión no trae usuario (por ejemplo, un script ejecutado a mano).
+CREATE OR REPLACE FUNCTION fun_usuario_erp() RETURNS VARCHAR AS
+$BODY$
+DECLARE wid_usuario VARCHAR;
+BEGIN
+    wid_usuario := NULLIF(TRIM(COALESCE(current_setting('myapp.user_id', TRUE), '')), '');
+    IF wid_usuario = '0' THEN
+        RETURN NULL;
+    END IF;
+    RETURN wid_usuario;
+END;
+$BODY$
+LANGUAGE PLPGSQL STABLE;
+
+
+-- Módulo de Tesorería en tab_menus (menú de primer nivel "Tesorería y Cuentas por Pagar")
+CREATE OR REPLACE FUNCTION fun_id_modulo_tesoreria() RETURNS VARCHAR AS
+$BODY$
+BEGIN
+    RETURN CAST('4' AS VARCHAR);
+END;
+$BODY$
+LANGUAGE PLPGSQL IMMUTABLE;
+
+
+-- ¿El usuario es el líder del área de Tesorería (o administrador)?
+-- Igual que Gestión Humana: responsable (tab_areas.id_responsable) del área
+-- que dirige el módulo (tab_area_modulo). Usa fun_es_jefe_modulo de
+-- fun_generales.sql. Solo el líder entra a Archivo plano, Historial de pagos
+-- y Bancos por proveedor (acceso_tesoreria.php).
+CREATE OR REPLACE FUNCTION fun_es_lider_tesoreria(wid_usuario VARCHAR) RETURNS BOOLEAN AS
+$BODY$
+BEGIN
+    RETURN COALESCE(fun_es_jefe_modulo(CAST(wid_usuario AS VARCHAR), fun_id_modulo_tesoreria()), FALSE);
+END;
+$BODY$
+LANGUAGE PLPGSQL STABLE;
+
+
+-- Registra una descarga del archivo plano en tab_descargas_archivo_plano.
+-- La PRIMERA guarda la "foto" en el encabezado (cant_lineas_gen, val_total_gen):
+-- es lo que se compara con el resumen del lote del portal del banco. Las
+-- siguientes se comparan contra esa foto. Devuelve el número de descarga, si
+-- coincide con la foto y la foto guardada.
+CREATE OR REPLACE FUNCTION fun_registrar_descarga_archivo (wid_archivo_plano  tab_enc_archivo_plano.id_archivo_plano%TYPE,
+                                                           wcant_lineas       DECIMAL,
+                                                           wval_total         DECIMAL,
+                                                           wip_conexion       VARCHAR)
+RETURNS TABLE (num_descarga DECIMAL, ind_coincide BOOLEAN, cant_lineas_gen DECIMAL, val_total_gen DECIMAL) AS
+$BODY$
+DECLARE wenc        RECORD;
+        wnum        DECIMAL;
+        wcoincide   BOOLEAN;
+BEGIN
+    IF wid_archivo_plano IS NULL OR wcant_lineas IS NULL OR wval_total IS NULL THEN
+        RAISE EXCEPTION 'Faltan datos para registrar la descarga del archivo plano.';
+    END IF;
+
+    -- FOR UPDATE: dos descargas al mismo tiempo no pueden quedar con el mismo número
+    SELECT e.cant_lineas_gen, e.val_total_gen
+      INTO wenc
+      FROM tab_enc_archivo_plano e
+     WHERE e.id_archivo_plano = wid_archivo_plano
+       FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'El archivo plano % no existe.', wid_archivo_plano;
+    END IF;
+
+    IF wenc.cant_lineas_gen IS NULL THEN
+        -- Primera descarga: se toma la foto
+        UPDATE tab_enc_archivo_plano e
+           SET cant_lineas_gen = wcant_lineas,
+               val_total_gen   = wval_total
+         WHERE e.id_archivo_plano = wid_archivo_plano;
+        wcoincide := TRUE;
+        wenc.cant_lineas_gen := wcant_lineas;
+        wenc.val_total_gen   := wval_total;
+    ELSE
+        wcoincide := (wenc.cant_lineas_gen = wcant_lineas
+                      AND wenc.val_total_gen = wval_total);
+    END IF;
+
+    SELECT COALESCE(MAX(d.num_descarga), 0) + 1
+      INTO wnum
+      FROM tab_descargas_archivo_plano d
+     WHERE d.id_archivo_plano = wid_archivo_plano;
+
+    INSERT INTO tab_descargas_archivo_plano (id_archivo_plano, num_descarga, id_usuario, ip_conexion,
+                                             cant_lineas, val_total, ind_coincide)
+    VALUES (wid_archivo_plano, wnum, fun_usuario_erp(), LEFT(wip_conexion, 45),
+            wcant_lineas, wval_total, wcoincide);
+
+    RETURN QUERY SELECT wnum, wcoincide, wenc.cant_lineas_gen, wenc.val_total_gen;
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+
+-- Registra una INCONSISTENCIA de la respuesta del banco ("alerta roja"):
+-- una línea cuya cuenta, valor o documento no coincide con lo que tenía el
+-- ERP. Esa línea NO se da por pagada. El usuario y la fecha los pone
+-- trg_usuario_inconsistencia (triggers_tescxp.sql).
+CREATE OR REPLACE FUNCTION fun_insert_inconsistencia_respuesta (wid_archivo_plano   tab_inconsistencias_respuesta.id_archivo_plano%TYPE,
+                                                                wnum_linea          tab_inconsistencias_respuesta.num_linea%TYPE,
+                                                                wnom_beneficiario   VARCHAR,
+                                                                wnom_campo          tab_inconsistencias_respuesta.nom_campo%TYPE,
+                                                                wval_banco          VARCHAR,
+                                                                wval_erp            VARCHAR,
+                                                                westado_respuesta   VARCHAR) RETURNS BOOLEAN AS
+$BODY$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM tab_enc_archivo_plano WHERE id_archivo_plano = wid_archivo_plano) THEN
+        RAISE EXCEPTION 'El archivo plano % no existe.', wid_archivo_plano;
+    END IF;
+
+    IF wnom_campo NOT IN ('CUENTA', 'VALOR', 'DOCUMENTO', 'TOTAL') THEN
+        RAISE EXCEPTION 'Dato de inconsistencia no válido: %.', wnom_campo;
+    END IF;
+
+    INSERT INTO tab_inconsistencias_respuesta (id_archivo_plano, num_linea, nom_beneficiario, nom_campo,
+                                               val_banco, val_erp, estado_respuesta)
+    VALUES (wid_archivo_plano, COALESCE(wnum_linea, 0), LEFT(wnom_beneficiario, 80), wnom_campo,
+            LEFT(wval_banco, 40), LEFT(wval_erp, 40), LEFT(westado_respuesta, 10));
+
+    RETURN TRUE;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        RAISE EXCEPTION '%', fun_mensaje_error(SQLSTATE, SQLERRM);
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+
+-- Compara la suma que respondió el banco para un archivo con la "foto" de la
+-- primera descarga. Si el banco respondió por MÁS dinero (alguien agregó
+-- pagos o subió valores), registra una inconsistencia TOTAL y devuelve TRUE.
+-- Si no hay foto (el archivo se descargó antes de existir este control) no
+-- compara y devuelve FALSE.
+CREATE OR REPLACE FUNCTION fun_validar_total_respuesta (wid_archivo_plano  tab_enc_archivo_plano.id_archivo_plano%TYPE,
+                                                        wsuma_banco        DECIMAL) RETURNS BOOLEAN AS
+$BODY$
+DECLARE wtotal_foto tab_enc_archivo_plano.val_total_gen%TYPE;
+BEGIN
+    SELECT val_total_gen INTO wtotal_foto
+      FROM tab_enc_archivo_plano
+     WHERE id_archivo_plano = wid_archivo_plano;
+
+    IF wtotal_foto IS NULL OR wsuma_banco IS NULL OR wsuma_banco <= wtotal_foto + 0.5 THEN
+        RETURN FALSE;
+    END IF;
+
+    PERFORM fun_insert_inconsistencia_respuesta(wid_archivo_plano, 0, '(todo el archivo)', 'TOTAL',
+                                                TO_CHAR(wsuma_banco, 'FM99999999999999'),
+                                                TO_CHAR(wtotal_foto, 'FM99999999999999'), '');
+    RETURN TRUE;
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+
+--------------------------------------------------------------------------------------------------------------------------------------
+-- CREACIONES COMPLETAS (encabezado + detalle en UNA sola llamada)
+--------------------------------------------------------------------------------------------------------------------------------------
+-- Antes el PHP abría una transacción, insertaba el encabezado, buscaba su id
+-- e insertaba cada línea. Ahora todo lo hace la base de datos en una sola
+-- función: si cualquier línea falla, PostgreSQL deshace TODO (no queda un
+-- encabezado sin detalle). El detalle llega como un arreglo JSON.
+
+-- Crea un archivo plano de proveedores con sus líneas. Devuelve su id.
+-- wdetalle: [{"id_cronograma":..,"id_factura":..,"id_cuota":..,"id_tipo":"..",
+--             "id_proveedor":"..","nom_tercero":"..","id_banco":"..",
+--             "ind_tipocuenta":true|false,"cta_proveedor":"..","concepto":".."}, ...]
+CREATE OR REPLACE FUNCTION fun_crear_archivo_plano (wnom_archivo        tab_enc_archivo_plano.nom_archivo%TYPE,
+                                                    wid_empresa         tab_enc_archivo_plano.id_empresa%TYPE,
+                                                    wnom_empresa        tab_enc_archivo_plano.nom_empresa%TYPE,
+                                                    wid_banco           tab_enc_archivo_plano.id_banco%TYPE,
+                                                    wind_tipocuenta     tab_enc_archivo_plano.ind_tipocuenta%TYPE,
+                                                    wcta_empresa        tab_enc_archivo_plano.cta_empresa%TYPE,
+                                                    wfecha_aplicacion   tab_enc_archivo_plano.fecha_aplicacion%TYPE,
+                                                    wdetalle            JSONB) RETURNS DECIMAL AS
+$BODY$
+DECLARE wid_archivo_plano   tab_enc_archivo_plano.id_archivo_plano%TYPE;
+        wlinea              JSONB;
+BEGIN
+    IF wdetalle IS NULL OR jsonb_typeof(wdetalle) <> 'array' OR jsonb_array_length(wdetalle) = 0 THEN
+        RAISE EXCEPTION 'El archivo plano debe tener al menos un pago.';
+    END IF;
+
+    PERFORM fun_insert_enc_archivo_plano(wnom_archivo, wid_empresa, wnom_empresa, wid_banco,
+                                         wind_tipocuenta, wcta_empresa, wfecha_aplicacion);
+
+    -- El encabezado recién creado (mismo criterio que usaba el PHP)
+    SELECT MAX(id_archivo_plano)
+      INTO wid_archivo_plano
+      FROM tab_enc_archivo_plano
+     WHERE nom_archivo  = wnom_archivo
+       AND id_empresa   = wid_empresa
+       AND cta_empresa  = wcta_empresa
+       AND ind_generado = FALSE;
+
+    IF wid_archivo_plano IS NULL THEN
+        RAISE EXCEPTION 'No se pudo recuperar el encabezado del archivo plano recién creado.';
+    END IF;
+
+    FOR wlinea IN SELECT * FROM jsonb_array_elements(wdetalle) LOOP
+        PERFORM fun_insert_det_archivo_plano(wid_archivo_plano,
+                                             (wlinea->>'id_cronograma')::DECIMAL,
+                                             (wlinea->>'id_factura')::DECIMAL,
+                                             (wlinea->>'id_cuota')::DECIMAL,
+                                             wlinea->>'id_tipo',
+                                             wlinea->>'id_proveedor',
+                                             wlinea->>'nom_tercero',
+                                             wlinea->>'id_banco',
+                                             (wlinea->>'ind_tipocuenta')::BOOLEAN,
+                                             wlinea->>'cta_proveedor',
+                                             LEFT(wlinea->>'concepto', 80));
+    END LOOP;
+
+    RETURN wid_archivo_plano;
+END;
+$BODY$
+LANGUAGE PLPGSQL;
+
+
+-- Crea un cronograma de pagos con sus cuotas. Devuelve su id.
+-- wcuotas: [{"id_factura":..,"id_cuota":..}, ...]
+CREATE OR REPLACE FUNCTION fun_crear_cronograma (wnom_cronograma     tab_enc_cronopagos.nom_cronograma%TYPE,
+                                                 wfec_programacion   tab_enc_cronopagos.fec_programacion%TYPE,
+                                                 wcuotas             JSONB) RETURNS DECIMAL AS
+$BODY$
+DECLARE wid_cronograma  tab_enc_cronopagos.id_cronograma%TYPE;
+        wcuota          JSONB;
+BEGIN
+    IF wcuotas IS NULL OR jsonb_typeof(wcuotas) <> 'array' OR jsonb_array_length(wcuotas) = 0 THEN
+        RAISE EXCEPTION 'Seleccione al menos una cuota para el cronograma.';
+    END IF;
+
+    PERFORM fun_insert_enc_cronopagos(wnom_cronograma, wfec_programacion);
+
+    -- El cronograma recién creado (mismo criterio que usaba el PHP)
+    SELECT MAX(id_cronograma) INTO wid_cronograma FROM tab_enc_cronopagos;
+
+    FOR wcuota IN SELECT * FROM jsonb_array_elements(wcuotas) LOOP
+        PERFORM fun_insert_det_cronopagos(wid_cronograma,
+                                          (wcuota->>'id_factura')::DECIMAL,
+                                          (wcuota->>'id_cuota')::DECIMAL);
+    END LOOP;
+
+    RETURN wid_cronograma;
 END;
 $BODY$
 LANGUAGE PLPGSQL;
